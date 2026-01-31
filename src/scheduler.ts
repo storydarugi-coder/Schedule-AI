@@ -252,9 +252,10 @@ export async function generateSchedule(
   // 남은 상위노출 작업이 있으면 일반 작업 목록에 추가 (날짜 지정 안된 경우)
   normalTasks.push(...sanwiTasks)
 
-  // 12. 일반 작업 배치 (메인 블로그는 하루 최대 2개 포스팅)
+  // 12. 일반 작업 배치 (메인 블로그는 하루 최대 2개 포스팅, 한 병원당 하루 최대 6시간)
   let taskIndex = 0
   const maxBlogPostsPerDay = 2  // 메인 블로그 하루 최대 2개 포스팅
+  const maxHoursPerHospitalPerDay = 6  // 한 병원당 하루 최대 6시간 (여유롭게 배치)
 
   for (const daySchedule of contentDaySchedules) {
     if (taskIndex >= normalTasks.length) break
@@ -268,10 +269,20 @@ export async function generateSchedule(
         !t.isReport && (t.type === 'brand' || t.type === 'trend') && t.hospitalId === hospitalId
       ).length
       
+      // 이 병원의 오늘 총 작업 시간 계산
+      const hospitalUsedHours = daySchedule.tasks
+        .filter(t => t.hospitalId === hospitalId)
+        .reduce((sum, t) => sum + t.duration, 0)
+      
       // 메인 블로그 작업이면 2개 제한 확인
       const isMainBlogTask = (task.type === 'brand' || task.type === 'trend')
       if (isMainBlogTask && mainBlogTaskCount >= maxBlogPostsPerDay) {
         break  // 메인 블로그 작업이 이미 2개면 다음 날로
+      }
+      
+      // 이 병원 작업 시간이 6시간 초과하면 다음 날로
+      if (hospitalUsedHours + task.duration > maxHoursPerHospitalPerDay) {
+        break
       }
 
       // 시간이 충분한 경우에만 배치
