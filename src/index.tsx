@@ -1543,15 +1543,26 @@ app.get('/', (c) => {
         
         // 이벤트 위/아래 이동
         async function moveEvent(event, direction) {
-            const scheduleId = event.extendedProps.scheduleId;
+            const scheduleId = event.extendedProps?.scheduleId;
+            
+            // scheduleId가 없으면 (연차/휴가) 리턴
+            if (!scheduleId) {
+                alert('이 일정은 순서를 변경할 수 없습니다.');
+                return;
+            }
+            
             const dateStr = event.startStr.split('T')[0];
             
             console.log('moveEvent called:', { scheduleId, direction, dateStr });
             
-            // 같은 날짜의 모든 이벤트 가져오기
+            // 같은 날짜의 모든 이벤트 가져오기 (scheduleId가 있는 것만)
             const dayEvents = calendar.getEvents().filter(e => {
-                return e.startStr.split('T')[0] === dateStr && e.extendedProps.scheduleId;
-            }).sort((a, b) => (a.extendedProps.order_index || 0) - (b.extendedProps.order_index || 0));
+                return e.startStr.split('T')[0] === dateStr && e.extendedProps?.scheduleId;
+            }).sort((a, b) => {
+                const aIndex = a.extendedProps?.order_index ?? 0;
+                const bIndex = b.extendedProps?.order_index ?? 0;
+                return aIndex - bIndex;
+            });
             
             console.log('dayEvents:', dayEvents.map(e => ({
                 id: e.extendedProps.scheduleId,
@@ -1564,6 +1575,11 @@ app.get('/', (c) => {
             
             console.log('currentIndex:', currentIndex, 'targetIndex:', targetIndex);
             
+            if (currentIndex === -1) {
+                alert('현재 일정을 찾을 수 없습니다.');
+                return;
+            }
+            
             if (targetIndex < 0 || targetIndex >= dayEvents.length) {
                 alert('더 이상 이동할 수 없습니다.');
                 return;
@@ -1574,13 +1590,18 @@ app.get('/', (c) => {
             dayEvents[currentIndex] = dayEvents[targetIndex];
             dayEvents[targetIndex] = temp;
             
-            // order_index 업데이트
+            // order_index 업데이트 (모든 id가 유효한지 확인)
             const updates = dayEvents.map((e, index) => ({
                 id: e.extendedProps.scheduleId,
                 order_index: index
-            }));
+            })).filter(u => u.id != null && u.id !== undefined);
             
             console.log('Sending updates:', updates);
+            
+            if (updates.length === 0) {
+                alert('업데이트할 일정이 없습니다.');
+                return;
+            }
             
             try {
                 await axios.put('/api/schedules/reorder', { updates });
