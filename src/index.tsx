@@ -1095,8 +1095,10 @@ app.get('/', (c) => {
                     // 우클릭 메뉴 추가
                     info.el.addEventListener('contextmenu', function(e) {
                         e.preventDefault();
+                        e.stopPropagation();
                         showReorderMenu(e, info.event);
-                    });
+                        return false;
+                    }, true); // 캡처 단계에서 처리
                 },
                 dayCellDidMount: function(info) {
                     const date = info.date;
