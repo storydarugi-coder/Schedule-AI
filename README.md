@@ -1,21 +1,190 @@
-```txt
-npm install
-npm run dev
+# 월간 업무 스케줄러
+
+## 프로젝트 개요
+- **이름**: 월간 업무 스케줄러
+- **목표**: 근무 시간, 마감 기한, 고정 일정, 작업 소요시간 제약을 모두 만족하면서 절대 일정이 꼬이지 않는 월간 업무 스케줄 자동 생성
+- **핵심 기능**:
+  - 병원별 마감일 자동 계산 및 당김 조정
+  - 보고서 작업 우선 배치 (앵커 작업)
+  - 콘텐츠 작업 최적 스케줄링
+  - 시각적 캘린더 뷰
+  - 시간 부족 경고 시스템
+
+## 현재 완료된 기능
+
+### ✅ 기본 근무 규칙 구현
+- 하루 8시간 근무 (월요일은 7시간 - 회의 1시간)
+- 주말 및 공휴일 자동 제외 (2026년 공휴일 데이터 포함)
+- 월요일 고정 회의 자동 처리
+
+### ✅ 작업 종류 및 소요 시간 설정
+- 상위노출 작업: 3.5시간
+- 브랜드 작업: 3.5시간
+- 트렌드 작업: 1.5시간
+- 지식인 원고: 0.5시간
+- 언론보도 원고: 0.5시간
+- 보고서 작성: 2시간 (10:00~12:00 고정)
+
+### ✅ 마감일 계산 로직
+- 병원별 기본 마감일(base_due_day) 설정
+- 마감 당김 일수 선택 (0일/1일/2일)
+- 콘텐츠 완료 기한 = 마감일 - 1일
+- 보고서 작성일 = 마감일 당일
+
+### ✅ 스케줄링 알고리즘
+- 보고서 작업 우선 배치 (앵커 작업)
+- 완료 기한 기준 콘텐츠 작업 배치
+- 하루 근무 가능 시간 초과 시 다음 근무일로 자동 이동
+- 시간 부족 감지 및 경고
+
+### ✅ 사용자 인터페이스
+- **병원 관리**: 병원 추가/수정/삭제
+- **작업량 입력**: 월별 작업 개수 드롭다운 선택
+  - 상위노출, 브랜드, 트렌드 개수 선택 가능
+  - 언론보도, 지식인 각 1개 고정
+  - 마감 당김 일수 선택 (0일/1일/2일)
+- **캘린더 뷰**: FullCalendar.js 기반 시각적 스케줄 표시
+  - 보고서 작업: 빨간색
+  - 콘텐츠 작업: 파란색
+
+### ✅ 경고 시스템
+- 콘텐츠 완료 기한까지 총 근무 시간 부족 감지
+- 마감일이 주말/공휴일인 경우 경고
+- 병원명, 부족 시간, 작업 종류 상세 표시
+
+## URL
+
+### 로컬 개발
+- **개발 서버**: http://localhost:3000
+
+### 공용 URL
+- **접속 URL**: https://3000-i8r46wzl00mqd9bcczq81-d0b9e1e2.sandbox.novita.ai
+
+## 데이터 아키텍처
+
+### 데이터 모델
+```sql
+-- 병원 정보
+hospitals (
+  id, name, base_due_day, created_at
+)
+
+-- 월별 작업량
+monthly_tasks (
+  id, hospital_id, year, month,
+  sanwi_nosul, brand, trend, eonron_bodo, jisikin,
+  deadline_pull_days, created_at
+)
+
+-- 스케줄
+schedules (
+  id, hospital_id, year, month, task_date,
+  task_type, task_name, start_time, end_time,
+  duration_hours, is_report, created_at
+)
 ```
 
-```txt
+### 저장 서비스
+- **데이터베이스**: Cloudflare D1 (SQLite)
+- **로컬 개발**: `.wrangler/state/v3/d1` (자동 생성)
+
+### 데이터 흐름
+1. 병원 정보 입력 → hospitals 테이블 저장
+2. 월별 작업량 설정 → monthly_tasks 테이블 저장
+3. 스케줄 생성 버튼 클릭 → 스케줄링 알고리즘 실행
+4. 생성된 스케줄 → schedules 테이블 저장
+5. 캘린더 탭에서 시각적 확인
+
+## 사용 가이드
+
+### 1단계: 병원 정보 등록
+1. "병원 관리" 탭 선택
+2. 병원명과 기본 마감일 입력 (예: 삼성병원, 25일)
+3. "추가" 버튼 클릭
+
+### 2단계: 월별 작업량 입력
+1. "작업량 입력" 탭 선택
+2. 병원 선택
+3. 년도/월 선택
+4. 작업 개수 입력:
+   - 상위노출: 원하는 개수 입력
+   - 브랜드: 원하는 개수 입력
+   - 트렌드: 원하는 개수 입력
+   - 언론보도: 1개 고정
+   - 지식인: 1개 고정
+5. 마감 당김 일수 선택 (0일/1일/2일)
+6. "저장" 버튼 클릭
+
+### 3단계: 스케줄 생성
+1. "스케줄 생성" 버튼 클릭
+2. 성공 메시지 확인 또는 경고 메시지 확인
+3. 경고 발생 시:
+   - 작업량 줄이기
+   - 또는 마감 당김 일수 조정
+
+### 4단계: 캘린더 확인
+1. "캘린더" 탭 선택
+2. 년도/월 선택
+3. 스케줄 확인:
+   - 빨간색: 보고서 작업 (10:00~12:00)
+   - 파란색: 콘텐츠 작업
+
+## 배포
+
+### 로컬 개발
+```bash
+# 빌드
+npm run build
+
+# 데이터베이스 마이그레이션
+npm run db:migrate:local
+
+# 개발 서버 시작 (PM2)
+pm2 start ecosystem.config.cjs
+
+# 서버 상태 확인
+pm2 list
+
+# 로그 확인
+pm2 logs webapp --nostream
+```
+
+### Cloudflare Pages 배포
+```bash
+# Cloudflare 로그인
+npx wrangler login
+
+# D1 데이터베이스 생성 (프로덕션)
+npx wrangler d1 create webapp-production
+
+# wrangler.jsonc에 database_id 업데이트
+
+# 마이그레이션 적용 (프로덕션)
+npx wrangler d1 migrations apply webapp-production
+
+# 배포
 npm run deploy
 ```
 
-[For generating/synchronizing types based on your Worker configuration run](https://developers.cloudflare.com/workers/wrangler/commands/#types):
+## 기술 스택
+- **프레임워크**: Hono (경량 웹 프레임워크)
+- **런타임**: Cloudflare Workers
+- **데이터베이스**: Cloudflare D1 (SQLite)
+- **프론트엔드**: TailwindCSS + FullCalendar.js + Axios
+- **빌드 도구**: Vite
+- **배포**: Cloudflare Pages
 
-```txt
-npm run cf-typegen
-```
+## 프로젝트 상태
+- ✅ **활성화**: 로컬 개발 환경 실행 중
+- ✅ **공용 URL**: 접속 가능
+- ⏳ **프로덕션 배포**: Cloudflare API 키 설정 후 배포 가능
 
-Pass the `CloudflareBindings` as generics when instantiation `Hono`:
+## 마지막 업데이트
+2026-01-31
 
-```ts
-// src/index.ts
-const app = new Hono<{ Bindings: CloudflareBindings }>()
-```
+## 추천 다음 단계
+1. ✅ **프로덕션 배포**: Cloudflare Pages에 배포
+2. ⏳ **스케줄 수정 기능**: 생성된 스케줄 개별 수정
+3. ⏳ **PDF 내보내기**: 월간 스케줄 PDF 다운로드
+4. ⏳ **알림 기능**: 마감일 임박 알림
+5. ⏳ **통계 대시보드**: 월별 작업량 통계 및 차트
