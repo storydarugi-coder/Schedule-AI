@@ -424,11 +424,24 @@ app.get('/', (c) => {
 
                 <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
                     <div class="col-span-2 md:col-span-3">
-                        <label class="block text-sm font-semibold mb-2 primary-color">상위노출</label>
-                        <input type="number" id="task-sanwi" min="0" value="0" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none" onchange="updateSanwiDates()">
-                        <div id="sanwi-dates-container" class="mt-3 space-y-2 hidden">
-                            <label class="block text-xs text-gray-600 font-medium mb-1">📅 상위노출 게시 날짜 선택 (콘텐츠 완료 기한 이전):</label>
-                            <div id="sanwi-dates-list" class="space-y-2"></div>
+                        <label class="block text-sm font-semibold mb-2 primary-color">
+                            <i class="fas fa-star mr-1"></i>상위노출 게시 날짜 (최대 10개)
+                        </label>
+                        <p class="text-xs text-gray-600 mb-2">
+                            <i class="fas fa-info-circle mr-1"></i>
+                            상위노출을 원하는 날짜를 입력하세요. 빈 칸은 자동으로 무시됩니다.
+                        </p>
+                        <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
+                            <input type="number" id="sanwi-date-1" placeholder="예: 5" min="1" max="31" class="border-2 border-yellow-200 rounded-lg px-3 py-2 focus:border-yellow-400 focus:outline-none">
+                            <input type="number" id="sanwi-date-2" placeholder="예: 10" min="1" max="31" class="border-2 border-yellow-200 rounded-lg px-3 py-2 focus:border-yellow-400 focus:outline-none">
+                            <input type="number" id="sanwi-date-3" placeholder="예: 15" min="1" max="31" class="border-2 border-yellow-200 rounded-lg px-3 py-2 focus:border-yellow-400 focus:outline-none">
+                            <input type="number" id="sanwi-date-4" placeholder="예: 20" min="1" max="31" class="border-2 border-yellow-200 rounded-lg px-3 py-2 focus:border-yellow-400 focus:outline-none">
+                            <input type="number" id="sanwi-date-5" placeholder="예: 25" min="1" max="31" class="border-2 border-yellow-200 rounded-lg px-3 py-2 focus:border-yellow-400 focus:outline-none">
+                            <input type="number" id="sanwi-date-6" placeholder="6번째" min="1" max="31" class="border-2 border-yellow-200 rounded-lg px-3 py-2 focus:border-yellow-400 focus:outline-none">
+                            <input type="number" id="sanwi-date-7" placeholder="7번째" min="1" max="31" class="border-2 border-yellow-200 rounded-lg px-3 py-2 focus:border-yellow-400 focus:outline-none">
+                            <input type="number" id="sanwi-date-8" placeholder="8번째" min="1" max="31" class="border-2 border-yellow-200 rounded-lg px-3 py-2 focus:border-yellow-400 focus:outline-none">
+                            <input type="number" id="sanwi-date-9" placeholder="9번째" min="1" max="31" class="border-2 border-yellow-200 rounded-lg px-3 py-2 focus:border-yellow-400 focus:outline-none">
+                            <input type="number" id="sanwi-date-10" placeholder="10번째" min="1" max="31" class="border-2 border-yellow-200 rounded-lg px-3 py-2 focus:border-yellow-400 focus:outline-none">
                         </div>
                     </div>
                     <div>
@@ -660,35 +673,6 @@ app.get('/', (c) => {
         }
 
         // 상위노출 날짜 선택 UI 업데이트
-        function updateSanwiDates() {
-            const count = parseInt(document.getElementById('task-sanwi').value) || 0;
-            const container = document.getElementById('sanwi-dates-container');
-            const listElement = document.getElementById('sanwi-dates-list');
-            
-            if (count === 0) {
-                container.classList.add('hidden');
-                return;
-            }
-            
-            container.classList.remove('hidden');
-            listElement.innerHTML = '';
-            
-            for (let i = 1; i <= count; i++) {
-                const div = document.createElement('div');
-                div.className = 'flex items-center space-x-2';
-                div.innerHTML = \`
-                    <span class="text-sm font-medium w-16">상위노출 #\${i}:</span>
-                    <input type="number" 
-                           id="sanwi-date-\${i}" 
-                           min="1" 
-                           max="31" 
-                           placeholder="일(1-31)" 
-                           class="border border-purple-300 rounded px-3 py-1 text-sm w-20 focus:border-purple-500 focus:outline-none">
-                \`;
-                listElement.appendChild(div);
-            }
-        }
-
         // 브랜드/트렌드 게시 순서 UI 업데이트
         function updateBrandTrendOrder() {
             const brandCount = parseInt(document.getElementById('task-brand').value) || 0;
@@ -805,36 +789,30 @@ app.get('/', (c) => {
                 return;
             }
 
+            // 상위노출 날짜 수집 (최대 10개)
+            const sanwiDates = [];
+            for (let i = 1; i <= 10; i++) {
+                const dateInput = document.getElementById(\`sanwi-date-\${i}\`);
+                if (dateInput && dateInput.value) {
+                    sanwiDates.push(parseInt(dateInput.value));
+                }
+            }
+
             const data = {
                 hospital_id: parseInt(hospitalId),
                 year: parseInt(year),
                 month: parseInt(month),
-                sanwi_nosul: parseInt(document.getElementById('task-sanwi').value),
+                sanwi_nosul: sanwiDates.length, // 날짜 개수가 상위노출 개수
                 brand: parseInt(document.getElementById('task-brand').value),
                 trend: parseInt(document.getElementById('task-trend').value),
                 eonron_bodo: parseInt(document.getElementById('task-eonron').value),
                 jisikin: parseInt(document.getElementById('task-jisikin').value),
                 deadline_pull_days: parseInt(document.getElementById('task-pull-days').value),
-                task_order: document.getElementById('task-order').value,
+                task_order: 'brand,trend', // 기본값
                 brand_order: parseInt(document.getElementById('brand-order')?.value || '1'),
                 trend_order: parseInt(document.getElementById('trend-order')?.value || '2'),
-                sanwi_dates: []
+                sanwi_dates: sanwiDates
             };
-
-            // 상위노출 날짜 수집
-            const sanwiCount = data.sanwi_nosul;
-            for (let i = 1; i <= sanwiCount; i++) {
-                const dateInput = document.getElementById(\`sanwi-date-\${i}\`);
-                if (dateInput && dateInput.value) {
-                    data.sanwi_dates.push(parseInt(dateInput.value));
-                }
-            }
-
-            // 상위노출 날짜 검증
-            if (sanwiCount > 0 && data.sanwi_dates.length !== sanwiCount) {
-                alert('모든 상위노출 날짜를 입력해주세요');
-                return;
-            }
 
             // 브랜드/트렌드 게시 순서 검증
             const brandCount = data.brand;
@@ -875,16 +853,13 @@ app.get('/', (c) => {
 
                 if (data) {
                     // 기존 데이터가 있으면 폼에 채우기
-                    document.getElementById('task-sanwi').value = data.sanwi_nosul || 0;
                     document.getElementById('task-brand').value = data.brand || 0;
                     document.getElementById('task-trend').value = data.trend || 0;
                     document.getElementById('task-eonron').value = data.eonron_bodo || 0;
                     document.getElementById('task-jisikin').value = data.jisikin || 0;
                     document.getElementById('task-pull-days').value = data.deadline_pull_days || 0;
-                    document.getElementById('task-order').value = data.task_order || 'brand,trend';
                     
                     // 상위노출 날짜 복원
-                    updateSanwiDates();
                     if (data.sanwi_dates) {
                         const dates = JSON.parse(data.sanwi_dates);
                         dates.forEach((date, index) => {
