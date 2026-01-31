@@ -223,6 +223,19 @@ app.delete('/api/schedules/:year/:month/:hospital_id', async (c) => {
   return c.json({ success: true })
 })
 
+// 스케줄 업데이트 (날짜 이동)
+app.put('/api/schedules/:id', async (c) => {
+  const db = c.env.DB
+  const scheduleId = parseInt(c.req.param('id'))
+  const { task_date } = await c.req.json()
+
+  await db.prepare(
+    'UPDATE schedules SET task_date = ? WHERE id = ?'
+  ).bind(task_date, scheduleId).run()
+
+  return c.json({ success: true })
+})
+
 // =========================
 // 연차/휴가 관리 API
 // =========================
@@ -932,6 +945,8 @@ app.get('/', (c) => {
                 locale: 'ko',
                 height: 'auto',
                 events: [],
+                editable: true, // 드래그 앤 드롭 활성화
+                eventDrop: handleEventDrop, // 이벤트 이동 핸들러
                 dayCellDidMount: async function(info) {
                     const date = info.date;
                     const dayOfWeek = date.getDay();
@@ -986,12 +1001,22 @@ app.get('/', (c) => {
                     const color = s.is_report ? '#fda4af' : '#bfdbfe'; // 파스텔 핑크 vs 파스텔 블루
                     const textColor = s.is_report ? '#be123c' : '#1e40af'; // 진한 핑크 vs 진한 블루
                     return {
+                        id: s.id, // 스케줄 ID 추가 (드래그 앤 드롭에 필요)
                         title: \`\${s.hospital_name} - \${s.task_name} (\${s.start_time}-\${s.end_time})\`,
                         start: s.task_date,
                         color: color,
                         textColor: textColor,
                         borderColor: textColor,
+                        editable: true, // 이 이벤트는 이동 가능
                         extendedProps: {
+                            scheduleId: s.id,
+                            hospitalId: s.hospital_id,
+                            taskType: s.task_type,
+                            taskName: s.task_name,
+                            startTime: s.start_time,
+                            endTime: s.end_time,
+                            durationHours: s.duration_hours,
+                            isReport: s.is_report,
                             pullDays: s.deadline_pull_days
                         }
                     };
@@ -1012,7 +1037,8 @@ app.get('/', (c) => {
                         color: vType.color,
                         textColor: textColor,
                         borderColor: textColor,
-                        allDay: true
+                        allDay: true,
+                        editable: false // 연차는 이동 불가
                     };
                 });
 
@@ -1021,6 +1047,43 @@ app.get('/', (c) => {
                 calendar.gotoDate(\`\${year}-\${month.padStart(2, '0')}-01\`);
             } catch (error) {
                 console.error('캘린더 로드 실패', error);
+            }
+        }
+
+        // 이벤트 드래그 앤 드롭 핸들러
+        async function handleEventDrop(info) {
+            const event = info.event;
+            const scheduleId = event.extendedProps.scheduleId;
+            
+            if (!scheduleId) {
+                // 연차/휴가 이벤트는 이동 불가
+                info.revert();
+                return;
+            }
+
+            const oldDate = info.oldEvent.startStr;
+            const newDate = event.startStr;
+
+            if (!confirm(\`\${event.title}\n\n\${oldDate} → \${newDate}\n\n일정을 이동하시겠습니까?\`)) {
+                info.revert();
+                return;
+            }
+
+            try {
+                // DB 업데이트 API 호출
+                await axios.put(\`/api/schedules/\${scheduleId}\`, {
+                    task_date: newDate
+                });
+
+                // 성공 메시지
+                alert('✅ 일정이 이동되었습니다!');
+                
+                // 캘린더 새로고침
+                loadCalendar();
+            } catch (error) {
+                console.error('일정 이동 실패', error);
+                alert('❌ 일정 이동에 실패했습니다. 다시 시도해주세요.');
+                info.revert();
             }
         }
 
