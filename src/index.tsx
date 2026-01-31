@@ -203,7 +203,7 @@ app.get('/api/schedules/:year/:month', async (c) => {
     LEFT JOIN monthly_tasks mt ON s.hospital_id = mt.hospital_id 
       AND s.year = mt.year AND s.month = mt.month
     WHERE s.year = ? AND s.month = ?
-    ORDER BY s.task_date, s.is_report, s.start_time
+    ORDER BY s.task_date, s.order_index, s.start_time
   `).bind(year, month).all()
 
   return c.json(result.results)
@@ -232,6 +232,21 @@ app.put('/api/schedules/:id', async (c) => {
   await db.prepare(
     'UPDATE schedules SET task_date = ? WHERE id = ?'
   ).bind(task_date, scheduleId).run()
+
+  return c.json({ success: true })
+})
+
+// 스케줄 순서 변경 (같은 날짜 내에서)
+app.put('/api/schedules/reorder', async (c) => {
+  const db = c.env.DB
+  const { updates } = await c.req.json()
+
+  // 트랜잭션으로 여러 스케줄의 order_index 업데이트
+  for (const update of updates) {
+    await db.prepare(
+      'UPDATE schedules SET order_index = ? WHERE id = ?'
+    ).bind(update.order_index, update.id).run()
+  }
 
   return c.json({ success: true })
 })
@@ -1146,34 +1161,9 @@ app.get('/', (c) => {
                     // 병원 색상 사용 (없으면 기본 파란색)
                     const hospitalColor = s.hospital_color || '#3b82f6';
                     
-                    // 밝은 파스텔 톤으로 변환 (보기 편하게)
-                    const lightenColor = (hex) => {
-                        // hex to RGB
-                        const r = parseInt(hex.slice(1, 3), 16);
-                        const g = parseInt(hex.slice(3, 5), 16);
-                        const b = parseInt(hex.slice(5, 7), 16);
-                        // 파스텔 톤으로 변환 (밝게)
-                        const pr = Math.round(r + (255 - r) * 0.6);
-                        const pg = Math.round(g + (255 - g) * 0.6);
-                        const pb = Math.round(b + (255 - b) * 0.6);
-                        return '#' + [pr, pg, pb].map(x => x.toString(16).padStart(2, '0')).join('');
-                    };
-                    
-                    // 어두운 텍스트 색상으로 변환 (가독성 향상)
-                    const darkenColor = (hex) => {
-                        const r = parseInt(hex.slice(1, 3), 16);
-                        const g = parseInt(hex.slice(3, 5), 16);
-                        const b = parseInt(hex.slice(5, 7), 16);
-                        // 40% 어둡게
-                        const dr = Math.round(r * 0.6);
-                        const dg = Math.round(g * 0.6);
-                        const db = Math.round(b * 0.6);
-                        return '#' + [dr, dg, db].map(x => x.toString(16).padStart(2, '0')).join('');
-                    };
-                    
-                    // 보고서는 파스텔 핑크, 일반 작업은 병원 색상의 파스텔 버전
-                    const color = s.is_report ? '#fda4af' : lightenColor(hospitalColor);
-                    const textColor = s.is_report ? '#be123c' : darkenColor(hospitalColor);
+                    // 보고서는 파스텔 핑크, 일반 작업은 사용자가 선택한 색상 그대로
+                    const color = s.is_report ? '#fda4af' : hospitalColor;
+                    const textColor = s.is_report ? '#be123c' : '#ffffff'; // 흰색 텍스트로 명확하게
                     
                     // 완료 상태면 취소선 추가
                     const titlePrefix = s.is_completed ? '✅ ' : '';
@@ -1382,16 +1372,42 @@ app.get('/', (c) => {
             const oldDate = info.oldEvent.startStr.split('T')[0];
             const newDate = event.startStr.split('T')[0];
 
-            if (!confirm(\`\${event.title}\n\n\${oldDate} → \${newDate}\n\n일정을 이동하시겠습니까?\`)) {
+            // 같은 날짜 내에서 순서 변경인지, 다른 날짜로 이동인지 확인
+            const isSameDay = oldDate === newDate;
+            
+            let confirmMsg = '';
+            if (isSameDay) {
+                confirmMsg = event.title + '\\n\\n같은 날짜 내에서 순서를 변경하시겠습니까?';
+            } else {
+                confirmMsg = event.title + '\\n\\n' + oldDate + ' → ' + newDate + '\\n\\n일정을 이동하시겠습니까?';
+            }
+
+            if (!confirm(confirmMsg)) {
                 info.revert();
                 return;
             }
 
             try {
-                // DB 업데이트 API 호출
-                await axios.put(\`/api/schedules/\${scheduleId}\`, {
-                    task_date: newDate
-                });
+                if (isSameDay) {
+                    // 같은 날짜 내에서 순서 변경
+                    // 해당 날짜의 모든 이벤트를 가져와서 새로운 순서 계산
+                    const dayEvents = calendar.getEvents().filter(e => {
+                        return e.startStr.split('T')[0] === newDate && e.extendedProps.scheduleId;
+                    });
+                    
+                    // order_index를 재계산하여 업데이트
+                    const updates = dayEvents.map((e, index) => ({
+                        id: e.extendedProps.scheduleId,
+                        order_index: index
+                    }));
+                    
+                    await axios.put('/api/schedules/reorder', { updates });
+                } else {
+                    // 다른 날짜로 이동
+                    await axios.put('/api/schedules/' + scheduleId, {
+                        task_date: newDate
+                    });
+                }
 
                 // 성공 메시지
                 alert('✅ 일정이 이동되었습니다!');

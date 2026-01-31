@@ -43,6 +43,7 @@ export interface Schedule {
   end_time: string;
   duration_hours: number;
   is_report: number;
+  order_index: number;
   created_at: string;
 }
 

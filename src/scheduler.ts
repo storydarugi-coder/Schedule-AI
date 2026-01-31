@@ -432,12 +432,13 @@ export async function saveSchedule(
 
   // 새 스케줄 저장
   for (const daySchedule of daySchedules) {
-    for (const task of daySchedule.tasks) {
+    for (let i = 0; i < daySchedule.tasks.length; i++) {
+      const task = daySchedule.tasks[i];
       await db.prepare(`
         INSERT INTO schedules (
           hospital_id, year, month, task_date, task_type, task_name,
-          start_time, end_time, duration_hours, is_report
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          start_time, end_time, duration_hours, is_report, order_index
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         task.hospitalId,
         year,
@@ -448,7 +449,8 @@ export async function saveSchedule(
         task.startTime,
         task.endTime,
         task.duration,
-        task.isReport ? 1 : 0
+        task.isReport ? 1 : 0,
+        i // order_index는 배열 인덱스
       ).run()
     }
   }
