@@ -252,8 +252,9 @@ export async function generateSchedule(
   // 남은 상위노출 작업이 있으면 일반 작업 목록에 추가 (날짜 지정 안된 경우)
   normalTasks.push(...sanwiTasks)
 
-  // 12. 일반 작업 배치 (하루 8시간 근무 시간 제한)
+  // 12. 일반 작업 배치 (메인 블로그는 하루 최대 2개 포스팅)
   let taskIndex = 0
+  const maxBlogPostsPerDay = 2  // 메인 블로그 하루 최대 2개 포스팅
 
   for (const daySchedule of contentDaySchedules) {
     if (taskIndex >= normalTasks.length) break
@@ -261,8 +262,19 @@ export async function generateSchedule(
     while (taskIndex < normalTasks.length) {
       const task = normalTasks[taskIndex]
       const remainingHours = daySchedule.availableHours - daySchedule.usedHours
+      
+      // 메인 블로그 작업(브랜드, 트렌드) 개수 계산
+      const mainBlogTaskCount = daySchedule.tasks.filter(t => 
+        !t.isReport && (t.type === 'brand' || t.type === 'trend') && t.hospitalId === hospitalId
+      ).length
+      
+      // 메인 블로그 작업이면 2개 제한 확인
+      const isMainBlogTask = (task.type === 'brand' || task.type === 'trend')
+      if (isMainBlogTask && mainBlogTaskCount >= maxBlogPostsPerDay) {
+        break  // 메인 블로그 작업이 이미 2개면 다음 날로
+      }
 
-      // 시간이 충분한 경우에만 배치 (8시간 근무 시간 초과 방지)
+      // 시간이 충분한 경우에만 배치
       if (task.duration <= remainingHours) {
         // 시작 시간 계산 (월요일은 10시부터, 나머지는 9시부터)
         const dayStartHour = isMonday(daySchedule.date) ? 10 : 9
