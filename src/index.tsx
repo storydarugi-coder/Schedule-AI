@@ -82,6 +82,20 @@ app.get('/api/monthly-tasks/:year/:month', async (c) => {
   return c.json(result.results)
 })
 
+// 특정 병원의 월별 작업량 조회
+app.get('/api/monthly-tasks/:hospital_id/:year/:month', async (c) => {
+  const db = c.env.DB
+  const hospitalId = parseInt(c.req.param('hospital_id'))
+  const year = parseInt(c.req.param('year'))
+  const month = parseInt(c.req.param('month'))
+
+  const result = await db.prepare(`
+    SELECT * FROM monthly_tasks WHERE hospital_id = ? AND year = ? AND month = ?
+  `).bind(hospitalId, year, month).first()
+
+  return c.json(result)
+})
+
 // 월별 작업량 저장/수정
 app.post('/api/monthly-tasks', async (c) => {
   const db = c.env.DB
@@ -378,11 +392,18 @@ app.get('/', (c) => {
                     <i class="fas fa-cog mr-2"></i>월별 작업량 설정
                 </h2>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                    <select id="task-hospital" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none">
+                    <select id="task-hospital" onchange="loadExistingTaskData()" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none">
                         <option value="">병원 선택</option>
                     </select>
-                    <select id="task-year" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none"></select>
-                    <select id="task-month" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none"></select>
+                    <select id="task-year" onchange="loadExistingTaskData()" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none"></select>
+                    <select id="task-month" onchange="loadExistingTaskData()" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none"></select>
+                </div>
+
+                <div class="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 mb-4" id="existing-data-notice" style="display: none;">
+                    <p class="text-sm text-blue-800">
+                        <i class="fas fa-info-circle mr-2"></i>
+                        <strong>기존 데이터가 있습니다!</strong> 아래 값을 수정하고 "저장" 버튼을 클릭하면 업데이트됩니다.
+                    </p>
                 </div>
 
                 <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
@@ -430,6 +451,9 @@ app.get('/', (c) => {
                             <option value="0">0일</option>
                             <option value="1">1일</option>
                             <option value="2">2일</option>
+                            <option value="3">3일</option>
+                            <option value="4">4일</option>
+                            <option value="5">5일</option>
                         </select>
                     </div>
                     <div class="md:col-span-3">
@@ -539,6 +563,9 @@ app.get('/', (c) => {
                 const res = await axios.get('/api/hospitals');
                 hospitals = res.data;
                 
+                // 날짜 오름차순으로 정렬
+                hospitals.sort((a, b) => a.base_due_day - b.base_due_day);
+                
                 const list = document.getElementById('hospitals-list');
                 list.innerHTML = hospitals.map(h => \`
                     <div class="flex justify-between items-center p-5 border-2 border-purple-100 rounded-xl hover:border-purple-300 transition-all bg-gradient-to-r from-purple-50 to-white shadow-sm hover:shadow-md">
@@ -551,12 +578,12 @@ app.get('/', (c) => {
                                 <div class="flex items-center mt-1 space-x-4">
                                     <div class="flex items-center">
                                         <i class="fas fa-calendar-day text-purple-500 mr-2"></i>
-                                        <span class="text-purple-600 font-semibold">마감일: 매월 \${h.base_due_day}일</span>
+                                        <span class="text-purple-600 font-semibold">마감일: 매월 \${String(h.base_due_day).padStart(2, '0')}일</span>
                                     </div>
                                     \${h.sanwi_nosul_day ? \`
                                         <div class="flex items-center">
                                             <i class="fas fa-star text-yellow-500 mr-2"></i>
-                                            <span class="text-yellow-600 font-semibold">상위노출: \${h.sanwi_nosul_day}일</span>
+                                            <span class="text-yellow-600 font-semibold">상위노출: \${String(h.sanwi_nosul_day).padStart(2, '0')}일</span>
                                         </div>
                                     \` : ''}
                                 </div>
@@ -816,6 +843,62 @@ app.get('/', (c) => {
             }
         }
 
+        // 기존 작업량 데이터 불러오기
+        async function loadExistingTaskData() {
+            const hospitalId = document.getElementById('task-hospital').value;
+            const year = document.getElementById('task-year').value;
+            const month = document.getElementById('task-month').value;
+
+            if (!hospitalId || !year || !month) {
+                document.getElementById('existing-data-notice').style.display = 'none';
+                return;
+            }
+
+            try {
+                const res = await axios.get(\`/api/monthly-tasks/\${hospitalId}/\${year}/\${month}\`);
+                const data = res.data;
+
+                if (data) {
+                    // 기존 데이터가 있으면 폼에 채우기
+                    document.getElementById('task-sanwi').value = data.sanwi_nosul || 0;
+                    document.getElementById('task-brand').value = data.brand || 0;
+                    document.getElementById('task-trend').value = data.trend || 0;
+                    document.getElementById('task-eonron').value = data.eonron_bodo || 0;
+                    document.getElementById('task-jisikin').value = data.jisikin || 0;
+                    document.getElementById('task-pull-days').value = data.deadline_pull_days || 0;
+                    document.getElementById('task-order').value = data.task_order || 'brand,trend';
+                    
+                    // 상위노출 날짜 복원
+                    updateSanwiDates();
+                    if (data.sanwi_dates) {
+                        const dates = JSON.parse(data.sanwi_dates);
+                        dates.forEach((date, index) => {
+                            const input = document.getElementById(\`sanwi-date-\${index + 1}\`);
+                            if (input) {
+                                input.value = date;
+                            }
+                        });
+                    }
+
+                    // 브랜드/트렌드 순서 복원
+                    updateBrandTrendOrder();
+                    if (data.brand_order) {
+                        document.getElementById('brand-order').value = data.brand_order;
+                    }
+                    if (data.trend_order) {
+                        document.getElementById('trend-order').value = data.trend_order;
+                    }
+
+                    document.getElementById('existing-data-notice').style.display = 'block';
+                } else {
+                    document.getElementById('existing-data-notice').style.display = 'none';
+                }
+            } catch (error) {
+                // 데이터가 없으면 무시
+                document.getElementById('existing-data-notice').style.display = 'none';
+            }
+        }
+
         // 스케줄 생성
         async function generateSchedule() {
             const hospitalId = document.getElementById('task-hospital').value;
@@ -900,11 +983,9 @@ app.get('/', (c) => {
                         info.el.style.backgroundColor = '#fecaca'; // 파스텔 빨강
                         info.el.style.fontWeight = 'bold';
                     }
-                    // 주말 배경색 (일요일: 파스텔 핑크, 토요일: 파스텔 블루)
-                    else if (dayOfWeek === 0) {
+                    // 주말 배경색 (토요일, 일요일 모두 파스텔 핑크)
+                    else if (dayOfWeek === 0 || dayOfWeek === 6) {
                         info.el.style.backgroundColor = '#ffe4e6'; // 파스텔 핑크
-                    } else if (dayOfWeek === 6) {
-                        info.el.style.backgroundColor = '#dbeafe'; // 파스텔 블루
                     }
                     // 평일 배경색 (연한 파란색)
                     else {
@@ -920,13 +1001,9 @@ app.get('/', (c) => {
                     if (holidays2026.includes(dateStr)) {
                         return ['text-red-500'];
                     }
-                    // 일요일 빨간색 텍스트
-                    if (dayOfWeek === 0) {
+                    // 주말 (토요일, 일요일) 빨간색 텍스트
+                    if (dayOfWeek === 0 || dayOfWeek === 6) {
                         return ['text-red-400'];
-                    }
-                    // 토요일 파란색 텍스트
-                    if (dayOfWeek === 6) {
-                        return ['text-blue-400'];
                     }
                     return [];
                 }
