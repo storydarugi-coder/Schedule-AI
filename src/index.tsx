@@ -251,21 +251,45 @@ app.put('/api/schedules/reorder', async (c) => {
       return c.json({ error: 'Invalid updates format' }, 400)
     }
 
-    // 트랜잭션으로 여러 스케줄의 order_index 업데이트
+    console.log('Reorder request:', updates)
+
+    // 각 업데이트 처리 (존재하는 ID만)
+    const results = []
     for (const update of updates) {
       if (!update.id || update.order_index === undefined) {
         console.error('Invalid update:', update)
         continue
       }
-      await db.prepare(
-        'UPDATE schedules SET order_index = ? WHERE id = ?'
-      ).bind(update.order_index, update.id).run()
+
+      try {
+        // 먼저 ID가 존재하는지 확인
+        const existing = await db.prepare(
+          'SELECT id FROM schedules WHERE id = ?'
+        ).bind(update.id).first()
+
+        if (!existing) {
+          console.error('Schedule not found:', update.id)
+          continue
+        }
+
+        // 존재하는 경우에만 업데이트
+        const result = await db.prepare(
+          'UPDATE schedules SET order_index = ? WHERE id = ?'
+        ).bind(update.order_index, update.id).run()
+        
+        results.push({ id: update.id, success: true })
+        console.log('Updated:', update.id, '→', update.order_index)
+      } catch (err) {
+        console.error('Update failed for ID', update.id, ':', err)
+        results.push({ id: update.id, success: false, error: String(err) })
+      }
     }
 
-    return c.json({ success: true })
+    console.log('Reorder results:', results)
+    return c.json({ success: true, results })
   } catch (error) {
     console.error('Reorder error:', error)
-    return c.json({ error: String(error) }, 500)
+    return c.json({ error: String(error), message: error instanceof Error ? error.message : 'Unknown error' }, 500)
   }
 })
 
@@ -380,33 +404,43 @@ app.get('/', (c) => {
         display: none !important;
       }
       
-      /* 이벤트를 박스 형태로 표시 */
+      /* 이벤트를 박스 형태로 표시 - 예쁜 정렬 */
       .fc-daygrid-event {
-        padding: 2px 4px !important;
-        margin: 1px 0 !important;
-        border-radius: 3px !important;
+        padding: 4px 6px !important;
+        margin: 2px 0 !important;
+        border-radius: 4px !important;
+        min-height: 22px !important;
+        height: auto !important;
       }
       
-      /* 이벤트 제목 텍스트가 잘리지 않도록 */
+      /* 이벤트 제목 텍스트 - 예쁜 줄바꿈 */
       .fc-event-title {
         white-space: normal !important;
         overflow: visible !important;
         text-overflow: clip !important;
         word-wrap: break-word !important;
-        font-size: 11px !important;
-        line-height: 1.3 !important;
+        font-size: 12px !important;
+        line-height: 1.4 !important;
+        font-weight: 500 !important;
+        display: block !important;
       }
       
-      /* 이벤트 높이 자동 조정 */
-      .fc-daygrid-event {
-        min-height: auto !important;
-        height: auto !important;
+      /* 이벤트 시간 표시 */
+      .fc-event-time {
+        font-size: 10px !important;
+        opacity: 0.9 !important;
+        font-weight: normal !important;
       }
       
       /* 일찍 출근 강조 스타일 */
       .early-start-event {
-        font-weight: bold !important;
+        font-weight: 600 !important;
         border: 2px solid #7e22ce !important;
+        box-shadow: 0 2px 4px rgba(126, 34, 206, 0.2) !important;
+      }
+      
+      .early-start-event .fc-event-title {
+        font-weight: 600 !important;
       }
     </style>
     <link href='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.css' rel='stylesheet' />
