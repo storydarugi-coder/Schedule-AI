@@ -652,13 +652,24 @@ app.get('/', (c) => {
                     </p>
                 </div>
 
-                <div class="flex gap-4">
+                <div class="flex gap-4 flex-wrap">
                     <button onclick="saveMonthlyTask()" class="btn-primary text-white rounded-lg px-8 py-3 font-semibold shadow-md hover:shadow-lg transition-all">
                         <i class="fas fa-save mr-2"></i>저장
                     </button>
                     <button onclick="generateSchedule()" class="btn-secondary text-gray-800 rounded-lg px-8 py-3 font-semibold shadow-md hover:shadow-lg transition-all">
                         <i class="fas fa-magic mr-2"></i>스케줄 생성
                     </button>
+                    <button onclick="generateAllSchedules()" class="bg-gradient-to-r from-green-500 to-teal-500 text-white rounded-lg px-8 py-3 font-semibold shadow-md hover:shadow-lg transition-all">
+                        <i class="fas fa-sync-alt mr-2"></i>전체 병원 재생성
+                    </button>
+                </div>
+                
+                <div class="bg-green-50 border-2 border-green-200 rounded-lg p-4 mt-4">
+                    <p class="text-sm text-green-800">
+                        <i class="fas fa-lightbulb mr-2"></i>
+                        <strong>💡 전체 병원 재생성:</strong> 
+                        모든 병원의 작업량을 저장한 후, 이 버튼을 클릭하면 <strong class="text-green-600">한 번에 모든 병원의 스케줄을 재생성</strong>합니다!
+                    </p>
                 </div>
             </div>
 
@@ -872,20 +883,27 @@ app.get('/', (c) => {
             }
 
             try {
-                await axios.post('/api/hospitals', { 
+                const result = await axios.post('/api/hospitals', { 
                     name, 
                     base_due_day: parseInt(baseDueDay),
                     sanwi_nosul_days: sanwiDays.length > 0 ? sanwiDays : null,
                     color: color || '#3b82f6'
                 });
+                
                 document.getElementById('hospital-name').value = '';
                 document.getElementById('hospital-due-day').value = '';
                 document.getElementById('hospital-color').value = '#3b82f6';
                 for (let i = 1; i <= 5; i++) {
                     document.getElementById(\`hospital-sanwi-day-\${i}\`).value = '';
                 }
+                
                 loadHospitals();
-                alert('병원이 추가되었습니다');
+                alert(\`병원이 추가되었습니다!\n\n💡 이제 모든 병원의 스케줄을 재생성하시겠습니까?\n(작업량 입력 탭에서 각 병원의 작업량을 먼저 저장해주세요)\`);
+                
+                // 작업량 입력 탭으로 이동 제안
+                if (confirm('작업량 입력 탭으로 이동하시겠습니까?')) {
+                    showTab('tasks');
+                }
             } catch (error) {
                 alert('병원 추가 실패: ' + (error.response?.data?.error || '알 수 없는 오류'));
             }
@@ -1169,6 +1187,108 @@ app.get('/', (c) => {
                         </div>
                     \`;
                 }
+            }
+        }
+
+        // 전체 병원 스케줄 재생성
+        async function generateAllSchedules() {
+            const year = document.getElementById('task-year').value;
+            const month = document.getElementById('task-month').value;
+
+            if (!year || !month) {
+                alert('년월을 선택해주세요');
+                return;
+            }
+
+            if (!confirm(\`\${year}년 \${month}월의 모든 병원 스케줄을 재생성하시겠습니까?\n\n⚠️ 이 작업은 기존 스케줄을 모두 삭제하고 새로 생성합니다.\`)) {
+                return;
+            }
+
+            try {
+                // 1. 해당 월의 모든 작업량 데이터 가져오기
+                const tasksRes = await axios.get(\`/api/monthly-tasks/\${year}/\${month}\`);
+                const monthlyTasks = tasksRes.data;
+
+                if (monthlyTasks.length === 0) {
+                    alert('저장된 작업량이 없습니다.\n\n각 병원의 작업량을 먼저 저장해주세요.');
+                    return;
+                }
+
+                document.getElementById('schedule-error').classList.add('hidden');
+                document.getElementById('schedule-success').classList.add('hidden');
+
+                // 2. 진행 상황 표시
+                const progressHtml = \`
+                    <strong><i class="fas fa-spinner fa-spin mr-2"></i>전체 병원 스케줄 생성 중...</strong><br>
+                    <div class="mt-2 text-sm">총 \${monthlyTasks.length}개 병원 처리 중...</div>
+                \`;
+                document.getElementById('schedule-success').classList.remove('hidden');
+                document.getElementById('schedule-success').innerHTML = progressHtml;
+
+                // 3. 각 병원별로 스케줄 생성
+                const results = [];
+                for (let i = 0; i < monthlyTasks.length; i++) {
+                    const task = monthlyTasks[i];
+                    try {
+                        await axios.post('/api/schedules/generate', {
+                            hospital_id: task.hospital_id,
+                            year: parseInt(year),
+                            month: parseInt(month)
+                        });
+                        results.push({ hospital: task.hospital_name, success: true });
+                        
+                        // 진행 상황 업데이트
+                        document.getElementById('schedule-success').innerHTML = \`
+                            <strong><i class="fas fa-spinner fa-spin mr-2"></i>전체 병원 스케줄 생성 중...</strong><br>
+                            <div class="mt-2 text-sm">
+                                진행: \${i + 1}/\${monthlyTasks.length} - \${task.hospital_name} 완료 ✅
+                            </div>
+                        \`;
+                    } catch (error) {
+                        results.push({ 
+                            hospital: task.hospital_name, 
+                            success: false, 
+                            error: error.response?.data?.error?.message || '생성 실패' 
+                        });
+                    }
+                }
+
+                // 4. 결과 표시
+                const successCount = results.filter(r => r.success).length;
+                const failCount = results.filter(r => !r.success).length;
+
+                if (failCount === 0) {
+                    document.getElementById('schedule-success').innerHTML = \`
+                        <strong><i class="fas fa-check-circle mr-2"></i>전체 병원 스케줄 생성 완료!</strong><br>
+                        <div class="mt-2 text-sm">
+                            ✅ 성공: \${successCount}개 병원<br>
+                            캘린더 탭에서 확인하세요.
+                        </div>
+                    \`;
+                    
+                    // 2초 후 캘린더 탭으로 자동 이동
+                    setTimeout(() => {
+                        showTab('calendar');
+                        loadCalendar();
+                    }, 2000);
+                } else {
+                    document.getElementById('schedule-error').classList.remove('hidden');
+                    document.getElementById('schedule-error').innerHTML = \`
+                        <strong><i class="fas fa-exclamation-triangle mr-2"></i>일부 병원 스케줄 생성 실패</strong><br>
+                        <div class="mt-2 text-sm">
+                            ✅ 성공: \${successCount}개 병원<br>
+                            ❌ 실패: \${failCount}개 병원<br><br>
+                            <strong>실패 목록:</strong><br>
+                            \${results.filter(r => !r.success).map(r => \`- \${r.hospital}: \${r.error}\`).join('<br>')}
+                        </div>
+                    \`;
+                }
+            } catch (error) {
+                document.getElementById('schedule-error').classList.remove('hidden');
+                document.getElementById('schedule-error').innerHTML = \`
+                    <strong><i class="fas fa-exclamation-triangle mr-2"></i>전체 재생성 실패</strong><br>
+                    \${error.message}
+                \`;
             }
         }
 

@@ -368,45 +368,78 @@ export async function generateSchedule(
     }
   }
   
-  // 남은 상위노출 작업이 있으면 일반 작업 목록에 추가 (날짜 지정 안된 경우)
-  normalTasks.push(...sanwiTasks)
-
-  // 13. 일반 작업 배치 (메인 블로그는 하루 1개 포스팅, 한 병원당 하루 최대 6시간)
-  let taskIndex = 0
+  // 13. 일반 작업 배치 개선 (브랜드/트렌드 골고루 분산)
   const maxBlogPostsPerDay = 1  // 메인 블로그 하루 1개 포스팅
-  const maxHoursPerHospitalPerDay = 6  // 한 병원당 하루 최대 6시간 (여유롭게 배치)
+  const maxHoursPerHospitalPerDay = 6  // 한 병원당 하루 최대 6시간
 
+  // 브랜드/트렌드와 기타 작업 분리
+  const blogTasks = normalTasks.filter(t => t.type === 'brand' || t.type === 'trend')
+  const otherTasks = normalTasks.filter(t => t.type !== 'brand' && t.type !== 'trend')
+
+  console.log(`[DEBUG] 블로그 작업: ${blogTasks.length}개, 기타 작업: ${otherTasks.length}개`)
+
+  // 1단계: 브랜드/트렌드 골고루 분산 배치
+  let blogTaskIndex = 0
   for (const daySchedule of contentDaySchedules) {
-    if (taskIndex >= normalTasks.length) break
+    if (blogTaskIndex >= blogTasks.length) break
 
-    while (taskIndex < normalTasks.length) {
-      const task = normalTasks[taskIndex]
+    // 이미 메인 블로그 작업이 있으면 건너뛰기
+    const mainBlogTaskCount = daySchedule.tasks.filter(t => 
+      !t.isReport && (t.type === 'brand' || t.type === 'trend') && t.hospitalId === hospitalId
+    ).length
+    
+    if (mainBlogTaskCount >= maxBlogPostsPerDay) continue
+
+    const task = blogTasks[blogTaskIndex]
+    const remainingHours = daySchedule.availableHours - daySchedule.usedHours
+    const hospitalUsedHours = daySchedule.tasks
+      .filter(t => t.hospitalId === hospitalId)
+      .reduce((sum, t) => sum + t.duration, 0)
+
+    // 병원 하루 최대 시간 체크
+    if (hospitalUsedHours + task.duration > maxHoursPerHospitalPerDay) continue
+
+    // 시간이 충분한 경우에만 배치
+    if (task.duration <= remainingHours) {
+      const dayStartHour = isMonday(daySchedule.date) ? 10 : 9
+      const startHourOffset = dayStartHour + daySchedule.usedHours
+      const { hour: endHour, minute: endMinute } = addHours(startHourOffset, task.duration)
+
+      daySchedule.tasks.push({
+        hospitalId: task.hospitalId,
+        hospitalName: task.hospitalName,
+        type: task.type,
+        label: task.label,
+        startTime: formatTime(Math.floor(startHourOffset), 0),
+        endTime: formatTime(endHour, endMinute),
+        duration: task.duration,
+        isReport: false
+      })
+
+      daySchedule.usedHours += task.duration
+      blogTaskIndex++
+    }
+  }
+
+  // 2단계: 기타 작업 배치 (상위노출, 언론보도, 지식인, 카페)
+  let otherTaskIndex = 0
+  for (const daySchedule of contentDaySchedules) {
+    if (otherTaskIndex >= otherTasks.length) break
+
+    while (otherTaskIndex < otherTasks.length) {
+      const task = otherTasks[otherTaskIndex]
       const remainingHours = daySchedule.availableHours - daySchedule.usedHours
-      
-      // 메인 블로그 작업(브랜드, 트렌드) 개수 계산
-      const mainBlogTaskCount = daySchedule.tasks.filter(t => 
-        !t.isReport && (t.type === 'brand' || t.type === 'trend') && t.hospitalId === hospitalId
-      ).length
-      
-      // 이 병원의 오늘 총 작업 시간 계산
       const hospitalUsedHours = daySchedule.tasks
         .filter(t => t.hospitalId === hospitalId)
         .reduce((sum, t) => sum + t.duration, 0)
-      
-      // 메인 블로그 작업이면 1개 제한 확인
-      const isMainBlogTask = (task.type === 'brand' || task.type === 'trend')
-      if (isMainBlogTask && mainBlogTaskCount >= maxBlogPostsPerDay) {
-        break  // 메인 블로그 작업이 이미 1개면 다음 날로
-      }
-      
-      // 이 병원 작업 시간이 6시간 초과하면 다음 날로
+
+      // 병원 하루 최대 시간 체크
       if (hospitalUsedHours + task.duration > maxHoursPerHospitalPerDay) {
         break
       }
 
       // 시간이 충분한 경우에만 배치
       if (task.duration <= remainingHours) {
-        // 시작 시간 계산 (월요일은 10시부터, 나머지는 9시부터)
         const dayStartHour = isMonday(daySchedule.date) ? 10 : 9
         const startHourOffset = dayStartHour + daySchedule.usedHours
         const { hour: endHour, minute: endMinute } = addHours(startHourOffset, task.duration)
@@ -423,7 +456,7 @@ export async function generateSchedule(
         })
 
         daySchedule.usedHours += task.duration
-        taskIndex++
+        otherTaskIndex++
       } else {
         // 시간 부족 시 다음 날로 이동
         break
@@ -432,7 +465,6 @@ export async function generateSchedule(
   }
 
   // 14. 배치되지 못한 작업 확인 및 "일찍 출근" 일정 자동 추가
-  const unscheduledTasks = normalTasks.slice(taskIndex)
   if (unscheduledTasks.length > 0) {
     const unscheduledHours = unscheduledTasks.reduce((sum, t) => sum + t.duration, 0)
     
