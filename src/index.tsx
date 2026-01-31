@@ -341,6 +341,18 @@ app.get('/', (c) => {
         transform: scale(1.02);
         transition: all 0.2s;
       }
+      
+      /* 동그라미 점 제거 */
+      .fc-daygrid-event-dot {
+        display: none !important;
+      }
+      
+      /* 이벤트를 박스 형태로 표시 */
+      .fc-daygrid-event {
+        padding: 2px 4px !important;
+        margin: 1px 0 !important;
+        border-radius: 3px !important;
+      }
     </style>
     <link href='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.css' rel='stylesheet' />
 </head>
@@ -1060,6 +1072,8 @@ app.get('/', (c) => {
                 editable: true, // 드래그 앤 드롭 활성화
                 eventDrop: handleEventDrop, // 이벤트 이동 핸들러
                 eventClick: handleEventClick, // 이벤트 클릭 핸들러 (완료 체크)
+                eventDisplay: 'block', // 블록 형태로 표시 (동그라미 제거)
+                displayEventTime: false, // 시간 표시 제거
                 dayCellDidMount: function(info) {
                     const date = info.date;
                     const dayOfWeek = date.getDay();
