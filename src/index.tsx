@@ -1458,8 +1458,12 @@ app.get('/', (c) => {
             moveUpBtn.style.fontSize = '14px';
             moveUpBtn.onmouseover = () => moveUpBtn.style.backgroundColor = '#f0f0f0';
             moveUpBtn.onmouseout = () => moveUpBtn.style.backgroundColor = 'white';
-            moveUpBtn.onclick = async () => {
-                document.body.removeChild(menu);
+            moveUpBtn.onclick = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (document.body.contains(menu)) {
+                    document.body.removeChild(menu);
+                }
                 await moveEvent(event, -1);
             };
             menu.appendChild(moveUpBtn);
@@ -1472,23 +1476,28 @@ app.get('/', (c) => {
             moveDownBtn.style.fontSize = '14px';
             moveDownBtn.onmouseover = () => moveDownBtn.style.backgroundColor = '#f0f0f0';
             moveDownBtn.onmouseout = () => moveDownBtn.style.backgroundColor = 'white';
-            moveDownBtn.onclick = async () => {
-                document.body.removeChild(menu);
+            moveDownBtn.onclick = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (document.body.contains(menu)) {
+                    document.body.removeChild(menu);
+                }
                 await moveEvent(event, 1);
             };
             menu.appendChild(moveDownBtn);
             
             document.body.appendChild(menu);
             
-            // 메뉴 외부 클릭 시 닫기
+            // 메뉴 외부 클릭 시 닫기 (메뉴 내부 클릭은 제외)
             setTimeout(() => {
-                document.addEventListener('click', function closeMenu() {
-                    if (document.body.contains(menu)) {
+                const closeMenu = (e) => {
+                    if (!menu.contains(e.target) && document.body.contains(menu)) {
                         document.body.removeChild(menu);
+                        document.removeEventListener('mousedown', closeMenu);
                     }
-                    document.removeEventListener('click', closeMenu);
-                }, 100);
-            }, 100);
+                };
+                document.addEventListener('mousedown', closeMenu);
+            }, 0);
         }
         
         // 이벤트 위/아래 이동
