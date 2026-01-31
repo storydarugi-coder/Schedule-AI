@@ -1089,6 +1089,8 @@ app.get('/', (c) => {
                 eventClick: handleEventClick, // 이벤트 클릭 핸들러 (완료 체크)
                 eventDisplay: 'block', // 블록 형태로 표시 (동그라미 제거)
                 displayEventTime: false, // 시간 표시 제거
+                eventOrder: 'order_index,start', // order_index로 정렬
+                eventOrderStrict: true, // 엄격한 순서 적용
                 dayCellDidMount: function(info) {
                     const date = info.date;
                     const dayOfWeek = date.getDay();
@@ -1172,6 +1174,7 @@ app.get('/', (c) => {
                         id: s.id, // 스케줄 ID 추가 (드래그 앤 드롭에 필요)
                         title: \`\${titlePrefix}\${s.hospital_name} - \${s.task_name}\`,
                         start: \`\${s.task_date}T\${s.start_time}\`, // 시간 포함하여 정렬
+                        order_index: s.order_index || 0, // 순서 인덱스 추가
                         color: color,
                         textColor: textColor,
                         borderColor: textColor,
