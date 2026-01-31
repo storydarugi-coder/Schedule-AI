@@ -202,7 +202,7 @@ app.get('/api/schedules/:year/:month', async (c) => {
     LEFT JOIN monthly_tasks mt ON s.hospital_id = mt.hospital_id 
       AND s.year = mt.year AND s.month = mt.month
     WHERE s.year = ? AND s.month = ?
-    ORDER BY s.task_date, s.start_time
+    ORDER BY s.task_date, s.is_report, s.start_time
   `).bind(year, month).all()
 
   return c.json(result.results)
