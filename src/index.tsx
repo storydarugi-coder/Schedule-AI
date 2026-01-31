@@ -981,7 +981,7 @@ app.get('/', (c) => {
                 editable: true, // 드래그 앤 드롭 활성화
                 eventDrop: handleEventDrop, // 이벤트 이동 핸들러
                 eventClick: handleEventClick, // 이벤트 클릭 핸들러 (완료 체크)
-                dayCellDidMount: async function(info) {
+                dayCellDidMount: function(info) {
                     const date = info.date;
                     const dayOfWeek = date.getDay();
                     const dateStr = date.toISOString().split('T')[0];
@@ -998,6 +998,17 @@ app.get('/', (c) => {
                     // 평일 배경색 (연한 파란색)
                     else {
                         info.el.style.backgroundColor = '#f0f9ff'; // 아주 연한 파란색
+                    }
+                },
+                eventDidMount: function(info) {
+                    // 일찍 출근 이벤트가 있는 날짜의 배경색 변경
+                    if (info.event.extendedProps.taskType === 'early_start') {
+                        const dateStr = info.event.startStr;
+                        const dayCell = document.querySelector(\`[data-date="\${dateStr}"]\`);
+                        if (dayCell) {
+                            dayCell.style.backgroundColor = '#787FFF';
+                            dayCell.style.fontWeight = 'bold';
+                        }
                     }
                 },
                 dayCellClassNames: function(info) {
