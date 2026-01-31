@@ -1154,7 +1154,7 @@ app.get('/', (c) => {
                     
                     return {
                         id: s.id, // 스케줄 ID 추가 (드래그 앤 드롭에 필요)
-                        title: \`\${titlePrefix}\${s.hospital_name} - \${s.task_name} (\${s.start_time}-\${s.end_time})\`,
+                        title: \`\${titlePrefix}\${s.hospital_name} - \${s.task_name}\`,
                         start: \`\${s.task_date}T\${s.start_time}\`, // 시간 포함하여 정렬
                         color: color,
                         textColor: textColor,
