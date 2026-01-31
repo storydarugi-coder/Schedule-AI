@@ -319,7 +319,35 @@ export async function generateSchedule(
     }
   }
 
-  // 14. 보고서 작업을 마감일 마지막에 배치
+  // 14. 배치되지 못한 작업 확인
+  const unscheduledTasks = normalTasks.slice(taskIndex)
+  if (unscheduledTasks.length > 0) {
+    const unscheduledHours = unscheduledTasks.reduce((sum, t) => sum + t.duration, 0)
+    const unscheduledTaskNames = unscheduledTasks.map(t => `${t.label} (${t.duration}시간)`).join(', ')
+    
+    // 마감 당김을 줄이면 확보 가능한 시간 계산
+    const currentPullDays = monthlyTask.deadline_pull_days
+    const additionalDaysNeeded = Math.ceil(unscheduledHours / 6) // 하루 최대 6시간 가정
+    const suggestedPullDays = Math.max(0, currentPullDays - additionalDaysNeeded)
+    
+    let suggestion = ''
+    if (currentPullDays > 0) {
+      const savedDays = currentPullDays - suggestedPullDays
+      const savedHours = savedDays * 8.5 // 하루 8.5시간
+      suggestion = `\n\n💡 해결 방법:\n1) 마감 당김을 ${currentPullDays}일 → ${suggestedPullDays}일로 변경하면 약 ${savedHours}시간 확보 가능\n2) 작업 개수 줄이기 (${unscheduledTaskNames})\n3) 근무일 추가 (연차 제거)`
+    } else {
+      suggestion = `\n\n💡 해결 방법:\n1) 작업 개수 줄이기 (${unscheduledTaskNames})\n2) 근무일 추가 (연차 제거)\n3) 병원당 최대 시간 제한 완화`
+    }
+    
+    return {
+      hospital_name: hospitalName,
+      shortage_hours: unscheduledHours,
+      tasks: unscheduledTasks.map(t => t.label),
+      message: `⚠️ 배치 실패한 작업: ${unscheduledTaskNames}\n부족 시간: ${unscheduledHours}시간${suggestion}`
+    }
+  }
+
+  // 15. 보고서 작업을 마감일 마지막에 배치
   const reportDay = daySchedules[reportDayIndex]
   const dayStartHour = isMonday(reportDay.date) ? 10 : 9
   const reportStartHourOffset = dayStartHour + reportDay.usedHours

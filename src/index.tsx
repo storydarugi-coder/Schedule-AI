@@ -904,12 +904,12 @@ app.get('/', (c) => {
                     \`;
                 } else if (errorData && errorData.message) {
                     // 구조화된 에러 객체
+                    const messageWithBreaks = errorData.message.replace(/\\n/g, '<br>');
                     document.getElementById('schedule-error').innerHTML = \`
-                        <strong><i class="fas fa-exclamation-triangle mr-2"></i>오류:</strong> \${errorData.message}<br>
-                        <strong>병원:</strong> \${errorData.hospital_name}<br>
-                        \${errorData.shortage_hours > 0 ? \`<strong>부족 시간:</strong> \${errorData.shortage_hours}시간<br>\` : ''}
-                        <div class="mt-2 text-sm">
-                            💡 <strong>해결 방법:</strong> 작업량을 줄이거나 마감 당김 일수를 조정하세요.
+                        <div style="white-space: pre-wrap;">\${messageWithBreaks}</div>
+                        <div class="mt-4 text-sm">
+                            <strong>병원:</strong> \${errorData.hospital_name}<br>
+                            \${errorData.shortage_hours > 0 ? \`<strong>부족 시간:</strong> \${errorData.shortage_hours}시간\` : ''}
                         </div>
                     \`;
                 } else {
