@@ -437,12 +437,28 @@ app.get('/', (c) => {
     <script>
         let calendar = null;
         let hospitals = [];
+        
+        // 2026년 공휴일 목록
+        const holidays2026 = [
+            '2026-01-01', // 신정
+            '2026-02-16', '2026-02-17', '2026-02-18', // 설날
+            '2026-03-01', '2026-03-02', // 삼일절
+            '2026-05-05', '2026-05-24', '2026-05-25', // 어린이날, 부처님오신날
+            '2026-06-06', // 현충일
+            '2026-08-15', '2026-08-17', // 광복절
+            '2026-09-24', '2026-09-25', '2026-09-26', // 추석
+            '2026-10-03', '2026-10-05', // 개천절
+            '2026-10-09', // 한글날
+            '2026-12-25' // 크리스마스
+        ];
+        
+        // 연차/휴가 타입 (파스텔 톤)
         const vacationTypes = {
-            annual: { label: '연차', color: '#f59e0b' },
-            summer: { label: '여름휴가', color: '#10b981' },
-            winter: { label: '겨울휴가', color: '#3b82f6' },
-            sick: { label: '병가', color: '#ef4444' },
-            other: { label: '기타', color: '#6b7280' }
+            annual: { label: '연차', color: '#ffc9e0' },      // 파스텔 핑크
+            summer: { label: '여름휴가', color: '#b4e7ce' },   // 파스텔 민트
+            winter: { label: '겨울휴가', color: '#b8d4f1' },   // 파스텔 블루
+            sick: { label: '병가', color: '#ffd4a3' },         // 파스텔 오렌지
+            other: { label: '기타', color: '#d4c5f9' }         // 파스텔 퍼플
         };
 
         // 탭 전환
@@ -553,16 +569,20 @@ app.get('/', (c) => {
 
                 list.innerHTML = res.data.map(v => {
                     const vType = vacationTypes[v.vacation_type] || vacationTypes.other;
+                    const textColor = v.vacation_type === 'annual' ? '#be123c' : 
+                                     v.vacation_type === 'summer' ? '#065f46' :
+                                     v.vacation_type === 'winter' ? '#1e40af' :
+                                     v.vacation_type === 'sick' ? '#c2410c' : '#6b21a8';
                     return \`
-                        <div class="flex justify-between items-center p-4 border-2 border-yellow-100 rounded-xl hover:border-yellow-300 transition-all bg-gradient-to-r from-yellow-50 to-white shadow-sm hover:shadow-md">
+                        <div class="flex justify-between items-center p-4 border-2 rounded-xl transition-all shadow-sm hover:shadow-md" style="border-color: \${vType.color}; background: linear-gradient(to right, \${vType.color}30, white);">
                             <div class="flex items-center space-x-4">
-                                <div class="rounded-lg p-3" style="background-color: \${vType.color}20;">
-                                    <i class="fas fa-umbrella-beach text-2xl" style="color: \${vType.color};"></i>
+                                <div class="rounded-lg p-3" style="background-color: \${vType.color};">
+                                    <i class="fas fa-umbrella-beach text-2xl text-white"></i>
                                 </div>
                                 <div>
                                     <span class="font-bold text-lg text-gray-800">\${v.vacation_date}</span>
                                     <div class="flex items-center mt-1 space-x-2">
-                                        <span class="px-3 py-1 rounded-full text-sm font-semibold text-white" style="background-color: \${vType.color};">
+                                        <span class="px-3 py-1 rounded-full text-sm font-semibold" style="background-color: \${vType.color}; color: \${textColor};">
                                             \${vType.label}
                                         </span>
                                         \${v.description ? \`<span class="text-gray-600">\${v.description}</span>\` : ''}
@@ -728,7 +748,47 @@ app.get('/', (c) => {
                 headerToolbar: false,
                 locale: 'ko',
                 height: 'auto',
-                events: []
+                events: [],
+                dayCellDidMount: async function(info) {
+                    const date = info.date;
+                    const dayOfWeek = date.getDay();
+                    const dateStr = date.toISOString().split('T')[0];
+                    
+                    // 공휴일 배경색 (파스텔 빨강)
+                    if (holidays2026.includes(dateStr)) {
+                        info.el.style.backgroundColor = '#fecaca'; // 파스텔 빨강
+                        info.el.style.fontWeight = 'bold';
+                    }
+                    // 주말 배경색 (일요일: 파스텔 핑크, 토요일: 파스텔 블루)
+                    else if (dayOfWeek === 0) {
+                        info.el.style.backgroundColor = '#ffe4e6'; // 파스텔 핑크
+                    } else if (dayOfWeek === 6) {
+                        info.el.style.backgroundColor = '#dbeafe'; // 파스텔 블루
+                    }
+                    // 평일 배경색 (연한 파란색)
+                    else {
+                        info.el.style.backgroundColor = '#f0f9ff'; // 아주 연한 파란색
+                    }
+                },
+                dayCellClassNames: function(info) {
+                    const date = info.date;
+                    const dayOfWeek = date.getDay();
+                    const dateStr = date.toISOString().split('T')[0];
+                    
+                    // 공휴일 빨간색 텍스트
+                    if (holidays2026.includes(dateStr)) {
+                        return ['text-red-500'];
+                    }
+                    // 일요일 빨간색 텍스트
+                    if (dayOfWeek === 0) {
+                        return ['text-red-400'];
+                    }
+                    // 토요일 파란색 텍스트
+                    if (dayOfWeek === 6) {
+                        return ['text-blue-400'];
+                    }
+                    return [];
+                }
             });
             calendar.render();
             loadCalendar();
@@ -745,12 +805,15 @@ app.get('/', (c) => {
                 // 스케줄 가져오기
                 const scheduleRes = await axios.get(\`/api/schedules/\${year}/\${month}\`);
                 const events = scheduleRes.data.map(s => {
-                    const color = s.is_report ? '#dc2626' : '#787FFF';
+                    // 파스텔 톤 색상 (보고서: 파스텔 핑크, 작업: 파스텔 블루)
+                    const color = s.is_report ? '#fda4af' : '#bfdbfe'; // 파스텔 핑크 vs 파스텔 블루
+                    const textColor = s.is_report ? '#be123c' : '#1e40af'; // 진한 핑크 vs 진한 블루
                     return {
                         title: \`\${s.hospital_name} - \${s.task_name} (\${s.start_time}-\${s.end_time})\`,
                         start: s.task_date,
                         color: color,
-                        textColor: '#ffffff',
+                        textColor: textColor,
+                        borderColor: textColor,
                         extendedProps: {
                             pullDays: s.deadline_pull_days
                         }
@@ -761,11 +824,17 @@ app.get('/', (c) => {
                 const vacationRes = await axios.get(\`/api/vacations/\${year}/\${month}\`);
                 const vacationEvents = vacationRes.data.map(v => {
                     const vType = vacationTypes[v.vacation_type] || vacationTypes.other;
+                    // 연차/휴가도 진한 텍스트 색상 사용
+                    const textColor = v.vacation_type === 'annual' ? '#be123c' : 
+                                     v.vacation_type === 'summer' ? '#065f46' :
+                                     v.vacation_type === 'winter' ? '#1e40af' :
+                                     v.vacation_type === 'sick' ? '#c2410c' : '#6b21a8';
                     return {
                         title: \`🏖️ \${vType.label}\${v.description ? ': ' + v.description : ''}\`,
                         start: v.vacation_date,
                         color: vType.color,
-                        textColor: '#ffffff',
+                        textColor: textColor,
+                        borderColor: textColor,
                         allDay: true
                     };
                 });
