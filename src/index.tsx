@@ -1091,6 +1091,13 @@ app.get('/', (c) => {
                 displayEventTime: false, // 시간 표시 제거
                 eventOrder: 'order_index,start', // order_index로 정렬
                 eventOrderStrict: true, // 엄격한 순서 적용
+                eventDidMount: function(info) {
+                    // 우클릭 메뉴 추가
+                    info.el.addEventListener('contextmenu', function(e) {
+                        e.preventDefault();
+                        showReorderMenu(e, info.event);
+                    });
+                },
                 dayCellDidMount: function(info) {
                     const date = info.date;
                     const dayOfWeek = date.getDay();
@@ -1190,7 +1197,8 @@ app.get('/', (c) => {
                             durationHours: s.duration_hours,
                             isReport: s.is_report,
                             isCompleted: s.is_completed || 0,
-                            pullDays: s.deadline_pull_days
+                            pullDays: s.deadline_pull_days,
+                            order_index: s.order_index || 0 // 순서 인덱스
                         }
                     };
                 });
@@ -1421,6 +1429,101 @@ app.get('/', (c) => {
                 console.error('일정 이동 실패', error);
                 alert('❌ 일정 이동에 실패했습니다. 다시 시도해주세요.');
                 info.revert();
+            }
+        }
+
+        // 순서 변경 메뉴 표시
+        function showReorderMenu(e, event) {
+            const scheduleId = event.extendedProps.scheduleId;
+            if (!scheduleId) return; // 연차/휴가는 순서 변경 불가
+            
+            const menu = document.createElement('div');
+            menu.style.position = 'fixed';
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
+            menu.style.backgroundColor = 'white';
+            menu.style.border = '1px solid #ccc';
+            menu.style.borderRadius = '4px';
+            menu.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+            menu.style.zIndex = '10000';
+            menu.style.padding = '4px 0';
+            
+            // 위로 이동 버튼
+            const moveUpBtn = document.createElement('div');
+            moveUpBtn.textContent = '↑ 위로 이동';
+            moveUpBtn.style.padding = '8px 16px';
+            moveUpBtn.style.cursor = 'pointer';
+            moveUpBtn.style.fontSize = '14px';
+            moveUpBtn.onmouseover = () => moveUpBtn.style.backgroundColor = '#f0f0f0';
+            moveUpBtn.onmouseout = () => moveUpBtn.style.backgroundColor = 'white';
+            moveUpBtn.onclick = async () => {
+                document.body.removeChild(menu);
+                await moveEvent(event, -1);
+            };
+            menu.appendChild(moveUpBtn);
+            
+            // 아래로 이동 버튼
+            const moveDownBtn = document.createElement('div');
+            moveDownBtn.textContent = '↓ 아래로 이동';
+            moveDownBtn.style.padding = '8px 16px';
+            moveDownBtn.style.cursor = 'pointer';
+            moveDownBtn.style.fontSize = '14px';
+            moveDownBtn.onmouseover = () => moveDownBtn.style.backgroundColor = '#f0f0f0';
+            moveDownBtn.onmouseout = () => moveDownBtn.style.backgroundColor = 'white';
+            moveDownBtn.onclick = async () => {
+                document.body.removeChild(menu);
+                await moveEvent(event, 1);
+            };
+            menu.appendChild(moveDownBtn);
+            
+            document.body.appendChild(menu);
+            
+            // 메뉴 외부 클릭 시 닫기
+            setTimeout(() => {
+                document.addEventListener('click', function closeMenu() {
+                    if (document.body.contains(menu)) {
+                        document.body.removeChild(menu);
+                    }
+                    document.removeEventListener('click', closeMenu);
+                }, 100);
+            }, 100);
+        }
+        
+        // 이벤트 위/아래 이동
+        async function moveEvent(event, direction) {
+            const scheduleId = event.extendedProps.scheduleId;
+            const dateStr = event.startStr.split('T')[0];
+            
+            // 같은 날짜의 모든 이벤트 가져오기
+            const dayEvents = calendar.getEvents().filter(e => {
+                return e.startStr.split('T')[0] === dateStr && e.extendedProps.scheduleId;
+            }).sort((a, b) => (a.extendedProps.order_index || 0) - (b.extendedProps.order_index || 0));
+            
+            const currentIndex = dayEvents.findIndex(e => e.extendedProps.scheduleId === scheduleId);
+            const targetIndex = currentIndex + direction;
+            
+            if (targetIndex < 0 || targetIndex >= dayEvents.length) {
+                alert('더 이상 이동할 수 없습니다.');
+                return;
+            }
+            
+            // 순서 교체
+            const temp = dayEvents[currentIndex];
+            dayEvents[currentIndex] = dayEvents[targetIndex];
+            dayEvents[targetIndex] = temp;
+            
+            // order_index 업데이트
+            const updates = dayEvents.map((e, index) => ({
+                id: e.extendedProps.scheduleId,
+                order_index: index
+            }));
+            
+            try {
+                await axios.put('/api/schedules/reorder', { updates });
+                loadCalendar();
+            } catch (error) {
+                console.error('순서 변경 실패', error);
+                alert('❌ 순서 변경에 실패했습니다.');
             }
         }
 
