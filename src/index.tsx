@@ -1125,7 +1125,7 @@ app.get('/', (c) => {
                     return {
                         id: s.id, // 스케줄 ID 추가 (드래그 앤 드롭에 필요)
                         title: \`\${titlePrefix}\${s.hospital_name} - \${s.task_name} (\${s.start_time}-\${s.end_time})\`,
-                        start: s.task_date,
+                        start: \`\${s.task_date}T\${s.start_time}\`, // 시간 포함하여 정렬
                         color: color,
                         textColor: textColor,
                         borderColor: textColor,
@@ -1322,8 +1322,9 @@ app.get('/', (c) => {
                 return;
             }
 
-            const oldDate = info.oldEvent.startStr;
-            const newDate = event.startStr;
+            // 날짜만 추출 (시간 제거)
+            const oldDate = info.oldEvent.startStr.split('T')[0];
+            const newDate = event.startStr.split('T')[0];
 
             if (!confirm(\`\${event.title}\n\n\${oldDate} → \${newDate}\n\n일정을 이동하시겠습니까?\`)) {
                 info.revert();
