@@ -84,15 +84,32 @@ export async function generateSchedule(
   // 4. 근무일 목록 생성
   const workdays = getWorkdays(year, month, vacations)
 
-  // 5. 일별 스케줄 초기화
-  const daySchedules: DaySchedule[] = workdays.map(date => ({
-    date,
-    availableHours: getAvailableHours(date),
-    usedHours: 0,
-    tasks: []
-  }))
+  // 5. 해당 월의 모든 스케줄 조회 (다른 병원 작업 시간 고려)
+  const allSchedules = await db.prepare(`
+    SELECT task_date, SUM(duration_hours) as total_hours
+    FROM schedules
+    WHERE year = ? AND month = ? AND is_report = 0
+    GROUP BY task_date
+  `).bind(year, month).all()
+  
+  const existingHoursPerDay = new Map<string, number>()
+  for (const row of allSchedules.results) {
+    existingHoursPerDay.set((row as any).task_date, (row as any).total_hours || 0)
+  }
 
-  // 6. 보고서 작업 고정 (마감일 당일 10:00~12:00)
+  // 6. 일별 스케줄 초기화 (기존 작업 시간 반영)
+  const daySchedules: DaySchedule[] = workdays.map(date => {
+    const dateStr = formatDate(date)
+    const existingHours = existingHoursPerDay.get(dateStr) || 0
+    return {
+      date,
+      availableHours: getAvailableHours(date),
+      usedHours: existingHours,  // 다른 병원 작업 시간 반영
+      tasks: []
+    }
+  })
+
+  // 7. 보고서 작업 고정 (마감일 당일 10:00~12:00)
   const reportDayIndex = daySchedules.findIndex(
     d => formatDate(d.date) === formatDate(dueDate)
   )
@@ -119,7 +136,7 @@ export async function generateSchedule(
   })
   daySchedules[reportDayIndex].usedHours += 2
 
-  // 7. 상위노출 일자 먼저 가져오기 (병원 관리에서 설정한 여러 날짜)
+  // 8. 상위노출 일자 먼저 가져오기 (병원 관리에서 설정한 여러 날짜)
   let sanwiNosolDays: number[] = []
   if (hospital.sanwi_nosul_days) {
     try {
@@ -130,7 +147,7 @@ export async function generateSchedule(
     }
   }
 
-  // 8. 콘텐츠 작업 목록 생성 (브랜드/트렌드 교차 배치)
+  // 9. 콘텐츠 작업 목록 생성 (브랜드/트렌드 교차 배치)
   const tasks: Task[] = []
   
   // 작업 순서 파싱 (기본값: 'brand,trend')
@@ -188,11 +205,11 @@ export async function generateSchedule(
     }
   }
 
-  // 9. 상위노출 작업과 일반 작업 분리
+  // 10. 상위노출 작업과 일반 작업 분리
   const sanwiTasks = tasks.filter(t => t.type === 'sanwi_nosul')
   const normalTasks = tasks.filter(t => t.type !== 'sanwi_nosul')
   
-  // 10. 콘텐츠 작업 배치 (마감일 이전 근무일에만)
+  // 11. 콘텐츠 작업 배치 (마감일 이전 근무일에만)
   const contentDaySchedules = daySchedules.filter(
     d => d.date <= contentDeadline
   )
@@ -212,7 +229,7 @@ export async function generateSchedule(
     }
   }
 
-  // 11. 상위노출 작업 먼저 배치 (지정된 날짜들에만)
+  // 12. 상위노출 작업 먼저 배치 (지정된 날짜들에만)
   if (sanwiNosolDays.length > 0 && sanwiTasks.length > 0) {
     for (const daySchedule of contentDaySchedules) {
       const dayOfMonth = daySchedule.date.getDate()
@@ -252,7 +269,7 @@ export async function generateSchedule(
   // 남은 상위노출 작업이 있으면 일반 작업 목록에 추가 (날짜 지정 안된 경우)
   normalTasks.push(...sanwiTasks)
 
-  // 12. 일반 작업 배치 (메인 블로그는 하루 최대 2개 포스팅, 한 병원당 하루 최대 6시간)
+  // 13. 일반 작업 배치 (메인 블로그는 하루 최대 2개 포스팅, 한 병원당 하루 최대 6시간)
   let taskIndex = 0
   const maxBlogPostsPerDay = 2  // 메인 블로그 하루 최대 2개 포스팅
   const maxHoursPerHospitalPerDay = 6  // 한 병원당 하루 최대 6시간 (여유롭게 배치)
