@@ -541,6 +541,63 @@ app.get('/', (c) => {
 
         <!-- 캘린더 탭 -->
         <div id="content-calendar" class="tab-content hidden">
+            <!-- 작업 개수 현황표 -->
+            <div id="task-stats" class="bg-white rounded-xl shadow-lg p-6 mb-4 border-2 border-purple-100 hidden">
+                <h3 class="text-lg font-bold primary-color mb-4">
+                    <i class="fas fa-tasks mr-2"></i>작업 개수 현황
+                </h3>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div class="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 text-center">
+                        <div class="text-sm text-gray-600 mb-1">브랜드</div>
+                        <div class="text-2xl font-bold text-blue-600">
+                            <span id="stat-brand-completed">0</span> / <span id="stat-brand-total">0</span>
+                        </div>
+                    </div>
+                    <div class="bg-green-50 border-2 border-green-200 rounded-lg p-4 text-center">
+                        <div class="text-sm text-gray-600 mb-1">트렌드</div>
+                        <div class="text-2xl font-bold text-green-600">
+                            <span id="stat-trend-completed">0</span> / <span id="stat-trend-total">0</span>
+                        </div>
+                    </div>
+                    <div class="bg-purple-50 border-2 border-purple-200 rounded-lg p-4 text-center">
+                        <div class="text-sm text-gray-600 mb-1">상위노출</div>
+                        <div class="text-2xl font-bold text-purple-600">
+                            <span id="stat-sanwi-completed">0</span> / <span id="stat-sanwi-total">0</span>
+                        </div>
+                    </div>
+                    <div class="bg-orange-50 border-2 border-orange-200 rounded-lg p-4 text-center">
+                        <div class="text-sm text-gray-600 mb-1">언론보도</div>
+                        <div class="text-2xl font-bold text-orange-600">
+                            <span id="stat-eonron-completed">0</span> / <span id="stat-eonron-total">0</span>
+                        </div>
+                    </div>
+                    <div class="bg-pink-50 border-2 border-pink-200 rounded-lg p-4 text-center">
+                        <div class="text-sm text-gray-600 mb-1">지식인</div>
+                        <div class="text-2xl font-bold text-pink-600">
+                            <span id="stat-jisikin-completed">0</span> / <span id="stat-jisikin-total">0</span>
+                        </div>
+                    </div>
+                    <div class="bg-indigo-50 border-2 border-indigo-200 rounded-lg p-4 text-center">
+                        <div class="text-sm text-gray-600 mb-1">카페 포스팅</div>
+                        <div class="text-2xl font-bold text-indigo-600">
+                            <span id="stat-cafe-completed">0</span> / <span id="stat-cafe-total">0</span>
+                        </div>
+                    </div>
+                    <div class="bg-red-50 border-2 border-red-200 rounded-lg p-4 text-center">
+                        <div class="text-sm text-gray-600 mb-1">보고서</div>
+                        <div class="text-2xl font-bold text-red-600">
+                            <span id="stat-report-completed">0</span> / <span id="stat-report-total">0</span>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 border-2 border-gray-200 rounded-lg p-4 text-center">
+                        <div class="text-sm text-gray-600 mb-1">전체 진행률</div>
+                        <div class="text-2xl font-bold text-gray-700">
+                            <span id="stat-progress">0</span>%
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
             <div class="bg-white rounded-xl shadow-lg p-6 mb-4 border-2 border-purple-100">
                 <div class="flex justify-between items-center mb-6">
                     <h2 class="text-2xl font-bold primary-color">
@@ -1104,9 +1161,71 @@ app.get('/', (c) => {
                 calendar.removeAllEvents();
                 calendar.addEventSource(events.concat(vacationEvents));
                 calendar.gotoDate(\`\${year}-\${month.padStart(2, '0')}-01\`);
+                
+                // 작업 통계 업데이트
+                updateTaskStats(scheduleRes.data);
             } catch (error) {
                 console.error('캘린더 로드 실패', error);
             }
+        }
+        
+        // 작업 통계 업데이트
+        function updateTaskStats(schedules) {
+            if (!schedules || schedules.length === 0) {
+                document.getElementById('task-stats').classList.add('hidden');
+                return;
+            }
+            
+            // 작업 타입별 통계 계산
+            const stats = {
+                brand: { total: 0, completed: 0 },
+                trend: { total: 0, completed: 0 },
+                sanwi_nosul: { total: 0, completed: 0 },
+                eonron_bodo: { total: 0, completed: 0 },
+                jisikin: { total: 0, completed: 0 },
+                cafe_posting: { total: 0, completed: 0 },
+                report: { total: 0, completed: 0 }
+            };
+            
+            schedules.forEach(s => {
+                if (stats[s.task_type] !== undefined) {
+                    stats[s.task_type].total++;
+                    if (s.is_completed) {
+                        stats[s.task_type].completed++;
+                    }
+                }
+            });
+            
+            // 통계 표시 업데이트
+            document.getElementById('stat-brand-total').textContent = stats.brand.total;
+            document.getElementById('stat-brand-completed').textContent = stats.brand.completed;
+            
+            document.getElementById('stat-trend-total').textContent = stats.trend.total;
+            document.getElementById('stat-trend-completed').textContent = stats.trend.completed;
+            
+            document.getElementById('stat-sanwi-total').textContent = stats.sanwi_nosul.total;
+            document.getElementById('stat-sanwi-completed').textContent = stats.sanwi_nosul.completed;
+            
+            document.getElementById('stat-eonron-total').textContent = stats.eonron_bodo.total;
+            document.getElementById('stat-eonron-completed').textContent = stats.eonron_bodo.completed;
+            
+            document.getElementById('stat-jisikin-total').textContent = stats.jisikin.total;
+            document.getElementById('stat-jisikin-completed').textContent = stats.jisikin.completed;
+            
+            document.getElementById('stat-cafe-total').textContent = stats.cafe_posting.total;
+            document.getElementById('stat-cafe-completed').textContent = stats.cafe_posting.completed;
+            
+            document.getElementById('stat-report-total').textContent = stats.report.total;
+            document.getElementById('stat-report-completed').textContent = stats.report.completed;
+            
+            // 전체 진행률 계산
+            const totalTasks = Object.values(stats).reduce((sum, s) => sum + s.total, 0);
+            const completedTasks = Object.values(stats).reduce((sum, s) => sum + s.completed, 0);
+            const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+            document.getElementById('stat-progress').textContent = progress;
+            
+            // 통계 표시
+            document.getElementById('task-stats').classList.remove('hidden');
         }
 
         // 이벤트 클릭 핸들러 (완료 체크)
