@@ -984,7 +984,11 @@ app.get('/', (c) => {
                 dayCellDidMount: function(info) {
                     const date = info.date;
                     const dayOfWeek = date.getDay();
-                    const dateStr = date.toISOString().split('T')[0];
+                    // 로컬 타임존으로 날짜 포맷 (UTC 변환 방지)
+                    const year = date.getFullYear();
+                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    const day = String(date.getDate()).padStart(2, '0');
+                    const dateStr = year + '-' + month + '-' + day;
                     
                     // 공휴일 배경색 (파스텔 빨강)
                     if (holidays2026.includes(dateStr)) {
@@ -1014,7 +1018,11 @@ app.get('/', (c) => {
                 dayCellClassNames: function(info) {
                     const date = info.date;
                     const dayOfWeek = date.getDay();
-                    const dateStr = date.toISOString().split('T')[0];
+                    // 로컬 타임존으로 날짜 포맷 (UTC 변환 방지)
+                    const year = date.getFullYear();
+                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    const day = String(date.getDate()).padStart(2, '0');
+                    const dateStr = year + '-' + month + '-' + day;
                     
                     // 공휴일 빨간색 텍스트
                     if (holidays2026.includes(dateStr)) {
