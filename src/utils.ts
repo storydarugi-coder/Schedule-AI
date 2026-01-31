@@ -1,11 +1,21 @@
 import { HOLIDAYS_2026 } from './types'
 
 /**
+ * 날짜를 YYYY-MM-DD 형식으로 변환 (로컬 타임존 사용)
+ */
+export function formatDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
  * 주말 또는 공휴일인지 확인
  */
 export function isWeekendOrHoliday(date: Date, vacations: string[] = []): boolean {
   const day = date.getDay()
-  const dateStr = date.toISOString().split('T')[0]
+  const dateStr = formatDate(date) // 로컬 타임존 사용
   return day === 0 || day === 6 || HOLIDAYS_2026.includes(dateStr) || vacations.includes(dateStr)
 }
 
@@ -42,7 +52,7 @@ export function calculateDueDate(year: number, month: number, baseDueDay: number
   
   // 마감일이 주말/공휴일/연차인 경우 경고 (이미 당김 적용했는데도 근무 불가일이면 문제)
   if (isWeekendOrHoliday(dueDate, vacations)) {
-    throw new Error(`마감일이 여전히 주말/공휴일/연차입니다: ${dueDate.toISOString().split('T')[0]}`)
+    throw new Error(`마감일이 여전히 주말/공휴일/연차입니다: ${formatDate(dueDate)}`)
   }
   
   return dueDate
@@ -61,13 +71,6 @@ export function getContentDeadline(dueDate: Date, vacations: string[] = []): Dat
   }
   
   return deadline
-}
-
-/**
- * 날짜를 YYYY-MM-DD 형식으로 변환
- */
-export function formatDate(date: Date): string {
-  return date.toISOString().split('T')[0]
 }
 
 /**
