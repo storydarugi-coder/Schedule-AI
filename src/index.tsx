@@ -1104,14 +1104,18 @@ app.get('/', (c) => {
                 const response = await axios.post('/api/monthly-tasks', data);
                 console.log('[SaveTask] Response:', response.data);
                 
+                // 병원명 가져오기
+                const hospitalSelect = document.getElementById('task-hospital');
+                const hospitalName = hospitalSelect.selectedOptions[0].text;
+                
                 document.getElementById('schedule-success').classList.remove('hidden');
                 document.getElementById('schedule-success').innerHTML = \`
                     <strong><i class="fas fa-check-circle mr-2"></i>작업량이 저장되었습니다!</strong><br>
                     <div class="mt-2 text-sm">
-                        병원: <strong>${document.getElementById('task-hospital').selectedOptions[0].text}</strong><br>
-                        기간: <strong>${year}년 ${month}월</strong><br>
-                        브랜드: ${data.brand}개, 트렌드: ${data.trend}개, 언론보도: ${data.eonron_bodo}개, 
-                        지식인: ${data.jisikin}개, 카페: ${data.cafe}개
+                        병원: <strong>\${hospitalName}</strong><br>
+                        기간: <strong>\${year}년 \${month}월</strong><br>
+                        브랜드: \${data.brand}개, 트렌드: \${data.trend}개, 언론보도: \${data.eonron_bodo}개, 
+                        지식인: \${data.jisikin}개, 카페: \${data.cafe}개
                     </div>
                 \`;
                 
@@ -1125,11 +1129,13 @@ app.get('/', (c) => {
                 console.error('[SaveTask] Error:', error);
                 console.error('[SaveTask] Error response:', error.response?.data);
                 
+                const errorMsg = error.response?.data?.error || error.message;
+                
                 document.getElementById('schedule-error').classList.remove('hidden');
                 document.getElementById('schedule-error').innerHTML = \`
                     <strong><i class="fas fa-exclamation-triangle mr-2"></i>저장 실패</strong><br>
                     <div class="mt-2 text-sm">
-                        ${error.response?.data?.error || error.message}
+                        \${errorMsg}
                     </div>
                 \`;
                 
@@ -1212,8 +1218,8 @@ app.get('/', (c) => {
                         <strong><i class="fas fa-exclamation-triangle mr-2"></i>작업량 데이터가 없습니다</strong><br>
                         <div class="mt-3 text-sm">
                             <strong>선택한 정보:</strong><br>
-                            • 병원: <strong>${hospitalName}</strong><br>
-                            • 기간: <strong>${year}년 ${month}월</strong><br><br>
+                            • 병원: <strong>\${hospitalName}</strong><br>
+                            • 기간: <strong>\${year}년 \${month}월</strong><br><br>
                             <strong>💡 해결 방법:</strong><br>
                             1. 위의 작업량 입력 필드에 값을 입력하세요<br>
                             2. "<strong>저장</strong>" 버튼을 먼저 클릭하세요<br>
@@ -1228,8 +1234,8 @@ app.get('/', (c) => {
                 document.getElementById('schedule-error').innerHTML = \`
                     <strong><i class="fas fa-exclamation-triangle mr-2"></i>작업량 확인 실패</strong><br>
                     <div class="mt-2 text-sm">
-                        병원: <strong>${hospitalName}</strong><br>
-                        기간: <strong>${year}년 ${month}월</strong><br><br>
+                        병원: <strong>\${hospitalName}</strong><br>
+                        기간: <strong>\${year}년 \${month}월</strong><br><br>
                         저장된 작업량이 없습니다. 위의 "저장" 버튼을 먼저 클릭하세요.
                     </div>
                 \`;
@@ -1248,8 +1254,8 @@ app.get('/', (c) => {
                 document.getElementById('schedule-success').innerHTML = \`
                     <strong><i class="fas fa-check-circle mr-2"></i>스케줄 생성 완료!</strong><br>
                     <div class="mt-2 text-sm">
-                        병원: <strong>${hospitalName}</strong><br>
-                        기간: <strong>${year}년 ${month}월</strong><br>
+                        병원: <strong>\${hospitalName}</strong><br>
+                        기간: <strong>\${year}년 \${month}월</strong><br>
                         캘린더 탭에서 확인하세요.
                     </div>
                 \`;
@@ -1394,10 +1400,12 @@ app.get('/', (c) => {
                     \`;
                 }
             } catch (error) {
+                const errorMessage = error.message || String(error);
+                
                 document.getElementById('schedule-error').classList.remove('hidden');
                 document.getElementById('schedule-error').innerHTML = \`
                     <strong><i class="fas fa-exclamation-triangle mr-2"></i>전체 재생성 실패</strong><br>
-                    \${error.message}
+                    \${errorMessage}
                 \`;
             }
         }
