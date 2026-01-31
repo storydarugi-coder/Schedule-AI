@@ -119,7 +119,18 @@ export async function generateSchedule(
   })
   daySchedules[reportDayIndex].usedHours += 2
 
-  // 7. 콘텐츠 작업 목록 생성 (브랜드/트렌드 교차 배치)
+  // 7. 상위노출 일자 먼저 가져오기 (병원 관리에서 설정한 여러 날짜)
+  let sanwiNosolDays: number[] = []
+  if (hospital.sanwi_nosul_days) {
+    try {
+      sanwiNosolDays = JSON.parse(hospital.sanwi_nosul_days as string)
+    } catch (e) {
+      // JSON 파싱 실패 시 빈 배열
+      sanwiNosolDays = []
+    }
+  }
+
+  // 8. 콘텐츠 작업 목록 생성 (브랜드/트렌드 교차 배치)
   const tasks: Task[] = []
   
   // 작업 순서 파싱 (기본값: 'brand,trend')
@@ -155,8 +166,11 @@ export async function generateSchedule(
   }
   
   // 상위노출, 언론보도, 지식인 추가
+  // 상위노출 개수는 병원 관리에서 설정한 날짜 개수로 자동 결정
+  const sanwiCount = sanwiNosolDays.length > 0 ? sanwiNosolDays.length : monthlyTask.sanwi_nosul
+  
   const otherTaskDefs = [
-    { type: 'sanwi_nosul', count: monthlyTask.sanwi_nosul, duration: 3.5, label: '상위노출' },
+    { type: 'sanwi_nosul', count: sanwiCount, duration: 3.5, label: '상위노출' },
     { type: 'eonron_bodo', count: monthlyTask.eonron_bodo, duration: 0.5, label: '언론보도' },
     { type: 'jisikin', count: monthlyTask.jisikin, duration: 0.5, label: '지식인' }
   ]
@@ -174,14 +188,11 @@ export async function generateSchedule(
     }
   }
 
-  // 8. 상위노출 작업과 일반 작업 분리
+  // 9. 상위노출 작업과 일반 작업 분리
   const sanwiTasks = tasks.filter(t => t.type === 'sanwi_nosul')
   const normalTasks = tasks.filter(t => t.type !== 'sanwi_nosul')
   
-  // 상위노출 일자 가져오기
-  const sanwiNosolDay = hospital.sanwi_nosul_day as number | undefined
-  
-  // 9. 콘텐츠 작업 배치 (마감일 이전 근무일에만)
+  // 10. 콘텐츠 작업 배치 (마감일 이전 근무일에만)
   const contentDaySchedules = daySchedules.filter(
     d => d.date <= contentDeadline
   )
@@ -201,13 +212,13 @@ export async function generateSchedule(
     }
   }
 
-  // 10. 상위노출 작업 먼저 배치 (지정된 날짜에만)
-  if (sanwiNosolDay && sanwiTasks.length > 0) {
+  // 11. 상위노출 작업 먼저 배치 (지정된 날짜들에만)
+  if (sanwiNosolDays.length > 0 && sanwiTasks.length > 0) {
     for (const daySchedule of contentDaySchedules) {
       const dayOfMonth = daySchedule.date.getDate()
       
-      // 상위노출 일자인 경우에만 배치
-      if (dayOfMonth === sanwiNosolDay && sanwiTasks.length > 0) {
+      // 상위노출 일자 중 하나인 경우에만 배치
+      if (sanwiNosolDays.includes(dayOfMonth) && sanwiTasks.length > 0) {
         const task = sanwiTasks.shift()
         if (!task) continue
         
@@ -241,8 +252,8 @@ export async function generateSchedule(
   // 남은 상위노출 작업이 있으면 일반 작업 목록에 추가 (날짜 지정 안된 경우)
   normalTasks.push(...sanwiTasks)
 
-  // 11. 일반 작업 배치
-  // 11. 일반 작업 배치
+  // 12. 일반 작업 배치
+  // 12. 일반 작업 배치
   let taskIndex = 0
   for (const daySchedule of contentDaySchedules) {
     if (taskIndex >= normalTasks.length) break
