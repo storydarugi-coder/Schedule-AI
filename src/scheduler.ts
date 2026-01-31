@@ -167,7 +167,7 @@ export async function generateSchedule(
           type: 'brand',
           label: '브랜드',
           duration: 3.5,
-          deadline: contentDeadline
+          deadline: dueDate
         })
       } else if (taskType === 'trend' && i < trendCount) {
         tasks.push({
@@ -176,7 +176,7 @@ export async function generateSchedule(
           type: 'trend',
           label: '트렌드',
           duration: 1.5,
-          deadline: contentDeadline
+          deadline: dueDate
         })
       }
     }
@@ -200,7 +200,7 @@ export async function generateSchedule(
         type: taskDef.type,
         label: taskDef.label,
         duration: taskDef.duration,
-        deadline: contentDeadline
+        deadline: dueDate
       })
     }
   }
@@ -209,9 +209,9 @@ export async function generateSchedule(
   const sanwiTasks = tasks.filter(t => t.type === 'sanwi_nosul')
   const normalTasks = tasks.filter(t => t.type !== 'sanwi_nosul')
   
-  // 11. 콘텐츠 작업 배치 (마감일 이전 근무일에만)
+  // 11. 콘텐츠 작업 배치 (마감일 당일까지 가능)
   const contentDaySchedules = daySchedules.filter(
-    d => d.date <= contentDeadline
+    d => d.date <= dueDate
   )
 
   // 총 필요 시간 계산
