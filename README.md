@@ -84,10 +84,14 @@
 ### GitHub Repository
 - **저장소**: https://github.com/storydarugi-coder/Schedule-AI
 
+### 프로덕션 (Cloudflare Pages)
+- **메인 URL**: https://schedule-ai.pages.dev
+- **최신 배포**: https://4a0f6fd8.schedule-ai.pages.dev
+
 ### 로컬 개발
 - **개발 서버**: http://localhost:3000
 
-### 공용 URL
+### 공용 샌드박스 URL
 - **접속 URL**: https://3000-i8r46wzl00mqd9bcczq81-d0b9e1e2.sandbox.novita.ai
 
 ## 📊 데이터 아키텍처
@@ -123,6 +127,7 @@ vacations (
 
 ### 저장 서비스
 - **데이터베이스**: Cloudflare D1 (SQLite)
+  - **프로덕션 DB**: webapp-production (ID: `8a9be10c-2201-4298-84bc-02511f19c8a3`)
 - **로컬 개발**: `.wrangler/state/v3/d1` (자동 생성)
 
 ### 데이터 흐름
@@ -261,7 +266,7 @@ webapp/
 - ✅ **주말 색상 통일**: 토요일/일요일 동일 색상
 - ✅ **마감 당김 확장**: 최대 5일까지 가능
 - ✅ **데이터 수정 기능**: 기존 작업량 데이터 불러오기 및 수정
-- ⏳ **프로덕션 배포**: Cloudflare API 키 설정 후 배포 가능
+- ✅ **프로덕션 배포**: Cloudflare Pages 배포 완료 (https://schedule-ai.pages.dev)
 
 ## 🎯 마지막 업데이트
 2026-01-31
