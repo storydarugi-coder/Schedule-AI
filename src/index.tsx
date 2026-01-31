@@ -393,6 +393,14 @@ app.get('/', (c) => {
                     </div>
                 </div>
 
+                <div class="bg-purple-50 border-2 border-purple-200 rounded-lg p-4 mb-6">
+                    <p class="text-sm text-purple-800">
+                        <i class="fas fa-info-circle mr-2"></i>
+                        <strong>사용 방법:</strong> 
+                        1) 병원, 년월 선택 → 2) 작업 개수 입력 → 3) <strong class="text-purple-600">"저장" 버튼 클릭 필수</strong> → 4) "스케줄 생성" 클릭
+                    </p>
+                </div>
+
                 <div class="flex gap-4">
                     <button onclick="saveMonthlyTask()" class="btn-primary text-white rounded-lg px-8 py-3 font-semibold shadow-md hover:shadow-lg transition-all">
                         <i class="fas fa-save mr-2"></i>저장
@@ -669,18 +677,45 @@ app.get('/', (c) => {
                 });
 
                 document.getElementById('schedule-success').classList.remove('hidden');
-                document.getElementById('schedule-success').textContent = '스케줄이 생성되었습니다! 캘린더 탭에서 확인하세요.';
+                document.getElementById('schedule-success').innerHTML = \`
+                    <strong><i class="fas fa-check-circle mr-2"></i>스케줄 생성 완료!</strong><br>
+                    캘린더 탭에서 확인하세요.
+                \`;
+                
+                // 3초 후 캘린더 탭으로 자동 이동
+                setTimeout(() => {
+                    showTab('calendar');
+                    loadCalendar();
+                }, 2000);
             } catch (error) {
                 const errorData = error.response?.data?.error;
                 document.getElementById('schedule-error').classList.remove('hidden');
-                if (errorData) {
+                
+                if (typeof errorData === 'string') {
+                    // 단순 문자열 에러 (예: "해당 월의 작업량 데이터가 없습니다")
                     document.getElementById('schedule-error').innerHTML = \`
-                        <strong>오류:</strong> \${errorData.message}<br>
+                        <strong><i class="fas fa-exclamation-triangle mr-2"></i>오류:</strong> \${errorData}<br>
+                        <div class="mt-2 text-sm">
+                            💡 <strong>해결 방법:</strong> 위의 "저장" 버튼을 먼저 클릭하여 작업량을 저장한 후 스케줄을 생성하세요.
+                        </div>
+                    \`;
+                } else if (errorData && errorData.message) {
+                    // 구조화된 에러 객체
+                    document.getElementById('schedule-error').innerHTML = \`
+                        <strong><i class="fas fa-exclamation-triangle mr-2"></i>오류:</strong> \${errorData.message}<br>
                         <strong>병원:</strong> \${errorData.hospital_name}<br>
                         \${errorData.shortage_hours > 0 ? \`<strong>부족 시간:</strong> \${errorData.shortage_hours}시간<br>\` : ''}
+                        <div class="mt-2 text-sm">
+                            💡 <strong>해결 방법:</strong> 작업량을 줄이거나 마감 당김 일수를 조정하세요.
+                        </div>
                     \`;
                 } else {
-                    document.getElementById('schedule-error').textContent = '스케줄 생성 실패';
+                    document.getElementById('schedule-error').innerHTML = \`
+                        <strong><i class="fas fa-exclamation-triangle mr-2"></i>스케줄 생성 실패</strong><br>
+                        <div class="mt-2 text-sm">
+                            💡 작업량을 먼저 저장했는지 확인하세요.
+                        </div>
+                    \`;
                 }
             }
         }
