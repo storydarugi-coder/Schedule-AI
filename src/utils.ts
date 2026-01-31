@@ -88,8 +88,8 @@ export function addHours(startHour: number, durationHours: number): { hour: numb
 }
 
 /**
- * 근무 가능 시간 계산 (월요일은 7시간, 나머지는 8시간)
+ * 근무 가능 시간 계산 (월요일은 7.5시간, 나머지는 8.5시간)
  */
 export function getAvailableHours(date: Date): number {
-  return isMonday(date) ? 7 : 8
+  return isMonday(date) ? 7.5 : 8.5
 }
