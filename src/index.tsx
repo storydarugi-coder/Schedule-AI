@@ -130,7 +130,8 @@ app.post('/api/monthly-tasks', async (c) => {
     await db.prepare(`
       UPDATE monthly_tasks
       SET sanwi_nosul = ?, brand = ?, trend = ?, eonron_bodo = ?, jisikin = ?, cafe = ?,
-          deadline_pull_days = ?, task_order = ?, brand_order = ?, trend_order = ?, sanwi_dates = ?
+          deadline_pull_days = ?, task_order = ?, brand_order = ?, trend_order = ?, sanwi_dates = ?,
+          work_start_date = ?, work_end_date = ?
       WHERE hospital_id = ? AND year = ? AND month = ?
     `).bind(
       sanwi_nosul, brand, trend, eonron_bodo, jisikin, cafe || 0, deadline_pull_days, 
@@ -138,19 +139,23 @@ app.post('/api/monthly-tasks', async (c) => {
       data.brand_order || 1, 
       data.trend_order || 2,
       sanwiDatesJson,
+      data.work_start_date || null,
+      data.work_end_date || null,
       hospital_id, year, month
     ).run()
   } else {
     // 삽입
     await db.prepare(`
-      INSERT INTO monthly_tasks (hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, cafe, deadline_pull_days, task_order, brand_order, trend_order, sanwi_dates)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO monthly_tasks (hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, cafe, deadline_pull_days, task_order, brand_order, trend_order, sanwi_dates, work_start_date, work_end_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, cafe || 0, deadline_pull_days, 
       task_order || 'brand,trend',
       data.brand_order || 1,
       data.trend_order || 2,
-      sanwiDatesJson
+      sanwiDatesJson,
+      data.work_start_date || null,
+      data.work_end_date || null
     ).run()
   }
 
@@ -551,6 +556,25 @@ app.get('/', (c) => {
                     </div>
                 </div>
 
+                <div class="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4 mb-4">
+                    <p class="text-sm text-yellow-800 font-semibold mb-2">
+                        <i class="fas fa-calendar-alt mr-2"></i>작업 기간 설정 (선택사항)
+                    </p>
+                    <p class="text-xs text-yellow-700 mb-3">
+                        기본값: 마감일 기준으로 자동 계산됩니다. 특정 기간을 지정하려면 아래 날짜를 입력하세요.
+                    </p>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-semibold mb-2 text-yellow-800">작업 시작일</label>
+                            <input type="date" id="work-start-date" class="border-2 border-yellow-300 rounded-lg px-4 py-2 w-full focus:border-yellow-400 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold mb-2 text-yellow-800">작업 종료일 (=마감일)</label>
+                            <input type="date" id="work-end-date" class="border-2 border-yellow-300 rounded-lg px-4 py-2 w-full focus:border-yellow-400 focus:outline-none">
+                        </div>
+                    </div>
+                </div>
+
                 <div class="bg-purple-50 border-2 border-purple-200 rounded-lg p-4 mb-6">
                     <p class="text-sm text-purple-800">
                         <i class="fas fa-info-circle mr-2"></i>
@@ -942,7 +966,9 @@ app.get('/', (c) => {
                 task_order: 'brand,trend', // 기본값
                 brand_order: parseInt(document.getElementById('brand-order')?.value || '1'),
                 trend_order: parseInt(document.getElementById('trend-order')?.value || '2'),
-                sanwi_dates: [] // 병원 관리에서 설정된 날짜 사용
+                sanwi_dates: [], // 병원 관리에서 설정된 날짜 사용
+                work_start_date: document.getElementById('work-start-date').value || null,
+                work_end_date: document.getElementById('work-end-date').value || null
             };
 
             // 브랜드/트렌드 게시 순서 검증
@@ -990,6 +1016,8 @@ app.get('/', (c) => {
                     document.getElementById('task-jisikin').value = data.jisikin || 0;
                     document.getElementById('task-cafe').value = data.cafe || 4;
                     document.getElementById('task-pull-days').value = data.deadline_pull_days || 0;
+                    document.getElementById('work-start-date').value = data.work_start_date || '';
+                    document.getElementById('work-end-date').value = data.work_end_date || '';
 
                     // 브랜드/트렌드 순서 복원
                     updateBrandTrendOrder();

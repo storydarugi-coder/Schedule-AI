@@ -69,28 +69,48 @@ export async function generateSchedule(
   
   console.log(`[DEBUG] 병원: ${hospitalName}, 기본 마감일: ${baseDueDay}, 당김: ${monthlyTask.deadline_pull_days}일`)
 
-  // 2. 마감일 계산
+  // 2. 마감일 및 작업 기간 계산
   let dueDate: Date
-  try {
-    dueDate = calculateDueDate(year, month, baseDueDay, monthlyTask.deadline_pull_days, vacations)
-    console.log(`[DEBUG] 계산된 마감일: ${formatDate(dueDate)}`)
-  } catch (error) {
-    console.error(`[DEBUG] 마감일 계산 실패:`, error)
-    return {
-      hospital_name: hospitalName,
+  let workStartDate: Date | null = null
+  let workEndDate: Date | null = null
+
+  // 작업 기간이 설정되어 있으면 우선 사용
+  if (monthlyTask.work_start_date && monthlyTask.work_end_date) {
+    workStartDate = new Date(monthlyTask.work_start_date)
+    workEndDate = new Date(monthlyTask.work_end_date)
+    dueDate = workEndDate
+    console.log(`[DEBUG] 사용자 지정 작업 기간: ${monthlyTask.work_start_date} ~ ${monthlyTask.work_end_date}`)
+  } else {
+    // 기존 로직: 마감일 기준으로 계산
+    try {
+      dueDate = calculateDueDate(year, month, baseDueDay, monthlyTask.deadline_pull_days, vacations)
+      console.log(`[DEBUG] 계산된 마감일: ${formatDate(dueDate)}`)
+    } catch (error) {
+      console.error(`[DEBUG] 마감일 계산 실패:`, error)
+      return {
+        hospital_name: hospitalName,
       shortage_hours: 0,
       tasks: [],
       message: (error as Error).message
     }
+  }
   }
 
   // 3. 콘텐츠 완료 기한 계산
   const contentDeadline = getContentDeadline(dueDate, vacations)
 
   // 4. 근무일 목록 생성
-  const workdays = getWorkdays(year, month, vacations)
-  console.log(`[DEBUG] 근무일 개수: ${workdays.length}일`)
-  console.log(`[DEBUG] 근무일 목록 (처음 5개):`, workdays.slice(0, 5).map(d => formatDate(d)))
+  let workdays = getWorkdays(year, month, vacations)
+  
+  // 작업 기간이 설정되어 있으면 필터링
+  if (workStartDate && workEndDate) {
+    workdays = workdays.filter(d => d >= workStartDate && d <= workEndDate)
+    console.log(`[DEBUG] 작업 기간 필터링 후 근무일 개수: ${workdays.length}일`)
+    console.log(`[DEBUG] 근무일 범위: ${formatDate(workdays[0])} ~ ${formatDate(workdays[workdays.length - 1])}`)
+  } else {
+    console.log(`[DEBUG] 근무일 개수: ${workdays.length}일`)
+    console.log(`[DEBUG] 근무일 목록 (처음 5개):`, workdays.slice(0, 5).map(d => formatDate(d)))
+  }
 
   // 5. 해당 월의 모든 스케줄 조회 (다른 병원 작업 시간 고려)
   const allSchedules = await db.prepare(`

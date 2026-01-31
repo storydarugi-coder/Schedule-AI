@@ -28,6 +28,8 @@ export interface MonthlyTask {
   brand_order: number;
   trend_order: number;
   sanwi_dates: string; // JSON string of array
+  work_start_date?: string | null; // 작업 시작일 (YYYY-MM-DD)
+  work_end_date?: string | null; // 작업 종료일 (=마감일) (YYYY-MM-DD)
   created_at: string;
 }
 
