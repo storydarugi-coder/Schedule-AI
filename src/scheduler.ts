@@ -1,0 +1,232 @@
+import type { Bindings, MonthlyTask, TASK_DEFINITIONS, ScheduleError } from './types'
+import { 
+  getWorkdays, 
+  calculateDueDate, 
+  getContentDeadline, 
+  formatDate, 
+  formatTime, 
+  addHours, 
+  getAvailableHours,
+  isMonday
+} from './utils'
+
+interface Task {
+  hospitalId: number
+  hospitalName: string
+  type: string
+  label: string
+  duration: number
+  deadline: Date
+}
+
+interface DaySchedule {
+  date: Date
+  availableHours: number
+  usedHours: number
+  tasks: Array<{
+    hospitalId: number
+    hospitalName: string
+    type: string
+    label: string
+    startTime: string
+    endTime: string
+    duration: number
+    isReport: boolean
+  }>
+}
+
+/**
+ * 스케줄 생성 메인 로직
+ */
+export async function generateSchedule(
+  db: D1Database,
+  hospitalId: number,
+  year: number,
+  month: number,
+  monthlyTask: MonthlyTask
+): Promise<DaySchedule[] | ScheduleError> {
+  // 1. 병원 정보 조회
+  const hospital = await db.prepare('SELECT * FROM hospitals WHERE id = ?')
+    .bind(hospitalId)
+    .first()
+  
+  if (!hospital) {
+    throw new Error('병원을 찾을 수 없습니다')
+  }
+
+  const hospitalName = hospital.name as string
+  const baseDueDay = hospital.base_due_day as number
+
+  // 2. 마감일 계산
+  let dueDate: Date
+  try {
+    dueDate = calculateDueDate(year, month, baseDueDay, monthlyTask.deadline_pull_days)
+  } catch (error) {
+    return {
+      hospital_name: hospitalName,
+      shortage_hours: 0,
+      tasks: [],
+      message: (error as Error).message
+    }
+  }
+
+  // 3. 콘텐츠 완료 기한 계산
+  const contentDeadline = getContentDeadline(dueDate)
+
+  // 4. 근무일 목록 생성
+  const workdays = getWorkdays(year, month)
+
+  // 5. 일별 스케줄 초기화
+  const daySchedules: DaySchedule[] = workdays.map(date => ({
+    date,
+    availableHours: getAvailableHours(date),
+    usedHours: 0,
+    tasks: []
+  }))
+
+  // 6. 보고서 작업 고정 (마감일 당일 10:00~12:00)
+  const reportDayIndex = daySchedules.findIndex(
+    d => formatDate(d.date) === formatDate(dueDate)
+  )
+
+  if (reportDayIndex === -1) {
+    return {
+      hospital_name: hospitalName,
+      shortage_hours: 0,
+      tasks: ['보고서'],
+      message: `마감일 ${formatDate(dueDate)}이 근무일이 아닙니다`
+    }
+  }
+
+  // 보고서 작업 배치
+  daySchedules[reportDayIndex].tasks.push({
+    hospitalId,
+    hospitalName,
+    type: 'report',
+    label: '보고서',
+    startTime: '10:00',
+    endTime: '12:00',
+    duration: 2,
+    isReport: true
+  })
+  daySchedules[reportDayIndex].usedHours += 2
+
+  // 7. 콘텐츠 작업 목록 생성
+  const tasks: Task[] = []
+  const taskDefs = [
+    { type: 'sanwi_nosul', count: monthlyTask.sanwi_nosul, duration: 3.5, label: '상위노출' },
+    { type: 'brand', count: monthlyTask.brand, duration: 3.5, label: '브랜드' },
+    { type: 'trend', count: monthlyTask.trend, duration: 1.5, label: '트렌드' },
+    { type: 'eonron_bodo', count: monthlyTask.eonron_bodo, duration: 0.5, label: '언론보도' },
+    { type: 'jisikin', count: monthlyTask.jisikin, duration: 0.5, label: '지식인' }
+  ]
+
+  for (const taskDef of taskDefs) {
+    for (let i = 0; i < taskDef.count; i++) {
+      tasks.push({
+        hospitalId,
+        hospitalName,
+        type: taskDef.type,
+        label: taskDef.label,
+        duration: taskDef.duration,
+        deadline: contentDeadline
+      })
+    }
+  }
+
+  // 8. 콘텐츠 작업 배치 (마감일 이전 근무일에만)
+  const contentDaySchedules = daySchedules.filter(
+    d => d.date <= contentDeadline
+  )
+
+  // 총 필요 시간 계산
+  const totalRequiredHours = tasks.reduce((sum, t) => sum + t.duration, 0)
+  const totalAvailableHours = contentDaySchedules.reduce(
+    (sum, d) => sum + (d.availableHours - d.usedHours), 0
+  )
+
+  if (totalRequiredHours > totalAvailableHours) {
+    return {
+      hospital_name: hospitalName,
+      shortage_hours: totalRequiredHours - totalAvailableHours,
+      tasks: tasks.map(t => t.label),
+      message: `콘텐츠 작업 시간 부족: 필요 ${totalRequiredHours}시간, 가능 ${totalAvailableHours}시간`
+    }
+  }
+
+  // 9. 작업 배치
+  let taskIndex = 0
+  for (const daySchedule of contentDaySchedules) {
+    if (taskIndex >= tasks.length) break
+
+    while (taskIndex < tasks.length) {
+      const task = tasks[taskIndex]
+      const remainingHours = daySchedule.availableHours - daySchedule.usedHours
+
+      if (task.duration <= remainingHours) {
+        // 시작 시간 계산 (월요일은 10시부터, 나머지는 9시부터)
+        const dayStartHour = isMonday(daySchedule.date) ? 10 : 9
+        const startHourOffset = dayStartHour + daySchedule.usedHours
+        const { hour: endHour, minute: endMinute } = addHours(startHourOffset, task.duration)
+
+        daySchedule.tasks.push({
+          hospitalId: task.hospitalId,
+          hospitalName: task.hospitalName,
+          type: task.type,
+          label: task.label,
+          startTime: formatTime(Math.floor(startHourOffset), 0),
+          endTime: formatTime(endHour, endMinute),
+          duration: task.duration,
+          isReport: false
+        })
+
+        daySchedule.usedHours += task.duration
+        taskIndex++
+      } else {
+        // 다음 날로 이동
+        break
+      }
+    }
+  }
+
+  return daySchedules
+}
+
+/**
+ * 스케줄을 데이터베이스에 저장
+ */
+export async function saveSchedule(
+  db: D1Database,
+  hospitalId: number,
+  year: number,
+  month: number,
+  daySchedules: DaySchedule[]
+): Promise<void> {
+  // 기존 스케줄 삭제
+  await db.prepare('DELETE FROM schedules WHERE hospital_id = ? AND year = ? AND month = ?')
+    .bind(hospitalId, year, month)
+    .run()
+
+  // 새 스케줄 저장
+  for (const daySchedule of daySchedules) {
+    for (const task of daySchedule.tasks) {
+      await db.prepare(`
+        INSERT INTO schedules (
+          hospital_id, year, month, task_date, task_type, task_name,
+          start_time, end_time, duration_hours, is_report
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        task.hospitalId,
+        year,
+        month,
+        formatDate(daySchedule.date),
+        task.type,
+        task.label,
+        task.startTime,
+        task.endTime,
+        task.duration,
+        task.isReport ? 1 : 0
+      ).run()
+    }
+  }
+}
