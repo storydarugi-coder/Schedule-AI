@@ -244,16 +244,29 @@ app.put('/api/schedules/:id', async (c) => {
 // 스케줄 순서 변경 (같은 날짜 내에서)
 app.put('/api/schedules/reorder', async (c) => {
   const db = c.env.DB
-  const { updates } = await c.req.json()
+  try {
+    const { updates } = await c.req.json()
 
-  // 트랜잭션으로 여러 스케줄의 order_index 업데이트
-  for (const update of updates) {
-    await db.prepare(
-      'UPDATE schedules SET order_index = ? WHERE id = ?'
-    ).bind(update.order_index, update.id).run()
+    if (!updates || !Array.isArray(updates)) {
+      return c.json({ error: 'Invalid updates format' }, 400)
+    }
+
+    // 트랜잭션으로 여러 스케줄의 order_index 업데이트
+    for (const update of updates) {
+      if (!update.id || update.order_index === undefined) {
+        console.error('Invalid update:', update)
+        continue
+      }
+      await db.prepare(
+        'UPDATE schedules SET order_index = ? WHERE id = ?'
+      ).bind(update.order_index, update.id).run()
+    }
+
+    return c.json({ success: true })
+  } catch (error) {
+    console.error('Reorder error:', error)
+    return c.json({ error: String(error) }, 500)
   }
-
-  return c.json({ success: true })
 })
 
 // 스케줄 완료 상태 업데이트
@@ -1533,13 +1546,23 @@ app.get('/', (c) => {
             const scheduleId = event.extendedProps.scheduleId;
             const dateStr = event.startStr.split('T')[0];
             
+            console.log('moveEvent called:', { scheduleId, direction, dateStr });
+            
             // 같은 날짜의 모든 이벤트 가져오기
             const dayEvents = calendar.getEvents().filter(e => {
                 return e.startStr.split('T')[0] === dateStr && e.extendedProps.scheduleId;
             }).sort((a, b) => (a.extendedProps.order_index || 0) - (b.extendedProps.order_index || 0));
             
+            console.log('dayEvents:', dayEvents.map(e => ({
+                id: e.extendedProps.scheduleId,
+                title: e.title,
+                order_index: e.extendedProps.order_index
+            })));
+            
             const currentIndex = dayEvents.findIndex(e => e.extendedProps.scheduleId === scheduleId);
             const targetIndex = currentIndex + direction;
+            
+            console.log('currentIndex:', currentIndex, 'targetIndex:', targetIndex);
             
             if (targetIndex < 0 || targetIndex >= dayEvents.length) {
                 alert('더 이상 이동할 수 없습니다.');
@@ -1557,11 +1580,14 @@ app.get('/', (c) => {
                 order_index: index
             }));
             
+            console.log('Sending updates:', updates);
+            
             try {
                 await axios.put('/api/schedules/reorder', { updates });
                 loadCalendar();
             } catch (error) {
                 console.error('순서 변경 실패', error);
+                console.error('Error response:', error.response?.data);
                 alert('❌ 순서 변경에 실패했습니다.');
             }
         }
