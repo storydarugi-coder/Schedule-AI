@@ -149,27 +149,30 @@ export async function generateSchedule(
     }
   }
 
-  // 9. 콘텐츠 작업 목록 생성 (브랜드/트렌드 교차 배치)
+  // 9. 콘텐츠 작업 목록 생성 (브랜드/트렌드를 순서대로 하나씩)
   const tasks: Task[] = []
   
-  // 브랜드와 트렌드를 교차로 배치
+  // 브랜드와 트렌드를 순서대로 하나씩 배치 (하루에 하나만!)
   const brandCount = monthlyTask.brand
   const trendCount = monthlyTask.trend
-  const maxCount = Math.max(brandCount, trendCount)
+  const totalBrandTrendCount = brandCount + trendCount
   
   // 게시 순서 결정 (brand_order, trend_order 사용)
   const brandOrder = monthlyTask.brand_order || 1
   const trendOrder = monthlyTask.trend_order || 2
   
-  // 순서대로 정렬
-  const orderedTasks = [
-    { type: 'brand', order: brandOrder },
-    { type: 'trend', order: trendOrder }
-  ].sort((a, b) => a.order - b.order)
+  // 브랜드가 먼저인지, 트렌드가 먼저인지 결정
+  const brandFirst = brandOrder < trendOrder
   
-  for (let i = 0; i < maxCount; i++) {
-    for (const taskDef of orderedTasks) {
-      if (taskDef.type === 'brand' && i < brandCount) {
+  let brandAdded = 0
+  let trendAdded = 0
+  
+  // 총 개수만큼 순서대로 추가 (하루에 하나씩)
+  for (let i = 0; i < totalBrandTrendCount; i++) {
+    // 브랜드가 먼저면 브랜드부터, 트렌드가 먼저면 트렌드부터
+    if (brandFirst) {
+      // 브랜드 → 트렌드 → 브랜드 → 트렌드 ...
+      if (i % 2 === 0 && brandAdded < brandCount) {
         tasks.push({
           hospitalId,
           hospitalName,
@@ -178,7 +181,8 @@ export async function generateSchedule(
           duration: 3.5,
           deadline: dueDate
         })
-      } else if (taskDef.type === 'trend' && i < trendCount) {
+        brandAdded++
+      } else if (i % 2 === 1 && trendAdded < trendCount) {
         tasks.push({
           hospitalId,
           hospitalName,
@@ -187,6 +191,74 @@ export async function generateSchedule(
           duration: 1.5,
           deadline: dueDate
         })
+        trendAdded++
+      } else if (brandAdded < brandCount) {
+        // 트렌드가 다 찬 경우 나머지 브랜드 추가
+        tasks.push({
+          hospitalId,
+          hospitalName,
+          type: 'brand',
+          label: '브랜드',
+          duration: 3.5,
+          deadline: dueDate
+        })
+        brandAdded++
+      } else if (trendAdded < trendCount) {
+        // 브랜드가 다 찬 경우 나머지 트렌드 추가
+        tasks.push({
+          hospitalId,
+          hospitalName,
+          type: 'trend',
+          label: '트렌드',
+          duration: 1.5,
+          deadline: dueDate
+        })
+        trendAdded++
+      }
+    } else {
+      // 트렌드 → 브랜드 → 트렌드 → 브랜드 ...
+      if (i % 2 === 0 && trendAdded < trendCount) {
+        tasks.push({
+          hospitalId,
+          hospitalName,
+          type: 'trend',
+          label: '트렌드',
+          duration: 1.5,
+          deadline: dueDate
+        })
+        trendAdded++
+      } else if (i % 2 === 1 && brandAdded < brandCount) {
+        tasks.push({
+          hospitalId,
+          hospitalName,
+          type: 'brand',
+          label: '브랜드',
+          duration: 3.5,
+          deadline: dueDate
+        })
+        brandAdded++
+      } else if (trendAdded < trendCount) {
+        // 브랜드가 다 찬 경우 나머지 트렌드 추가
+        tasks.push({
+          hospitalId,
+          hospitalName,
+          type: 'trend',
+          label: '트렌드',
+          duration: 1.5,
+          deadline: dueDate
+        })
+        trendAdded++
+      } else if (brandAdded < brandCount) {
+        // 트렌드가 다 찬 경우 나머지 브랜드 추가
+        tasks.push({
+          hospitalId,
+          hospitalName,
+          type: 'brand',
+          label: '브랜드',
+          duration: 3.5,
+          deadline: dueDate
+        })
+        brandAdded++
       }
     }
   }
@@ -279,9 +351,9 @@ export async function generateSchedule(
   // 남은 상위노출 작업이 있으면 일반 작업 목록에 추가 (날짜 지정 안된 경우)
   normalTasks.push(...sanwiTasks)
 
-  // 13. 일반 작업 배치 (메인 블로그는 하루 최대 2개 포스팅, 한 병원당 하루 최대 6시간)
+  // 13. 일반 작업 배치 (메인 블로그는 하루 1개 포스팅, 한 병원당 하루 최대 6시간)
   let taskIndex = 0
-  const maxBlogPostsPerDay = 2  // 메인 블로그 하루 최대 2개 포스팅
+  const maxBlogPostsPerDay = 1  // 메인 블로그 하루 1개 포스팅
   const maxHoursPerHospitalPerDay = 6  // 한 병원당 하루 최대 6시간 (여유롭게 배치)
 
   for (const daySchedule of contentDaySchedules) {
@@ -301,10 +373,10 @@ export async function generateSchedule(
         .filter(t => t.hospitalId === hospitalId)
         .reduce((sum, t) => sum + t.duration, 0)
       
-      // 메인 블로그 작업이면 2개 제한 확인
+      // 메인 블로그 작업이면 1개 제한 확인
       const isMainBlogTask = (task.type === 'brand' || task.type === 'trend')
       if (isMainBlogTask && mainBlogTaskCount >= maxBlogPostsPerDay) {
-        break  // 메인 블로그 작업이 이미 2개면 다음 날로
+        break  // 메인 블로그 작업이 이미 1개면 다음 날로
       }
       
       // 이 병원 작업 시간이 6시간 초과하면 다음 날로
