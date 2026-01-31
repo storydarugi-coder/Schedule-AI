@@ -6,7 +6,8 @@ export interface Hospital {
   id: number;
   name: string;
   base_due_day: number;
-  sanwi_nosul_day?: number;
+  sanwi_nosul_day?: number; // Legacy - deprecated
+  sanwi_nosul_days?: string; // JSON array of numbers
   created_at: string;
 }
 

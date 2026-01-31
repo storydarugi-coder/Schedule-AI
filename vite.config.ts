@@ -10,5 +10,15 @@ export default defineConfig({
       adapter,
       entry: 'src/index.tsx'
     })
-  ]
+  ],
+  build: {
+    rollupOptions: {
+      input: {
+        main: 'src/client.ts'
+      },
+      output: {
+        assetFileNames: 'static/[name].[ext]'
+      }
+    }
+  }
 })

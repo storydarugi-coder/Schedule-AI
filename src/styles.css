@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom styles */
+.primary-gradient { 
+  background: linear-gradient(135deg, #787FFF 0%, #FFF787 100%); 
+}
+
+.primary-color { 
+  color: #787FFF; 
+}
+
+.secondary-color { 
+  color: #FFF787; 
+}
+
+.btn-primary { 
+  background: linear-gradient(135deg, #787FFF 0%, #A89FFF 100%); 
+}
+
+.btn-primary:hover { 
+  background: linear-gradient(135deg, #6A70FF 0%, #9890FF 100%); 
+}
+
+.btn-secondary { 
+  background: linear-gradient(135deg, #FFF787 0%, #FFE066 100%); 
+}
+
+.btn-secondary:hover { 
+  background: linear-gradient(135deg, #FFE066 0%, #FFD34D 100%); 
+}

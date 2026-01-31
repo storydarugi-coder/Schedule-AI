@@ -23,18 +23,21 @@ app.get('/api/hospitals', async (c) => {
 // 병원 추가
 app.post('/api/hospitals', async (c) => {
   const db = c.env.DB
-  const { name, base_due_day, sanwi_nosul_day } = await c.req.json()
+  const { name, base_due_day, sanwi_nosul_days } = await c.req.json()
 
   if (!name || !base_due_day) {
     return c.json({ error: '병원명과 기본 마감일을 입력해주세요' }, 400)
   }
 
+  // sanwi_nosul_days를 JSON 문자열로 변환
+  const sanwiDaysJson = sanwi_nosul_days ? JSON.stringify(sanwi_nosul_days) : null
+
   try {
     const result = await db.prepare(
-      'INSERT INTO hospitals (name, base_due_day, sanwi_nosul_day) VALUES (?, ?, ?)'
-    ).bind(name, base_due_day, sanwi_nosul_day || null).run()
+      'INSERT INTO hospitals (name, base_due_day, sanwi_nosul_days) VALUES (?, ?, ?)'
+    ).bind(name, base_due_day, sanwiDaysJson).run()
 
-    return c.json({ id: result.meta.last_row_id, name, base_due_day, sanwi_nosul_day })
+    return c.json({ id: result.meta.last_row_id, name, base_due_day, sanwi_nosul_days: sanwiDaysJson })
   } catch (error) {
     return c.json({ error: '병원 추가 실패 (중복된 이름일 수 있습니다)' }, 400)
   }
@@ -285,18 +288,14 @@ app.get('/', (c) => {
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
     
+    <script>
+      // Suppress Tailwind CDN production warning
+      window.process = { env: { NODE_ENV: 'production' } };
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link href="/static/styles.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
     <link href='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.css' rel='stylesheet' />
-    <style>
-        .primary-gradient { background: linear-gradient(135deg, #787FFF 0%, #FFF787 100%); }
-        .primary-color { color: #787FFF; }
-        .secondary-color { color: #FFF787; }
-        .btn-primary { background: linear-gradient(135deg, #787FFF 0%, #A89FFF 100%); }
-        .btn-primary:hover { background: linear-gradient(135deg, #6A70FF 0%, #9890FF 100%); }
-        .btn-secondary { background: linear-gradient(135deg, #FFF787 0%, #FFE066 100%); }
-        .btn-secondary:hover { background: linear-gradient(135deg, #FFE066 0%, #FFD34D 100%); }
-    </style>
 </head>
 <body class="bg-gradient-to-br from-purple-50 to-yellow-50 min-h-screen">
     <div id="app" class="max-w-7xl mx-auto p-6">
@@ -335,18 +334,29 @@ app.get('/', (c) => {
                 <h2 class="text-2xl font-bold mb-4 primary-color">
                     <i class="fas fa-plus-circle mr-2"></i>병원 추가
                 </h2>
-                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <input type="text" id="hospital-name" placeholder="병원명" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none">
                     <input type="number" id="hospital-due-day" placeholder="기본 마감일 (1-31)" min="1" max="31" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none">
-                    <input type="number" id="hospital-sanwi-day" placeholder="상위노출 일자 (선택)" min="1" max="31" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none">
-                    <button onclick="addHospital()" class="btn-primary text-white rounded-lg px-6 py-3 font-semibold shadow-md hover:shadow-lg transition-all">
-                        <i class="fas fa-plus mr-2"></i>추가
-                    </button>
                 </div>
-                <p class="text-sm text-purple-600 mt-2">
-                    <i class="fas fa-info-circle mr-1"></i>
-                    상위노출 일자를 지정하면 해당 날짜에만 상위노출 작업이 배치됩니다.
-                </p>
+                <div class="mt-4">
+                    <label class="block text-sm font-semibold mb-2 primary-color">
+                        <i class="fas fa-star mr-1"></i>상위노출 일자 (선택, 최대 5개)
+                    </label>
+                    <div class="flex flex-wrap gap-2">
+                        <input type="number" id="hospital-sanwi-day-1" placeholder="1번째 (예: 5)" min="1" max="31" class="border-2 border-purple-200 rounded-lg px-4 py-2 w-32 focus:border-purple-400 focus:outline-none">
+                        <input type="number" id="hospital-sanwi-day-2" placeholder="2번째 (예: 15)" min="1" max="31" class="border-2 border-purple-200 rounded-lg px-4 py-2 w-32 focus:border-purple-400 focus:outline-none">
+                        <input type="number" id="hospital-sanwi-day-3" placeholder="3번째 (예: 25)" min="1" max="31" class="border-2 border-purple-200 rounded-lg px-4 py-2 w-32 focus:border-purple-400 focus:outline-none">
+                        <input type="number" id="hospital-sanwi-day-4" placeholder="4번째" min="1" max="31" class="border-2 border-purple-200 rounded-lg px-4 py-2 w-32 focus:border-purple-400 focus:outline-none">
+                        <input type="number" id="hospital-sanwi-day-5" placeholder="5번째" min="1" max="31" class="border-2 border-purple-200 rounded-lg px-4 py-2 w-32 focus:border-purple-400 focus:outline-none">
+                    </div>
+                    <p class="text-sm text-purple-600 mt-2">
+                        <i class="fas fa-info-circle mr-1"></i>
+                        상위노출 일자를 여러 개 지정하면 해당 날짜들에 상위노출 작업이 배치됩니다 (빈 칸은 무시됨)
+                    </p>
+                </div>
+                <button onclick="addHospital()" class="mt-4 btn-primary text-white rounded-lg px-6 py-3 font-semibold shadow-md hover:shadow-lg transition-all">
+                    <i class="fas fa-plus mr-2"></i>추가
+                </button>
             </div>
 
             <div class="bg-white rounded-xl shadow-lg p-6 border-2 border-purple-100">
@@ -586,10 +596,10 @@ app.get('/', (c) => {
                                         <i class="fas fa-calendar-day text-purple-500 mr-2"></i>
                                         <span class="text-purple-600 font-semibold">마감일: 매월 \${String(h.base_due_day).padStart(2, '0')}일</span>
                                     </div>
-                                    \${h.sanwi_nosul_day ? \`
+                                    \${h.sanwi_nosul_days ? \`
                                         <div class="flex items-center">
                                             <i class="fas fa-star text-yellow-500 mr-2"></i>
-                                            <span class="text-yellow-600 font-semibold">상위노출: \${String(h.sanwi_nosul_day).padStart(2, '0')}일</span>
+                                            <span class="text-yellow-600 font-semibold">상위노출: \${JSON.parse(h.sanwi_nosul_days).map(d => String(d).padStart(2, '0')).join(', ')}일</span>
                                         </div>
                                     \` : ''}
                                 </div>
@@ -614,7 +624,15 @@ app.get('/', (c) => {
         async function addHospital() {
             const name = document.getElementById('hospital-name').value;
             const baseDueDay = document.getElementById('hospital-due-day').value;
-            const sanwiDay = document.getElementById('hospital-sanwi-day').value;
+            
+            // 상위노출 날짜 수집 (최대 5개)
+            const sanwiDays = [];
+            for (let i = 1; i <= 5; i++) {
+                const dayInput = document.getElementById(\`hospital-sanwi-day-\${i}\`);
+                if (dayInput && dayInput.value) {
+                    sanwiDays.push(parseInt(dayInput.value));
+                }
+            }
 
             if (!name || !baseDueDay) {
                 alert('병원명과 기본 마감일을 입력해주세요');
@@ -625,11 +643,13 @@ app.get('/', (c) => {
                 await axios.post('/api/hospitals', { 
                     name, 
                     base_due_day: parseInt(baseDueDay),
-                    sanwi_nosul_day: sanwiDay ? parseInt(sanwiDay) : null
+                    sanwi_nosul_days: sanwiDays.length > 0 ? sanwiDays : null
                 });
                 document.getElementById('hospital-name').value = '';
                 document.getElementById('hospital-due-day').value = '';
-                document.getElementById('hospital-sanwi-day').value = '';
+                for (let i = 1; i <= 5; i++) {
+                    document.getElementById(\`hospital-sanwi-day-\${i}\`).value = '';
+                }
                 loadHospitals();
                 alert('병원이 추가되었습니다');
             } catch (error) {
