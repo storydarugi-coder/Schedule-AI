@@ -1092,10 +1092,21 @@ app.get('/', (c) => {
                 eventOrder: 'order_index,start', // order_index로 정렬
                 eventOrderStrict: true, // 엄격한 순서 적용
                 eventDidMount: function(info) {
+                    // 일찍 출근 이벤트가 있는 날짜의 배경색 변경
+                    if (info.event.extendedProps.taskType === 'early_start') {
+                        const dateStr = info.event.startStr;
+                        const dayCell = document.querySelector('[data-date="' + dateStr + '"]');
+                        if (dayCell) {
+                            dayCell.style.backgroundColor = '#787FFF';
+                            dayCell.style.fontWeight = 'bold';
+                        }
+                    }
+                    
                     // 우클릭 메뉴 추가
                     info.el.addEventListener('contextmenu', function(e) {
                         e.preventDefault();
                         e.stopPropagation();
+                        e.stopImmediatePropagation();
                         showReorderMenu(e, info.event);
                         return false;
                     }, true); // 캡처 단계에서 처리
@@ -1121,17 +1132,6 @@ app.get('/', (c) => {
                     // 평일 배경색 (연한 파란색)
                     else {
                         info.el.style.backgroundColor = '#f0f9ff'; // 아주 연한 파란색
-                    }
-                },
-                eventDidMount: function(info) {
-                    // 일찍 출근 이벤트가 있는 날짜의 배경색 변경
-                    if (info.event.extendedProps.taskType === 'early_start') {
-                        const dateStr = info.event.startStr;
-                        const dayCell = document.querySelector(\`[data-date="\${dateStr}"]\`);
-                        if (dayCell) {
-                            dayCell.style.backgroundColor = '#787FFF';
-                            dayCell.style.fontWeight = 'bold';
-                        }
                     }
                 },
                 dayCellClassNames: function(info) {
