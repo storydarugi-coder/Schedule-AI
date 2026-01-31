@@ -84,3 +84,19 @@ export interface ScheduleError {
   tasks: string[];
   message: string;
 }
+
+export interface Vacation {
+  id: number;
+  vacation_date: string;
+  vacation_type: string;
+  description?: string;
+  created_at: string;
+}
+
+export const VACATION_TYPES = {
+  annual: { type: 'annual', label: '연차', color: '#f59e0b' },
+  summer: { type: 'summer', label: '여름휴가', color: '#10b981' },
+  winter: { type: 'winter', label: '겨울휴가', color: '#3b82f6' },
+  sick: { type: 'sick', label: '병가', color: '#ef4444' },
+  other: { type: 'other', label: '기타', color: '#6b7280' }
+}

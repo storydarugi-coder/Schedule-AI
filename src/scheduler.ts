@@ -45,6 +45,14 @@ export async function generateSchedule(
   month: number,
   monthlyTask: MonthlyTask
 ): Promise<DaySchedule[] | ScheduleError> {
+  // 0. 연차/휴가 목록 조회
+  const vacationsResult = await db.prepare(`
+    SELECT vacation_date FROM vacations
+    WHERE strftime('%Y', vacation_date) = ? AND strftime('%m', vacation_date) = ?
+  `).bind(year.toString(), month.toString().padStart(2, '0')).all()
+  
+  const vacations = vacationsResult.results.map((v: any) => v.vacation_date)
+
   // 1. 병원 정보 조회
   const hospital = await db.prepare('SELECT * FROM hospitals WHERE id = ?')
     .bind(hospitalId)
@@ -60,7 +68,7 @@ export async function generateSchedule(
   // 2. 마감일 계산
   let dueDate: Date
   try {
-    dueDate = calculateDueDate(year, month, baseDueDay, monthlyTask.deadline_pull_days)
+    dueDate = calculateDueDate(year, month, baseDueDay, monthlyTask.deadline_pull_days, vacations)
   } catch (error) {
     return {
       hospital_name: hospitalName,
@@ -71,10 +79,10 @@ export async function generateSchedule(
   }
 
   // 3. 콘텐츠 완료 기한 계산
-  const contentDeadline = getContentDeadline(dueDate)
+  const contentDeadline = getContentDeadline(dueDate, vacations)
 
   // 4. 근무일 목록 생성
-  const workdays = getWorkdays(year, month)
+  const workdays = getWorkdays(year, month, vacations)
 
   // 5. 일별 스케줄 초기화
   const daySchedules: DaySchedule[] = workdays.map(date => ({

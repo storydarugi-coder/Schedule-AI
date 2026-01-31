@@ -3,10 +3,10 @@ import { HOLIDAYS_2026 } from './types'
 /**
  * 주말 또는 공휴일인지 확인
  */
-export function isWeekendOrHoliday(date: Date): boolean {
+export function isWeekendOrHoliday(date: Date, vacations: string[] = []): boolean {
   const day = date.getDay()
   const dateStr = date.toISOString().split('T')[0]
-  return day === 0 || day === 6 || HOLIDAYS_2026.includes(dateStr)
+  return day === 0 || day === 6 || HOLIDAYS_2026.includes(dateStr) || vacations.includes(dateStr)
 }
 
 /**
@@ -19,13 +19,13 @@ export function isMonday(date: Date): boolean {
 /**
  * 특정 월의 근무일 목록 생성
  */
-export function getWorkdays(year: number, month: number): Date[] {
+export function getWorkdays(year: number, month: number, vacations: string[] = []): Date[] {
   const workdays: Date[] = []
   const lastDay = new Date(year, month, 0).getDate()
   
   for (let day = 1; day <= lastDay; day++) {
     const date = new Date(year, month - 1, day)
-    if (!isWeekendOrHoliday(date)) {
+    if (!isWeekendOrHoliday(date, vacations)) {
       workdays.push(date)
     }
   }
@@ -36,13 +36,13 @@ export function getWorkdays(year: number, month: number): Date[] {
 /**
  * 마감일 계산 (당김 적용)
  */
-export function calculateDueDate(year: number, month: number, baseDueDay: number, pullDays: number): Date {
+export function calculateDueDate(year: number, month: number, baseDueDay: number, pullDays: number, vacations: string[] = []): Date {
   const adjustedDay = baseDueDay - pullDays
   const dueDate = new Date(year, month - 1, adjustedDay)
   
-  // 마감일이 주말/공휴일인 경우 경고 (이미 당김 적용했는데도 주말이면 문제)
-  if (isWeekendOrHoliday(dueDate)) {
-    throw new Error(`마감일이 여전히 주말/공휴일입니다: ${dueDate.toISOString().split('T')[0]}`)
+  // 마감일이 주말/공휴일/연차인 경우 경고 (이미 당김 적용했는데도 근무 불가일이면 문제)
+  if (isWeekendOrHoliday(dueDate, vacations)) {
+    throw new Error(`마감일이 여전히 주말/공휴일/연차입니다: ${dueDate.toISOString().split('T')[0]}`)
   }
   
   return dueDate
@@ -51,12 +51,12 @@ export function calculateDueDate(year: number, month: number, baseDueDay: number
 /**
  * 콘텐츠 완료 기한 계산 (마감일 - 1일)
  */
-export function getContentDeadline(dueDate: Date): Date {
+export function getContentDeadline(dueDate: Date, vacations: string[] = []): Date {
   const deadline = new Date(dueDate)
   deadline.setDate(deadline.getDate() - 1)
   
-  // 완료 기한이 주말/공휴일이면 그 전 근무일로 이동
-  while (isWeekendOrHoliday(deadline)) {
+  // 완료 기한이 주말/공휴일/연차이면 그 전 근무일로 이동
+  while (isWeekendOrHoliday(deadline, vacations)) {
     deadline.setDate(deadline.getDate() - 1)
   }
   
