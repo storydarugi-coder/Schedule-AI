@@ -496,6 +496,9 @@ app.get('/', (c) => {
                         <i class="fas fa-calendar-alt mr-2"></i>스케줄 캘린더
                     </h2>
                     <div class="flex gap-2">
+                        <button onclick="deleteAllSchedules()" class="bg-red-500 hover:bg-red-600 text-white rounded-lg px-4 py-2 font-semibold shadow-md hover:shadow-lg transition-all">
+                            <i class="fas fa-trash-alt mr-2"></i>전체 삭제
+                        </button>
                         <select id="calendar-year" onchange="loadCalendar()" class="border-2 border-purple-200 rounded-lg px-4 py-2"></select>
                         <select id="calendar-month" onchange="loadCalendar()" class="border-2 border-purple-200 rounded-lg px-4 py-2"></select>
                     </div>
@@ -1011,6 +1014,46 @@ app.get('/', (c) => {
                 calendar.gotoDate(\`\${year}-\${month.padStart(2, '0')}-01\`);
             } catch (error) {
                 console.error('캘린더 로드 실패', error);
+            }
+        }
+
+        // 전체 스케줄 삭제
+        async function deleteAllSchedules() {
+            const year = document.getElementById('calendar-year').value;
+            const month = document.getElementById('calendar-month').value;
+
+            if (!year || !month) {
+                alert('년월을 선택해주세요');
+                return;
+            }
+
+            if (!confirm(\`\${year}년 \${month}월의 모든 스케줄을 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다!\`)) {
+                return;
+            }
+
+            try {
+                // 해당 월의 모든 스케줄 조회
+                const res = await axios.get(\`/api/schedules/\${year}/\${month}\`);
+                const schedules = res.data;
+                
+                if (schedules.length === 0) {
+                    alert('삭제할 스케줄이 없습니다');
+                    return;
+                }
+
+                // 병원별로 그룹화
+                const hospitalIds = [...new Set(schedules.map(s => s.hospital_id))];
+                
+                // 각 병원의 스케줄 삭제
+                for (const hospitalId of hospitalIds) {
+                    await axios.delete(\`/api/schedules/\${year}/\${month}/\${hospitalId}\`);
+                }
+
+                alert(\`\${schedules.length}개의 스케줄이 삭제되었습니다\`);
+                loadCalendar();
+            } catch (error) {
+                alert('스케줄 삭제 실패');
+                console.error(error);
             }
         }
 
