@@ -253,27 +253,57 @@ app.put('/api/schedules/reorder', async (c) => {
 
     console.log('Reorder request:', updates)
 
-    // 각 업데이트 처리 (존재하는 ID만)
-    const results = []
-    for (const update of updates) {
-      if (!update.id || update.order_index === undefined) {
-        console.error('Invalid update:', update)
-        continue
+    // 유효성 검사: 모든 ID가 숫자이고 order_index가 있는지
+    const validUpdates = updates.filter(u => {
+      if (!u.id || typeof u.id !== 'number' || u.order_index === undefined) {
+        console.error('Invalid update:', u)
+        return false
       }
+      return true
+    })
 
+    if (validUpdates.length === 0) {
+      return c.json({ error: 'No valid updates' }, 400)
+    }
+
+    // 첫 번째 ID로 날짜 확인 (같은 날짜인지 검증)
+    const firstSchedule = await db.prepare(
+      'SELECT task_date FROM schedules WHERE id = ?'
+    ).bind(validUpdates[0].id).first()
+
+    if (!firstSchedule) {
+      return c.json({ error: 'Schedule not found' }, 404)
+    }
+
+    const taskDate = firstSchedule.task_date
+
+    // 해당 날짜의 모든 스케줄 ID를 DB에서 가져오기
+    const existingSchedules = await db.prepare(
+      'SELECT id FROM schedules WHERE task_date = ? ORDER BY order_index'
+    ).bind(taskDate).all()
+
+    const existingIds = new Set(existingSchedules.results.map(s => s.id))
+
+    console.log('Existing IDs:', Array.from(existingIds))
+
+    // DB에 실제 존재하는 ID만 업데이트
+    const safeUpdates = validUpdates.filter(u => {
+      if (!existingIds.has(u.id)) {
+        console.warn('ID not found in DB, skipping:', u.id)
+        return false
+      }
+      return true
+    })
+
+    if (safeUpdates.length === 0) {
+      return c.json({ error: 'No valid IDs found in database' }, 404)
+    }
+
+    // Batch 업데이트 (트랜잭션은 D1에서 미지원이므로 순차 처리)
+    const results = []
+    for (const update of safeUpdates) {
       try {
-        // 먼저 ID가 존재하는지 확인
-        const existing = await db.prepare(
-          'SELECT id FROM schedules WHERE id = ?'
-        ).bind(update.id).first()
-
-        if (!existing) {
-          console.error('Schedule not found:', update.id)
-          continue
-        }
-
-        // 존재하는 경우에만 업데이트
-        const result = await db.prepare(
+        await db.prepare(
           'UPDATE schedules SET order_index = ? WHERE id = ?'
         ).bind(update.order_index, update.id).run()
         
@@ -1674,8 +1704,8 @@ app.get('/', (c) => {
 
         // 순서 변경 메뉴 표시
         function showReorderMenu(e, event) {
-            const scheduleId = event.extendedProps.scheduleId;
-            if (!scheduleId) return; // 연차/휴가는 순서 변경 불가
+            const scheduleId = parseInt(event.id);
+            if (!scheduleId || isNaN(scheduleId)) return; // 연차/휴가는 순서 변경 불가
             
             const menu = document.createElement('div');
             menu.style.position = 'fixed';
@@ -1740,10 +1770,11 @@ app.get('/', (c) => {
         
         // 이벤트 위/아래 이동
         async function moveEvent(event, direction) {
-            const scheduleId = event.extendedProps?.scheduleId;
+            // event.id를 직접 사용 (FullCalendar ID와 DB ID가 동일)
+            const scheduleId = parseInt(event.id);
             
-            // scheduleId가 없으면 (연차/휴가) 리턴
-            if (!scheduleId) {
+            // scheduleId가 유효한 숫자가 아니면 리턴
+            if (!scheduleId || isNaN(scheduleId)) {
                 alert('이 일정은 순서를 변경할 수 없습니다.');
                 return;
             }
@@ -1752,9 +1783,10 @@ app.get('/', (c) => {
             
             console.log('moveEvent called:', { scheduleId, direction, dateStr });
             
-            // 같은 날짜의 모든 이벤트 가져오기 (scheduleId가 있는 것만)
+            // 같은 날짜의 모든 이벤트 가져오기 (유효한 ID가 있는 것만)
             const dayEvents = calendar.getEvents().filter(e => {
-                return e.startStr.split('T')[0] === dateStr && e.extendedProps?.scheduleId;
+                const eventId = parseInt(e.id);
+                return e.startStr.split('T')[0] === dateStr && eventId && !isNaN(eventId);
             }).sort((a, b) => {
                 const aIndex = a.extendedProps?.order_index ?? 0;
                 const bIndex = b.extendedProps?.order_index ?? 0;
@@ -1762,12 +1794,12 @@ app.get('/', (c) => {
             });
             
             console.log('dayEvents:', dayEvents.map(e => ({
-                id: e.extendedProps.scheduleId,
+                id: parseInt(e.id),
                 title: e.title,
                 order_index: e.extendedProps.order_index
             })));
             
-            const currentIndex = dayEvents.findIndex(e => e.extendedProps.scheduleId === scheduleId);
+            const currentIndex = dayEvents.findIndex(e => parseInt(e.id) === scheduleId);
             const targetIndex = currentIndex + direction;
             
             console.log('currentIndex:', currentIndex, 'targetIndex:', targetIndex);
@@ -1787,11 +1819,14 @@ app.get('/', (c) => {
             dayEvents[currentIndex] = dayEvents[targetIndex];
             dayEvents[targetIndex] = temp;
             
-            // order_index 업데이트 (모든 id가 유효한지 확인)
-            const updates = dayEvents.map((e, index) => ({
-                id: e.extendedProps.scheduleId,
-                order_index: index
-            })).filter(u => u.id != null && u.id !== undefined);
+            // order_index 업데이트 (모든 id가 유효한 숫자인지 확인)
+            const updates = dayEvents.map((e, index) => {
+                const id = parseInt(e.id);
+                return {
+                    id: id,
+                    order_index: index
+                };
+            }).filter(u => u.id && !isNaN(u.id));
             
             console.log('Sending updates:', updates);
             
@@ -1801,12 +1836,13 @@ app.get('/', (c) => {
             }
             
             try {
-                await axios.put('/api/schedules/reorder', { updates });
+                const response = await axios.put('/api/schedules/reorder', { updates });
+                console.log('Reorder success:', response.data);
                 loadCalendar();
             } catch (error) {
                 console.error('순서 변경 실패', error);
                 console.error('Error response:', error.response?.data);
-                alert('❌ 순서 변경에 실패했습니다.');
+                alert('❌ 순서 변경에 실패했습니다.\n\n' + (error.response?.data?.error || error.message));
             }
         }
 
