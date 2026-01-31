@@ -6,6 +6,7 @@ export interface Hospital {
   id: number;
   name: string;
   base_due_day: number;
+  sanwi_nosul_day?: number;
   created_at: string;
 }
 
@@ -20,6 +21,10 @@ export interface MonthlyTask {
   eonron_bodo: number;
   jisikin: number;
   deadline_pull_days: number;
+  task_order: string;
+  brand_order: number;
+  trend_order: number;
+  sanwi_dates: string; // JSON string of array
   created_at: string;
 }
 

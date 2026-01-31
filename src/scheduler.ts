@@ -119,17 +119,49 @@ export async function generateSchedule(
   })
   daySchedules[reportDayIndex].usedHours += 2
 
-  // 7. 콘텐츠 작업 목록 생성
+  // 7. 콘텐츠 작업 목록 생성 (브랜드/트렌드 교차 배치)
   const tasks: Task[] = []
-  const taskDefs = [
+  
+  // 작업 순서 파싱 (기본값: 'brand,trend')
+  const taskOrder = (monthlyTask.task_order || 'brand,trend').split(',')
+  
+  // 브랜드와 트렌드를 교차로 배치
+  const brandCount = monthlyTask.brand
+  const trendCount = monthlyTask.trend
+  const maxCount = Math.max(brandCount, trendCount)
+  
+  for (let i = 0; i < maxCount; i++) {
+    for (const taskType of taskOrder) {
+      if (taskType === 'brand' && i < brandCount) {
+        tasks.push({
+          hospitalId,
+          hospitalName,
+          type: 'brand',
+          label: '브랜드',
+          duration: 3.5,
+          deadline: contentDeadline
+        })
+      } else if (taskType === 'trend' && i < trendCount) {
+        tasks.push({
+          hospitalId,
+          hospitalName,
+          type: 'trend',
+          label: '트렌드',
+          duration: 1.5,
+          deadline: contentDeadline
+        })
+      }
+    }
+  }
+  
+  // 상위노출, 언론보도, 지식인 추가
+  const otherTaskDefs = [
     { type: 'sanwi_nosul', count: monthlyTask.sanwi_nosul, duration: 3.5, label: '상위노출' },
-    { type: 'brand', count: monthlyTask.brand, duration: 3.5, label: '브랜드' },
-    { type: 'trend', count: monthlyTask.trend, duration: 1.5, label: '트렌드' },
     { type: 'eonron_bodo', count: monthlyTask.eonron_bodo, duration: 0.5, label: '언론보도' },
     { type: 'jisikin', count: monthlyTask.jisikin, duration: 0.5, label: '지식인' }
   ]
-
-  for (const taskDef of taskDefs) {
+  
+  for (const taskDef of otherTaskDefs) {
     for (let i = 0; i < taskDef.count; i++) {
       tasks.push({
         hospitalId,
@@ -142,7 +174,14 @@ export async function generateSchedule(
     }
   }
 
-  // 8. 콘텐츠 작업 배치 (마감일 이전 근무일에만)
+  // 8. 상위노출 작업과 일반 작업 분리
+  const sanwiTasks = tasks.filter(t => t.type === 'sanwi_nosul')
+  const normalTasks = tasks.filter(t => t.type !== 'sanwi_nosul')
+  
+  // 상위노출 일자 가져오기
+  const sanwiNosolDay = hospital.sanwi_nosul_day as number | undefined
+  
+  // 9. 콘텐츠 작업 배치 (마감일 이전 근무일에만)
   const contentDaySchedules = daySchedules.filter(
     d => d.date <= contentDeadline
   )
@@ -162,13 +201,54 @@ export async function generateSchedule(
     }
   }
 
-  // 9. 작업 배치
+  // 10. 상위노출 작업 먼저 배치 (지정된 날짜에만)
+  if (sanwiNosolDay && sanwiTasks.length > 0) {
+    for (const daySchedule of contentDaySchedules) {
+      const dayOfMonth = daySchedule.date.getDate()
+      
+      // 상위노출 일자인 경우에만 배치
+      if (dayOfMonth === sanwiNosolDay && sanwiTasks.length > 0) {
+        const task = sanwiTasks.shift()
+        if (!task) continue
+        
+        const remainingHours = daySchedule.availableHours - daySchedule.usedHours
+        
+        if (task.duration <= remainingHours) {
+          const dayStartHour = isMonday(daySchedule.date) ? 10 : 9
+          const startHourOffset = dayStartHour + daySchedule.usedHours
+          const { hour: endHour, minute: endMinute } = addHours(startHourOffset, task.duration)
+
+          daySchedule.tasks.push({
+            hospitalId: task.hospitalId,
+            hospitalName: task.hospitalName,
+            type: task.type,
+            label: task.label,
+            startTime: formatTime(Math.floor(startHourOffset), 0),
+            endTime: formatTime(endHour, endMinute),
+            duration: task.duration,
+            isReport: false
+          })
+
+          daySchedule.usedHours += task.duration
+        } else {
+          // 시간 부족하면 다시 넣기
+          sanwiTasks.unshift(task)
+        }
+      }
+    }
+  }
+  
+  // 남은 상위노출 작업이 있으면 일반 작업 목록에 추가 (날짜 지정 안된 경우)
+  normalTasks.push(...sanwiTasks)
+
+  // 11. 일반 작업 배치
+  // 11. 일반 작업 배치
   let taskIndex = 0
   for (const daySchedule of contentDaySchedules) {
-    if (taskIndex >= tasks.length) break
+    if (taskIndex >= normalTasks.length) break
 
-    while (taskIndex < tasks.length) {
-      const task = tasks[taskIndex]
+    while (taskIndex < normalTasks.length) {
+      const task = normalTasks[taskIndex]
       const remainingHours = daySchedule.availableHours - daySchedule.usedHours
 
       if (task.duration <= remainingHours) {

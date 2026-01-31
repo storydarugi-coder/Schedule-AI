@@ -23,7 +23,7 @@ app.get('/api/hospitals', async (c) => {
 // 병원 추가
 app.post('/api/hospitals', async (c) => {
   const db = c.env.DB
-  const { name, base_due_day } = await c.req.json()
+  const { name, base_due_day, sanwi_nosul_day } = await c.req.json()
 
   if (!name || !base_due_day) {
     return c.json({ error: '병원명과 기본 마감일을 입력해주세요' }, 400)
@@ -31,10 +31,10 @@ app.post('/api/hospitals', async (c) => {
 
   try {
     const result = await db.prepare(
-      'INSERT INTO hospitals (name, base_due_day) VALUES (?, ?)'
-    ).bind(name, base_due_day).run()
+      'INSERT INTO hospitals (name, base_due_day, sanwi_nosul_day) VALUES (?, ?, ?)'
+    ).bind(name, base_due_day, sanwi_nosul_day || null).run()
 
-    return c.json({ id: result.meta.last_row_id, name, base_due_day })
+    return c.json({ id: result.meta.last_row_id, name, base_due_day, sanwi_nosul_day })
   } catch (error) {
     return c.json({ error: '병원 추가 실패 (중복된 이름일 수 있습니다)' }, 400)
   }
@@ -44,11 +44,11 @@ app.post('/api/hospitals', async (c) => {
 app.put('/api/hospitals/:id', async (c) => {
   const db = c.env.DB
   const id = c.req.param('id')
-  const { name, base_due_day } = await c.req.json()
+  const { name, base_due_day, sanwi_nosul_day } = await c.req.json()
 
   await db.prepare(
-    'UPDATE hospitals SET name = ?, base_due_day = ? WHERE id = ?'
-  ).bind(name, base_due_day, id).run()
+    'UPDATE hospitals SET name = ?, base_due_day = ?, sanwi_nosul_day = ? WHERE id = ?'
+  ).bind(name, base_due_day, sanwi_nosul_day || null, id).run()
 
   return c.json({ success: true })
 })
@@ -95,8 +95,12 @@ app.post('/api/monthly-tasks', async (c) => {
     trend,
     eonron_bodo,
     jisikin,
-    deadline_pull_days
+    deadline_pull_days,
+    task_order
   } = data
+
+  // sanwi_dates를 JSON 문자열로 변환
+  const sanwiDatesJson = JSON.stringify(data.sanwi_dates || [])
 
   // 기존 데이터 확인
   const existing = await db.prepare(`
@@ -107,15 +111,29 @@ app.post('/api/monthly-tasks', async (c) => {
     // 업데이트
     await db.prepare(`
       UPDATE monthly_tasks
-      SET sanwi_nosul = ?, brand = ?, trend = ?, eonron_bodo = ?, jisikin = ?, deadline_pull_days = ?
+      SET sanwi_nosul = ?, brand = ?, trend = ?, eonron_bodo = ?, jisikin = ?, 
+          deadline_pull_days = ?, task_order = ?, brand_order = ?, trend_order = ?, sanwi_dates = ?
       WHERE hospital_id = ? AND year = ? AND month = ?
-    `).bind(sanwi_nosul, brand, trend, eonron_bodo, jisikin, deadline_pull_days, hospital_id, year, month).run()
+    `).bind(
+      sanwi_nosul, brand, trend, eonron_bodo, jisikin, deadline_pull_days, 
+      task_order || 'brand,trend', 
+      data.brand_order || 1, 
+      data.trend_order || 2,
+      sanwiDatesJson,
+      hospital_id, year, month
+    ).run()
   } else {
     // 삽입
     await db.prepare(`
-      INSERT INTO monthly_tasks (hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, deadline_pull_days)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, deadline_pull_days).run()
+      INSERT INTO monthly_tasks (hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, deadline_pull_days, task_order, brand_order, trend_order, sanwi_dates)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, deadline_pull_days, 
+      task_order || 'brand,trend',
+      data.brand_order || 1,
+      data.trend_order || 2,
+      sanwiDatesJson
+    ).run()
   }
 
   return c.json({ success: true })
@@ -297,13 +315,18 @@ app.get('/', (c) => {
                 <h2 class="text-2xl font-bold mb-4 primary-color">
                     <i class="fas fa-plus-circle mr-2"></i>병원 추가
                 </h2>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <input type="text" id="hospital-name" placeholder="병원명" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none">
                     <input type="number" id="hospital-due-day" placeholder="기본 마감일 (1-31)" min="1" max="31" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none">
+                    <input type="number" id="hospital-sanwi-day" placeholder="상위노출 일자 (선택)" min="1" max="31" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none">
                     <button onclick="addHospital()" class="btn-primary text-white rounded-lg px-6 py-3 font-semibold shadow-md hover:shadow-lg transition-all">
                         <i class="fas fa-plus mr-2"></i>추가
                     </button>
                 </div>
+                <p class="text-sm text-purple-600 mt-2">
+                    <i class="fas fa-info-circle mr-1"></i>
+                    상위노출 일자를 지정하면 해당 날짜에만 상위노출 작업이 배치됩니다.
+                </p>
             </div>
 
             <div class="bg-white rounded-xl shadow-lg p-6 border-2 border-purple-100">
@@ -363,17 +386,35 @@ app.get('/', (c) => {
                 </div>
 
                 <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
-                    <div>
+                    <div class="col-span-2 md:col-span-3">
                         <label class="block text-sm font-semibold mb-2 primary-color">상위노출</label>
-                        <input type="number" id="task-sanwi" min="0" value="0" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none">
+                        <input type="number" id="task-sanwi" min="0" value="0" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none" onchange="updateSanwiDates()">
+                        <div id="sanwi-dates-container" class="mt-3 space-y-2 hidden">
+                            <label class="block text-xs text-gray-600 font-medium mb-1">📅 상위노출 게시 날짜 선택 (콘텐츠 완료 기한 이전):</label>
+                            <div id="sanwi-dates-list" class="space-y-2"></div>
+                        </div>
                     </div>
                     <div>
                         <label class="block text-sm font-semibold mb-2 primary-color">브랜드</label>
-                        <input type="number" id="task-brand" min="0" value="0" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none">
+                        <input type="number" id="task-brand" min="0" value="0" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none" onchange="updateBrandTrendOrder()">
+                        <div id="brand-order-container" class="mt-2 hidden">
+                            <label class="text-xs text-gray-600">게시 순서:</label>
+                            <select id="brand-order" class="text-sm border border-gray-300 rounded px-2 py-1 w-full">
+                                <option value="1">1번째</option>
+                                <option value="2">2번째</option>
+                            </select>
+                        </div>
                     </div>
                     <div>
                         <label class="block text-sm font-semibold mb-2 primary-color">트렌드</label>
-                        <input type="number" id="task-trend" min="0" value="0" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none">
+                        <input type="number" id="task-trend" min="0" value="0" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none" onchange="updateBrandTrendOrder()">
+                        <div id="trend-order-container" class="mt-2 hidden">
+                            <label class="text-xs text-gray-600">게시 순서:</label>
+                            <select id="trend-order" class="text-sm border border-gray-300 rounded px-2 py-1 w-full">
+                                <option value="1">1번째</option>
+                                <option value="2">2번째</option>
+                            </select>
+                        </div>
                     </div>
                     <div>
                         <label class="block text-sm font-semibold mb-2 primary-color">언론보도</label>
@@ -390,6 +431,17 @@ app.get('/', (c) => {
                             <option value="1">1일</option>
                             <option value="2">2일</option>
                         </select>
+                    </div>
+                    <div class="md:col-span-3">
+                        <label class="block text-sm font-semibold mb-2 primary-color">브랜드/트렌드 작업 순서</label>
+                        <select id="task-order" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none">
+                            <option value="brand,trend">브랜드 → 트렌드 (기본)</option>
+                            <option value="trend,brand">트렌드 → 브랜드</option>
+                        </select>
+                        <p class="text-xs text-gray-500 mt-1">
+                            <i class="fas fa-info-circle mr-1"></i>
+                            브랜드와 트렌드가 교차로 배치됩니다. 예: 브랜드 - 트렌드 - 브랜드 - 트렌드
+                        </p>
                     </div>
                 </div>
 
@@ -496,9 +548,17 @@ app.get('/', (c) => {
                             </div>
                             <div>
                                 <span class="font-bold text-lg text-gray-800">\${h.name}</span>
-                                <div class="flex items-center mt-1">
-                                    <i class="fas fa-calendar-day text-purple-500 mr-2"></i>
-                                    <span class="text-purple-600 font-semibold">마감일: 매월 \${h.base_due_day}일</span>
+                                <div class="flex items-center mt-1 space-x-4">
+                                    <div class="flex items-center">
+                                        <i class="fas fa-calendar-day text-purple-500 mr-2"></i>
+                                        <span class="text-purple-600 font-semibold">마감일: 매월 \${h.base_due_day}일</span>
+                                    </div>
+                                    \${h.sanwi_nosul_day ? \`
+                                        <div class="flex items-center">
+                                            <i class="fas fa-star text-yellow-500 mr-2"></i>
+                                            <span class="text-yellow-600 font-semibold">상위노출: \${h.sanwi_nosul_day}일</span>
+                                        </div>
+                                    \` : ''}
                                 </div>
                             </div>
                         </div>
@@ -521,6 +581,7 @@ app.get('/', (c) => {
         async function addHospital() {
             const name = document.getElementById('hospital-name').value;
             const baseDueDay = document.getElementById('hospital-due-day').value;
+            const sanwiDay = document.getElementById('hospital-sanwi-day').value;
 
             if (!name || !baseDueDay) {
                 alert('병원명과 기본 마감일을 입력해주세요');
@@ -528,9 +589,14 @@ app.get('/', (c) => {
             }
 
             try {
-                await axios.post('/api/hospitals', { name, base_due_day: parseInt(baseDueDay) });
+                await axios.post('/api/hospitals', { 
+                    name, 
+                    base_due_day: parseInt(baseDueDay),
+                    sanwi_nosul_day: sanwiDay ? parseInt(sanwiDay) : null
+                });
                 document.getElementById('hospital-name').value = '';
                 document.getElementById('hospital-due-day').value = '';
+                document.getElementById('hospital-sanwi-day').value = '';
                 loadHospitals();
                 alert('병원이 추가되었습니다');
             } catch (error) {
@@ -548,6 +614,52 @@ app.get('/', (c) => {
                 alert('병원이 삭제되었습니다');
             } catch (error) {
                 alert('병원 삭제 실패');
+            }
+        }
+
+        // 상위노출 날짜 선택 UI 업데이트
+        function updateSanwiDates() {
+            const count = parseInt(document.getElementById('task-sanwi').value) || 0;
+            const container = document.getElementById('sanwi-dates-container');
+            const listElement = document.getElementById('sanwi-dates-list');
+            
+            if (count === 0) {
+                container.classList.add('hidden');
+                return;
+            }
+            
+            container.classList.remove('hidden');
+            listElement.innerHTML = '';
+            
+            for (let i = 1; i <= count; i++) {
+                const div = document.createElement('div');
+                div.className = 'flex items-center space-x-2';
+                div.innerHTML = \`
+                    <span class="text-sm font-medium w-16">상위노출 #\${i}:</span>
+                    <input type="number" 
+                           id="sanwi-date-\${i}" 
+                           min="1" 
+                           max="31" 
+                           placeholder="일(1-31)" 
+                           class="border border-purple-300 rounded px-3 py-1 text-sm w-20 focus:border-purple-500 focus:outline-none">
+                \`;
+                listElement.appendChild(div);
+            }
+        }
+
+        // 브랜드/트렌드 게시 순서 UI 업데이트
+        function updateBrandTrendOrder() {
+            const brandCount = parseInt(document.getElementById('task-brand').value) || 0;
+            const trendCount = parseInt(document.getElementById('task-trend').value) || 0;
+            const brandOrderContainer = document.getElementById('brand-order-container');
+            const trendOrderContainer = document.getElementById('trend-order-container');
+            
+            if (brandCount > 0 && trendCount > 0) {
+                brandOrderContainer.classList.remove('hidden');
+                trendOrderContainer.classList.remove('hidden');
+            } else {
+                brandOrderContainer.classList.add('hidden');
+                trendOrderContainer.classList.add('hidden');
             }
         }
 
@@ -660,8 +772,37 @@ app.get('/', (c) => {
                 trend: parseInt(document.getElementById('task-trend').value),
                 eonron_bodo: parseInt(document.getElementById('task-eonron').value),
                 jisikin: parseInt(document.getElementById('task-jisikin').value),
-                deadline_pull_days: parseInt(document.getElementById('task-pull-days').value)
+                deadline_pull_days: parseInt(document.getElementById('task-pull-days').value),
+                task_order: document.getElementById('task-order').value,
+                brand_order: parseInt(document.getElementById('brand-order')?.value || '1'),
+                trend_order: parseInt(document.getElementById('trend-order')?.value || '2'),
+                sanwi_dates: []
             };
+
+            // 상위노출 날짜 수집
+            const sanwiCount = data.sanwi_nosul;
+            for (let i = 1; i <= sanwiCount; i++) {
+                const dateInput = document.getElementById(\`sanwi-date-\${i}\`);
+                if (dateInput && dateInput.value) {
+                    data.sanwi_dates.push(parseInt(dateInput.value));
+                }
+            }
+
+            // 상위노출 날짜 검증
+            if (sanwiCount > 0 && data.sanwi_dates.length !== sanwiCount) {
+                alert('모든 상위노출 날짜를 입력해주세요');
+                return;
+            }
+
+            // 브랜드/트렌드 게시 순서 검증
+            const brandCount = data.brand;
+            const trendCount = data.trend;
+            if (brandCount > 0 && trendCount > 0) {
+                if (data.brand_order === data.trend_order) {
+                    alert('브랜드와 트렌드의 게시 순서가 같을 수 없습니다');
+                    return;
+                }
+            }
 
             try {
                 await axios.post('/api/monthly-tasks', data);
