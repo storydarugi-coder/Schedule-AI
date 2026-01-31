@@ -472,17 +472,6 @@ app.get('/', (c) => {
                             <option value="5">5일</option>
                         </select>
                     </div>
-                    <div class="md:col-span-3">
-                        <label class="block text-sm font-semibold mb-2 primary-color">브랜드/트렌드 작업 순서</label>
-                        <select id="task-order" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none">
-                            <option value="brand,trend">브랜드 → 트렌드 (기본)</option>
-                            <option value="trend,brand">트렌드 → 브랜드</option>
-                        </select>
-                        <p class="text-xs text-gray-500 mt-1">
-                            <i class="fas fa-info-circle mr-1"></i>
-                            브랜드와 트렌드가 교차로 배치됩니다. 예: 브랜드 - 트렌드 - 브랜드 - 트렌드
-                        </p>
-                    </div>
                 </div>
 
                 <div class="bg-purple-50 border-2 border-purple-200 rounded-lg p-4 mb-6">
