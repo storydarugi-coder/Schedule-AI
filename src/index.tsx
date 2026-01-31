@@ -543,9 +543,17 @@ app.get('/', (c) => {
         <div id="content-calendar" class="tab-content hidden">
             <!-- 작업 개수 현황표 -->
             <div id="task-stats" class="bg-white rounded-xl shadow-lg p-6 mb-4 border-2 border-purple-100 hidden">
-                <h3 class="text-lg font-bold primary-color mb-4">
-                    <i class="fas fa-tasks mr-2"></i>작업 개수 현황
-                </h3>
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold primary-color">
+                        <i class="fas fa-tasks mr-2"></i>작업 개수 현황
+                    </h3>
+                    <div class="flex gap-2 items-center">
+                        <label class="text-sm text-gray-600">병원:</label>
+                        <select id="stats-hospital" onchange="updateStatsForHospital()" class="border-2 border-purple-200 rounded-lg px-3 py-2 text-sm">
+                            <option value="all">전체</option>
+                        </select>
+                    </div>
+                </div>
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div class="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 text-center">
                         <div class="text-sm text-gray-600 mb-1">브랜드</div>
@@ -1162,6 +1170,9 @@ app.get('/', (c) => {
                 calendar.addEventSource(events.concat(vacationEvents));
                 calendar.gotoDate(\`\${year}-\${month.padStart(2, '0')}-01\`);
                 
+                // 병원 목록 업데이트 (통계용)
+                updateStatsHospitalList(scheduleRes.data);
+                
                 // 작업 통계 업데이트
                 updateTaskStats(scheduleRes.data);
             } catch (error) {
@@ -1169,9 +1180,54 @@ app.get('/', (c) => {
             }
         }
         
+        // 통계용 병원 목록 업데이트
+        function updateStatsHospitalList(schedules) {
+            const hospitalSelect = document.getElementById('stats-hospital');
+            const uniqueHospitals = [...new Set(schedules.map(s => JSON.stringify({ id: s.hospital_id, name: s.hospital_name })))].map(s => JSON.parse(s));
+            
+            // 기존 옵션 제거 (전체 제외)
+            while (hospitalSelect.options.length > 1) {
+                hospitalSelect.remove(1);
+            }
+            
+            // 병원 옵션 추가
+            uniqueHospitals.forEach(h => {
+                const option = document.createElement('option');
+                option.value = h.id;
+                option.textContent = h.name;
+                hospitalSelect.appendChild(option);
+            });
+        }
+        
+        // 병원별 통계 업데이트 (드롭다운에서 선택 시)
+        async function updateStatsForHospital() {
+            const year = document.getElementById('calendar-year').value;
+            const month = document.getElementById('calendar-month').value;
+            
+            if (!year || !month) return;
+            
+            try {
+                const scheduleRes = await axios.get(\`/api/schedules/\${year}/\${month}\`);
+                updateTaskStats(scheduleRes.data);
+            } catch (error) {
+                console.error('통계 업데이트 실패', error);
+            }
+        }
+        
         // 작업 통계 업데이트
         function updateTaskStats(schedules) {
             if (!schedules || schedules.length === 0) {
+                document.getElementById('task-stats').classList.add('hidden');
+                return;
+            }
+            
+            // 선택된 병원 필터링
+            const selectedHospital = document.getElementById('stats-hospital').value;
+            const filteredSchedules = selectedHospital === 'all' 
+                ? schedules 
+                : schedules.filter(s => s.hospital_id == selectedHospital);
+            
+            if (filteredSchedules.length === 0) {
                 document.getElementById('task-stats').classList.add('hidden');
                 return;
             }
@@ -1187,7 +1243,7 @@ app.get('/', (c) => {
                 report: { total: 0, completed: 0 }
             };
             
-            schedules.forEach(s => {
+            filteredSchedules.forEach(s => {
                 if (stats[s.task_type] !== undefined) {
                     stats[s.task_type].total++;
                     if (s.is_completed) {

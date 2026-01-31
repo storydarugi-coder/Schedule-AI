@@ -21,7 +21,7 @@ export interface MonthlyTask {
   trend: number;
   eonron_bodo: number;
   jisikin: number;
-  cafe_posting: number;
+  cafe: number;
   deadline_pull_days: number;
   task_order: string;
   brand_order: number;

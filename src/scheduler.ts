@@ -186,7 +186,7 @@ export async function generateSchedule(
     { type: 'sanwi_nosul', count: sanwiCount, duration: 3.5, label: '상위노출' },
     { type: 'eonron_bodo', count: monthlyTask.eonron_bodo, duration: 0.5, label: '언론보도' },
     { type: 'jisikin', count: monthlyTask.jisikin, duration: 0.5, label: '지식인' },
-    { type: 'cafe_posting', count: monthlyTask.cafe_posting || 0, duration: 0.5, label: '카페 포스팅' }
+    { type: 'cafe_posting', count: monthlyTask.cafe || 0, duration: 0.5, label: '카페 포스팅' }
   ]
   
   for (const taskDef of otherTaskDefs) {
