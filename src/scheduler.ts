@@ -84,7 +84,20 @@ export async function generateSchedule(
   // 4. 근무일 목록 생성
   const workdays = getWorkdays(year, month, vacations)
 
-  // 5. 일별 스케줄 초기화
+  // 5. 기존 스케줄 불러오기 (같은 병원의 기존 작업 확인용)
+  const existingSchedules = await db.prepare(`
+    SELECT task_date, COUNT(*) as task_count
+    FROM schedules
+    WHERE hospital_id = ? AND year = ? AND month = ? AND is_report = 0
+    GROUP BY task_date
+  `).bind(hospitalId, year, month).all()
+  
+  const existingTaskCounts = new Map<string, number>()
+  for (const row of existingSchedules.results) {
+    existingTaskCounts.set((row as any).task_date, (row as any).task_count)
+  }
+
+  // 6. 일별 스케줄 초기화
   const daySchedules: DaySchedule[] = workdays.map(date => ({
     date,
     availableHours: getAvailableHours(date),
@@ -92,7 +105,7 @@ export async function generateSchedule(
     tasks: []
   }))
 
-  // 6. 보고서 작업 고정 (마감일 당일 10:00~12:00)
+  // 7. 보고서 작업 고정 (마감일 당일 10:00~12:00)
   const reportDayIndex = daySchedules.findIndex(
     d => formatDate(d.date) === formatDate(dueDate)
   )
@@ -263,11 +276,14 @@ export async function generateSchedule(
       const task = normalTasks[taskIndex]
       const remainingHours = daySchedule.availableHours - daySchedule.usedHours
       
-      // 이 병원의 오늘 작업 개수 계산 (보고서 제외)
-      const todayTaskCount = daySchedule.tasks.filter(t => !t.isReport && t.hospitalId === hospitalId).length
+      // 이 병원의 오늘 작업 개수 계산 (기존 DB 작업 + 오늘 추가한 작업)
+      const dateStr = formatDate(daySchedule.date)
+      const existingCount = existingTaskCounts.get(dateStr) || 0
+      const todayNewTaskCount = daySchedule.tasks.filter(t => !t.isReport && t.hospitalId === hospitalId).length
+      const totalTaskCount = existingCount + todayNewTaskCount
 
       // 같은 병원 작업이 이미 2개 이상이면 다음 날로
-      if (todayTaskCount >= maxTasksPerDay) {
+      if (totalTaskCount >= maxTasksPerDay) {
         break
       }
 
