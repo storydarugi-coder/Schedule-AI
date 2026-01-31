@@ -139,17 +139,24 @@ export async function generateSchedule(
   // 9. 콘텐츠 작업 목록 생성 (브랜드/트렌드 교차 배치)
   const tasks: Task[] = []
   
-  // 작업 순서 파싱 (기본값: 'brand,trend')
-  const taskOrder = (monthlyTask.task_order || 'brand,trend').split(',')
-  
   // 브랜드와 트렌드를 교차로 배치
   const brandCount = monthlyTask.brand
   const trendCount = monthlyTask.trend
   const maxCount = Math.max(brandCount, trendCount)
   
+  // 게시 순서 결정 (brand_order, trend_order 사용)
+  const brandOrder = monthlyTask.brand_order || 1
+  const trendOrder = monthlyTask.trend_order || 2
+  
+  // 순서대로 정렬
+  const orderedTasks = [
+    { type: 'brand', order: brandOrder },
+    { type: 'trend', order: trendOrder }
+  ].sort((a, b) => a.order - b.order)
+  
   for (let i = 0; i < maxCount; i++) {
-    for (const taskType of taskOrder) {
-      if (taskType === 'brand' && i < brandCount) {
+    for (const taskDef of orderedTasks) {
+      if (taskDef.type === 'brand' && i < brandCount) {
         tasks.push({
           hospitalId,
           hospitalName,
@@ -158,7 +165,7 @@ export async function generateSchedule(
           duration: 3.5,
           deadline: dueDate
         })
-      } else if (taskType === 'trend' && i < trendCount) {
+      } else if (taskDef.type === 'trend' && i < trendCount) {
         tasks.push({
           hospitalId,
           hospitalName,
