@@ -822,7 +822,7 @@ app.get('/', (c) => {
         };
 
         // 탭 전환
-        function showTab(tab) {
+        window.showTab = function(tab) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
             document.querySelectorAll('.tab-button').forEach(el => {
                 el.classList.remove('btn-primary', 'text-white');
@@ -893,7 +893,7 @@ app.get('/', (c) => {
         }
 
         // 병원 추가
-        async function addHospital() {
+        window.addHospital = async function() {
             const name = document.getElementById('hospital-name').value;
             const baseDueDay = document.getElementById('hospital-due-day').value;
             const color = document.getElementById('hospital-color').value;
@@ -940,7 +940,7 @@ app.get('/', (c) => {
         }
 
         // 병원 삭제
-        async function deleteHospital(id) {
+        window.deleteHospital = async function(id) {
             if (!confirm('정말 삭제하시겠습니까?')) return;
 
             try {
@@ -1019,7 +1019,7 @@ app.get('/', (c) => {
         }
 
         // 연차/휴가 추가
-        async function addVacation() {
+        window.addVacation = async function() {
             const date = document.getElementById('vacation-date').value;
             const type = document.getElementById('vacation-type').value;
             const description = document.getElementById('vacation-description').value;
@@ -1046,7 +1046,7 @@ app.get('/', (c) => {
         }
 
         // 연차/휴가 삭제
-        async function deleteVacation(id) {
+        window.deleteVacation = async function(id) {
             if (!confirm('정말 삭제하시겠습니까?')) return;
 
             try {
@@ -1059,7 +1059,7 @@ app.get('/', (c) => {
         }
 
         // 월별 작업량 저장
-        async function saveMonthlyTask() {
+        window.saveMonthlyTask = async function() {
             const hospitalId = document.getElementById('task-hospital').value;
             const year = document.getElementById('task-year').value;
             const month = document.getElementById('task-month').value;
@@ -1156,7 +1156,7 @@ app.get('/', (c) => {
         }
 
         // 스케줄 생성
-        async function generateSchedule() {
+        window.generateSchedule = async function() {
             const hospitalId = document.getElementById('task-hospital').value;
             const year = document.getElementById('task-year').value;
             const month = document.getElementById('task-month').value;
@@ -1221,7 +1221,7 @@ app.get('/', (c) => {
         }
 
         // 전체 병원 스케줄 재생성
-        async function generateAllSchedules() {
+        window.generateAllSchedules = async function() {
             const year = document.getElementById('task-year').value;
             const month = document.getElementById('task-month').value;
 
@@ -1847,7 +1847,7 @@ app.get('/', (c) => {
         }
 
         // 전체 스케줄 삭제
-        async function deleteAllSchedules() {
+        window.deleteAllSchedules = async function() {
             const year = document.getElementById('calendar-year').value;
             const month = document.getElementById('calendar-month').value;
 
