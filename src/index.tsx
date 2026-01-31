@@ -386,6 +386,28 @@ app.get('/', (c) => {
         margin: 1px 0 !important;
         border-radius: 3px !important;
       }
+      
+      /* 이벤트 제목 텍스트가 잘리지 않도록 */
+      .fc-event-title {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        word-wrap: break-word !important;
+        font-size: 11px !important;
+        line-height: 1.3 !important;
+      }
+      
+      /* 이벤트 높이 자동 조정 */
+      .fc-daygrid-event {
+        min-height: auto !important;
+        height: auto !important;
+      }
+      
+      /* 일찍 출근 강조 스타일 */
+      .early-start-event {
+        font-weight: bold !important;
+        border: 2px solid #7e22ce !important;
+      }
     </style>
     <link href='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.css' rel='stylesheet' />
 </head>
@@ -1213,23 +1235,44 @@ app.get('/', (c) => {
                     // 병원 색상 사용 (없으면 기본 파란색)
                     const hospitalColor = s.hospital_color || '#3b82f6';
                     
-                    // 보고서는 파스텔 핑크, 일반 작업은 사용자가 선택한 색상 그대로
-                    const color = s.is_report ? '#fda4af' : hospitalColor;
-                    const textColor = s.is_report ? '#be123c' : '#ffffff'; // 흰색 텍스트로 명확하게
+                    // 색상 설정: 일찍 출근 > 보고서 > 일반 작업
+                    let color, textColor;
+                    if (s.task_type === 'early_start') {
+                        // 일찍 출근: 보라색
+                        color = '#9333ea'; // 진한 보라색
+                        textColor = '#ffffff';
+                    } else if (s.is_report) {
+                        // 보고서: 파스텔 핑크
+                        color = '#fda4af';
+                        textColor = '#be123c';
+                    } else {
+                        // 일반 작업: 병원 색상
+                        color = hospitalColor;
+                        textColor = '#ffffff';
+                    }
                     
                     // 완료 상태면 취소선 추가
                     const titlePrefix = s.is_completed ? '✅ ' : '';
                     
+                    // 일찍 출근 이모지 추가
+                    const earlyIcon = s.task_type === 'early_start' ? '⏰ ' : '';
+                    
+                    // 일찍 출근 클래스 추가
+                    const classNames = s.is_completed ? ['completed-task'] : [];
+                    if (s.task_type === 'early_start') {
+                        classNames.push('early-start-event');
+                    }
+                    
                     return {
                         id: s.id, // 스케줄 ID 추가 (드래그 앤 드롭에 필요)
-                        title: \`\${titlePrefix}\${s.hospital_name} - \${s.task_name}\`,
+                        title: \`\${earlyIcon}\${titlePrefix}\${s.hospital_name} - \${s.task_name}\`,
                         start: \`\${s.task_date}T\${s.start_time}\`, // 시간 포함하여 정렬
                         order_index: s.order_index || 0, // 순서 인덱스 추가
                         color: color,
                         textColor: textColor,
                         borderColor: textColor,
                         editable: true, // 이 이벤트는 이동 가능
-                        classNames: s.is_completed ? ['completed-task'] : [], // 완료 시 CSS 클래스 추가
+                        classNames: classNames, // CSS 클래스 추가
                         extendedProps: {
                             scheduleId: s.id,
                             hospitalId: s.hospital_id,
