@@ -8,6 +8,7 @@ export interface Hospital {
   base_due_day: number;
   sanwi_nosul_day?: number; // Legacy - deprecated
   sanwi_nosul_days?: string; // JSON array of numbers
+  color?: string; // Hospital color for calendar
   created_at: string;
 }
 

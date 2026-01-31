@@ -23,7 +23,7 @@ app.get('/api/hospitals', async (c) => {
 // 병원 추가
 app.post('/api/hospitals', async (c) => {
   const db = c.env.DB
-  const { name, base_due_day, sanwi_nosul_days } = await c.req.json()
+  const { name, base_due_day, sanwi_nosul_days, color } = await c.req.json()
 
   if (!name || !base_due_day) {
     return c.json({ error: '병원명과 기본 마감일을 입력해주세요' }, 400)
@@ -34,10 +34,10 @@ app.post('/api/hospitals', async (c) => {
 
   try {
     const result = await db.prepare(
-      'INSERT INTO hospitals (name, base_due_day, sanwi_nosul_days) VALUES (?, ?, ?)'
-    ).bind(name, base_due_day, sanwiDaysJson).run()
+      'INSERT INTO hospitals (name, base_due_day, sanwi_nosul_days, color) VALUES (?, ?, ?, ?)'
+    ).bind(name, base_due_day, sanwiDaysJson, color || '#3b82f6').run()
 
-    return c.json({ id: result.meta.last_row_id, name, base_due_day, sanwi_nosul_days: sanwiDaysJson })
+    return c.json({ id: result.meta.last_row_id, name, base_due_day, sanwi_nosul_days: sanwiDaysJson, color })
   } catch (error) {
     return c.json({ error: '병원 추가 실패 (중복된 이름일 수 있습니다)' }, 400)
   }
@@ -196,7 +196,7 @@ app.get('/api/schedules/:year/:month', async (c) => {
   const month = parseInt(c.req.param('month'))
 
   const result = await db.prepare(`
-    SELECT s.*, h.name as hospital_name, h.base_due_day,
+    SELECT s.*, h.name as hospital_name, h.base_due_day, h.color as hospital_color,
            mt.deadline_pull_days
     FROM schedules s
     JOIN hospitals h ON s.hospital_id = h.id
@@ -381,9 +381,16 @@ app.get('/', (c) => {
                 <h2 class="text-2xl font-bold mb-4 primary-color">
                     <i class="fas fa-plus-circle mr-2"></i>병원 추가
                 </h2>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <input type="text" id="hospital-name" placeholder="병원명" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none">
                     <input type="number" id="hospital-due-day" placeholder="기본 마감일 (1-31)" min="1" max="31" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none">
+                    <div class="flex gap-2">
+                        <input type="color" id="hospital-color" value="#3b82f6" class="border-2 border-purple-200 rounded-lg px-2 py-1 h-12 w-20 cursor-pointer">
+                        <div class="flex-1 flex items-center px-4 border-2 border-purple-200 rounded-lg bg-gray-50">
+                            <i class="fas fa-palette mr-2 text-gray-500"></i>
+                            <span class="text-sm text-gray-600">병원 색상</span>
+                        </div>
+                    </div>
                 </div>
                 <div class="mt-4">
                     <label class="block text-sm font-semibold mb-2 primary-color">
@@ -686,7 +693,7 @@ app.get('/', (c) => {
                 list.innerHTML = hospitals.map(h => \`
                     <div class="flex justify-between items-center p-5 border-2 border-purple-100 rounded-xl hover:border-purple-300 transition-all bg-gradient-to-r from-purple-50 to-white shadow-sm hover:shadow-md">
                         <div class="flex items-center space-x-4">
-                            <div class="bg-gradient-to-br from-purple-400 to-purple-600 text-white rounded-lg p-3">
+                            <div class="text-white rounded-lg p-3" style="background: linear-gradient(135deg, \${h.color || '#3b82f6'} 0%, \${h.color || '#3b82f6'}dd 100%);">
                                 <i class="fas fa-hospital text-2xl"></i>
                             </div>
                             <div>
@@ -702,6 +709,10 @@ app.get('/', (c) => {
                                             <span class="text-yellow-600 font-semibold">상위노출: \${JSON.parse(h.sanwi_nosul_days).map(d => String(d).padStart(2, '0')).join(', ')}일</span>
                                         </div>
                                     \` : ''}
+                                    <div class="flex items-center">
+                                        <i class="fas fa-palette mr-2" style="color: \${h.color || '#3b82f6'}"></i>
+                                        <span class="text-sm text-gray-600 font-mono">\${h.color || '#3b82f6'}</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -724,6 +735,7 @@ app.get('/', (c) => {
         async function addHospital() {
             const name = document.getElementById('hospital-name').value;
             const baseDueDay = document.getElementById('hospital-due-day').value;
+            const color = document.getElementById('hospital-color').value;
             
             // 상위노출 날짜 수집 (최대 5개)
             const sanwiDays = [];
@@ -743,10 +755,12 @@ app.get('/', (c) => {
                 await axios.post('/api/hospitals', { 
                     name, 
                     base_due_day: parseInt(baseDueDay),
-                    sanwi_nosul_days: sanwiDays.length > 0 ? sanwiDays : null
+                    sanwi_nosul_days: sanwiDays.length > 0 ? sanwiDays : null,
+                    color: color || '#3b82f6'
                 });
                 document.getElementById('hospital-name').value = '';
                 document.getElementById('hospital-due-day').value = '';
+                document.getElementById('hospital-color').value = '#3b82f6';
                 for (let i = 1; i <= 5; i++) {
                     document.getElementById(\`hospital-sanwi-day-\${i}\`).value = '';
                 }
@@ -1115,9 +1129,12 @@ app.get('/', (c) => {
                 // 스케줄 가져오기
                 const scheduleRes = await axios.get(\`/api/schedules/\${year}/\${month}\`);
                 const events = scheduleRes.data.map(s => {
-                    // 파스텔 톤 색상 (보고서: 파스텔 핑크, 작업: 파스텔 블루)
-                    const color = s.is_report ? '#fda4af' : '#bfdbfe'; // 파스텔 핑크 vs 파스텔 블루
-                    const textColor = s.is_report ? '#be123c' : '#1e40af'; // 진한 핑크 vs 진한 블루
+                    // 병원 색상 사용 (없으면 기본 파란색)
+                    const hospitalColor = s.hospital_color || '#3b82f6';
+                    
+                    // 보고서는 빨간색 계열, 일반 작업은 병원 색상 사용
+                    const color = s.is_report ? '#fda4af' : hospitalColor + '40'; // 투명도 추가
+                    const textColor = s.is_report ? '#be123c' : hospitalColor;
                     
                     // 완료 상태면 취소선 추가
                     const titlePrefix = s.is_completed ? '✅ ' : '';
