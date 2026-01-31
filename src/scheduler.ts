@@ -84,20 +84,7 @@ export async function generateSchedule(
   // 4. 근무일 목록 생성
   const workdays = getWorkdays(year, month, vacations)
 
-  // 5. 기존 스케줄 불러오기 (같은 병원의 기존 작업 확인용)
-  const existingSchedules = await db.prepare(`
-    SELECT task_date, COUNT(*) as task_count
-    FROM schedules
-    WHERE hospital_id = ? AND year = ? AND month = ? AND is_report = 0
-    GROUP BY task_date
-  `).bind(hospitalId, year, month).all()
-  
-  const existingTaskCounts = new Map<string, number>()
-  for (const row of existingSchedules.results) {
-    existingTaskCounts.set((row as any).task_date, (row as any).task_count)
-  }
-
-  // 6. 일별 스케줄 초기화
+  // 5. 일별 스케줄 초기화
   const daySchedules: DaySchedule[] = workdays.map(date => ({
     date,
     availableHours: getAvailableHours(date),
@@ -105,7 +92,7 @@ export async function generateSchedule(
     tasks: []
   }))
 
-  // 7. 보고서 작업 고정 (마감일 당일 10:00~12:00)
+  // 6. 보고서 작업 고정 (마감일 당일 10:00~12:00)
   const reportDayIndex = daySchedules.findIndex(
     d => formatDate(d.date) === formatDate(dueDate)
   )
@@ -265,9 +252,8 @@ export async function generateSchedule(
   // 남은 상위노출 작업이 있으면 일반 작업 목록에 추가 (날짜 지정 안된 경우)
   normalTasks.push(...sanwiTasks)
 
-  // 12. 일반 작업 배치 (같은 병원은 하루 최대 2개 작업)
+  // 12. 일반 작업 배치 (하루 8시간 근무 시간 제한)
   let taskIndex = 0
-  const maxTasksPerDay = 2  // 같은 병원은 하루 최대 2개 작업
 
   for (const daySchedule of contentDaySchedules) {
     if (taskIndex >= normalTasks.length) break
@@ -275,19 +261,8 @@ export async function generateSchedule(
     while (taskIndex < normalTasks.length) {
       const task = normalTasks[taskIndex]
       const remainingHours = daySchedule.availableHours - daySchedule.usedHours
-      
-      // 이 병원의 오늘 작업 개수 계산 (기존 DB 작업 + 오늘 추가한 작업)
-      const dateStr = formatDate(daySchedule.date)
-      const existingCount = existingTaskCounts.get(dateStr) || 0
-      const todayNewTaskCount = daySchedule.tasks.filter(t => !t.isReport && t.hospitalId === hospitalId).length
-      const totalTaskCount = existingCount + todayNewTaskCount
 
-      // 같은 병원 작업이 이미 2개 이상이면 다음 날로
-      if (totalTaskCount >= maxTasksPerDay) {
-        break
-      }
-
-      // 시간도 충분하고 작업 개수도 초과하지 않는 경우에만 배치
+      // 시간이 충분한 경우에만 배치 (8시간 근무 시간 초과 방지)
       if (task.duration <= remainingHours) {
         // 시작 시간 계산 (월요일은 10시부터, 나머지는 9시부터)
         const dayStartHour = isMonday(daySchedule.date) ? 10 : 9
