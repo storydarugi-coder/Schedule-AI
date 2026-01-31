@@ -1240,7 +1240,7 @@ app.get('/', (c) => {
                 const monthlyTasks = tasksRes.data;
 
                 if (monthlyTasks.length === 0) {
-                    alert('저장된 작업량이 없습니다.\n\n각 병원의 작업량을 먼저 저장해주세요.');
+                    alert('저장된 작업량이 없습니다.\\n\\n각 병원의 작업량을 먼저 저장해주세요.');
                     return;
                 }
 
@@ -1842,7 +1842,7 @@ app.get('/', (c) => {
             } catch (error) {
                 console.error('순서 변경 실패', error);
                 console.error('Error response:', error.response?.data);
-                alert('❌ 순서 변경에 실패했습니다.\n\n' + (error.response?.data?.error || error.message));
+                alert('❌ 순서 변경에 실패했습니다.\\n\\n' + (error.response?.data?.error || error.message));
             }
         }
 
