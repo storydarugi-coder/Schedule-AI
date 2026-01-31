@@ -58,7 +58,7 @@ export const TASK_DEFINITIONS: Record<string, TaskDefinition> = {
   eonron_bodo: { type: 'eonron_bodo', duration: 0.5, label: '언론보도' },
   jisikin: { type: 'jisikin', duration: 0.5, label: '지식인' },
   cafe_posting: { type: 'cafe_posting', duration: 0.5, label: '카페 포스팅' },
-  early_start: { type: 'early_start', duration: 0.5, label: '30분 일찍 출근' },
+  early_start: { type: 'early_start', duration: 1.5, label: '1시간 30분 일찍 출근' },
   report: { type: 'report', duration: 2, label: '보고서' }
 }
 

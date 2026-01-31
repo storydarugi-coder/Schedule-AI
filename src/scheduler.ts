@@ -326,15 +326,15 @@ export async function generateSchedule(
     }
   }
 
-  // 14. 배치되지 못한 작업 확인 및 "30분 일찍 출근" 일정 자동 추가
+  // 14. 배치되지 못한 작업 확인 및 "일찍 출근" 일정 자동 추가
   const unscheduledTasks = normalTasks.slice(taskIndex)
   if (unscheduledTasks.length > 0) {
     const unscheduledHours = unscheduledTasks.reduce((sum, t) => sum + t.duration, 0)
     
-    // 30분 일찍 출근으로 필요한 일수 계산
-    const earlyDaysNeeded = Math.ceil(unscheduledHours / 0.5) // 하루 30분 = 0.5시간
+    // 일찍 출근으로 필요한 일수 계산 (하루에 1.5시간씩 확보)
+    const earlyDaysNeeded = Math.ceil(unscheduledHours / 1.5) // 하루 1.5시간 = 07:30~09:00
     
-    // 콘텐츠 작업 가능한 날짜에 "30분 일찍 출근" 일정 추가
+    // 콘텐츠 작업 가능한 날짜에 "일찍 출근" 일정 추가
     let addedEarlyDays = 0
     for (const daySchedule of contentDaySchedules) {
       if (addedEarlyDays >= earlyDaysNeeded) break
@@ -342,17 +342,20 @@ export async function generateSchedule(
       // 월요일은 이미 10시 시작이므로 제외
       if (isMonday(daySchedule.date)) continue
       
-      // 08:30~09:00 "30분 일찍 출근" 일정 추가
+      // 07:30~09:00 "1시간 30분 일찍 출근" 일정 추가
       daySchedule.tasks.unshift({
         hospitalId,
         hospitalName,
         type: 'early_start',
-        label: '30분 일찍 출근',
-        startTime: '08:30',
+        label: '1시간 30분 일찍 출근',
+        startTime: '07:30',
         endTime: '09:00',
-        duration: 0.5,
+        duration: 1.5,
         isReport: false
       })
+      
+      // availableHours도 증가시킴 (1.5시간 추가)
+      daySchedule.availableHours += 1.5
       
       addedEarlyDays++
     }
@@ -360,10 +363,11 @@ export async function generateSchedule(
     // 남은 작업은 일반 작업으로 다시 배치 시도 (이제 시간 여유 있음)
     for (const task of unscheduledTasks) {
       for (const daySchedule of contentDaySchedules) {
-        const remainingHours = daySchedule.availableHours - daySchedule.usedHours + 0.5 // 30분 일찍 출근 추가
+        const remainingHours = daySchedule.availableHours - daySchedule.usedHours
         
         if (task.duration <= remainingHours) {
-          const dayStartHour = isMonday(daySchedule.date) ? 10 : 8.5 // 일찍 출근 시 8:30 시작
+          const hasEarlyStart = daySchedule.tasks.some(t => t.type === 'early_start')
+          const dayStartHour = isMonday(daySchedule.date) ? 10 : (hasEarlyStart ? 7.5 : 9) // 일찍 출근 시 7:30 시작
           const startHourOffset = dayStartHour + daySchedule.usedHours
           const { hour: endHour, minute: endMinute } = addHours(startHourOffset, task.duration)
 
