@@ -1059,8 +1059,14 @@ app.get('/', (c) => {
 
         // 년도/월 선택 초기화
         function initDateSelectors() {
-            const currentYear = new Date().getFullYear();
-            const currentMonth = new Date().getMonth() + 1;
+            // 한국 시간 (KST, UTC+9) 기준
+            const now = new Date();
+            const kstOffset = 9 * 60; // 9시간을 분으로 변환
+            const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+            const kstTime = new Date(utc + (kstOffset * 60000));
+            
+            const currentYear = kstTime.getFullYear();
+            const currentMonth = kstTime.getMonth() + 1;
 
             // 작업량 입력 탭
             const taskYear = document.getElementById('task-year');
