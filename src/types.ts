@@ -21,6 +21,7 @@ export interface MonthlyTask {
   trend: number;
   eonron_bodo: number;
   jisikin: number;
+  cafe_posting: number;
   deadline_pull_days: number;
   task_order: string;
   brand_order: number;
@@ -56,6 +57,7 @@ export const TASK_DEFINITIONS: Record<string, TaskDefinition> = {
   trend: { type: 'trend', duration: 1.5, label: '트렌드' },
   eonron_bodo: { type: 'eonron_bodo', duration: 0.5, label: '언론보도' },
   jisikin: { type: 'jisikin', duration: 0.5, label: '지식인' },
+  cafe_posting: { type: 'cafe_posting', duration: 0.5, label: '카페 포스팅' },
   report: { type: 'report', duration: 2, label: '보고서' }
 }
 

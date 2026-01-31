@@ -112,6 +112,7 @@ app.post('/api/monthly-tasks', async (c) => {
     trend,
     eonron_bodo,
     jisikin,
+    cafe,
     deadline_pull_days,
     task_order
   } = data
@@ -128,11 +129,11 @@ app.post('/api/monthly-tasks', async (c) => {
     // 업데이트
     await db.prepare(`
       UPDATE monthly_tasks
-      SET sanwi_nosul = ?, brand = ?, trend = ?, eonron_bodo = ?, jisikin = ?, 
+      SET sanwi_nosul = ?, brand = ?, trend = ?, eonron_bodo = ?, jisikin = ?, cafe = ?,
           deadline_pull_days = ?, task_order = ?, brand_order = ?, trend_order = ?, sanwi_dates = ?
       WHERE hospital_id = ? AND year = ? AND month = ?
     `).bind(
-      sanwi_nosul, brand, trend, eonron_bodo, jisikin, deadline_pull_days, 
+      sanwi_nosul, brand, trend, eonron_bodo, jisikin, cafe || 0, deadline_pull_days, 
       task_order || 'brand,trend', 
       data.brand_order || 1, 
       data.trend_order || 2,
@@ -142,10 +143,10 @@ app.post('/api/monthly-tasks', async (c) => {
   } else {
     // 삽입
     await db.prepare(`
-      INSERT INTO monthly_tasks (hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, deadline_pull_days, task_order, brand_order, trend_order, sanwi_dates)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO monthly_tasks (hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, cafe, deadline_pull_days, task_order, brand_order, trend_order, sanwi_dates)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
-      hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, deadline_pull_days, 
+      hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, cafe || 0, deadline_pull_days, 
       task_order || 'brand,trend',
       data.brand_order || 1,
       data.trend_order || 2,
@@ -452,6 +453,10 @@ app.get('/', (c) => {
                     <div>
                         <label class="block text-sm font-semibold mb-2 primary-color">지식인</label>
                         <input type="number" id="task-jisikin" min="0" value="1" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold mb-2 primary-color">카페 포스팅</label>
+                        <input type="number" id="task-cafe" min="0" value="4" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none">
                     </div>
                     <div>
                         <label class="block text-sm font-semibold mb-2 primary-color">마감 당김 일수</label>
@@ -780,6 +785,7 @@ app.get('/', (c) => {
                 trend: parseInt(document.getElementById('task-trend').value),
                 eonron_bodo: parseInt(document.getElementById('task-eonron').value),
                 jisikin: parseInt(document.getElementById('task-jisikin').value),
+                cafe: parseInt(document.getElementById('task-cafe').value),
                 deadline_pull_days: parseInt(document.getElementById('task-pull-days').value),
                 task_order: 'brand,trend', // 기본값
                 brand_order: parseInt(document.getElementById('brand-order')?.value || '1'),
@@ -830,6 +836,7 @@ app.get('/', (c) => {
                     document.getElementById('task-trend').value = data.trend || 0;
                     document.getElementById('task-eonron').value = data.eonron_bodo || 0;
                     document.getElementById('task-jisikin').value = data.jisikin || 0;
+                    document.getElementById('task-cafe').value = data.cafe || 4;
                     document.getElementById('task-pull-days').value = data.deadline_pull_days || 0;
 
                     // 브랜드/트렌드 순서 복원
