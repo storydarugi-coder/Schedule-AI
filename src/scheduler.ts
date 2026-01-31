@@ -319,36 +319,62 @@ export async function generateSchedule(
     }
   }
 
-  // 14. 배치되지 못한 작업 확인
+  // 14. 배치되지 못한 작업 확인 및 "30분 일찍 출근" 일정 자동 추가
   const unscheduledTasks = normalTasks.slice(taskIndex)
   if (unscheduledTasks.length > 0) {
     const unscheduledHours = unscheduledTasks.reduce((sum, t) => sum + t.duration, 0)
-    const unscheduledTaskNames = unscheduledTasks.map(t => `${t.label} (${t.duration}시간)`).join(', ')
-    
-    // 필요한 추가 시간 및 해결 방법 계산
-    const currentPullDays = monthlyTask.deadline_pull_days
     
     // 30분 일찍 출근으로 필요한 일수 계산
     const earlyDaysNeeded = Math.ceil(unscheduledHours / 0.5) // 하루 30분 = 0.5시간
     
-    // 마감 당김으로 필요한 일수 계산
-    const pullDaysNeeded = Math.ceil(unscheduledHours / 8.5) // 하루 8.5시간
-    const suggestedPullDays = Math.max(0, currentPullDays - pullDaysNeeded)
-    
-    let suggestion = ''
-    if (currentPullDays > 0) {
-      const savedDays = currentPullDays - suggestedPullDays
-      const savedHours = savedDays * 8.5 // 하루 8.5시간
-      suggestion = `\n\n💡 해결 방법:\n1) ${earlyDaysNeeded}일간 30분 일찍 출근 (총 ${unscheduledHours}시간 확보)\n2) 마감 당김을 ${currentPullDays}일 → ${suggestedPullDays}일로 변경 (약 ${savedHours}시간 확보)`
-    } else {
-      suggestion = `\n\n💡 해결 방법:\n1) ${earlyDaysNeeded}일간 30분 일찍 출근 (총 ${unscheduledHours}시간 확보)\n2) 근무일 추가 (연차 제거)`
+    // 콘텐츠 작업 가능한 날짜에 "30분 일찍 출근" 일정 추가
+    let addedEarlyDays = 0
+    for (const daySchedule of contentDaySchedules) {
+      if (addedEarlyDays >= earlyDaysNeeded) break
+      
+      // 월요일은 이미 10시 시작이므로 제외
+      if (isMonday(daySchedule.date)) continue
+      
+      // 08:30~09:00 "30분 일찍 출근" 일정 추가
+      daySchedule.tasks.unshift({
+        hospitalId,
+        hospitalName,
+        type: 'early_start',
+        label: '30분 일찍 출근',
+        startTime: '08:30',
+        endTime: '09:00',
+        duration: 0.5,
+        isReport: false
+      })
+      
+      addedEarlyDays++
     }
     
-    return {
-      hospital_name: hospitalName,
-      shortage_hours: unscheduledHours,
-      tasks: unscheduledTasks.map(t => t.label),
-      message: `⚠️ 배치 실패한 작업: ${unscheduledTaskNames}\n부족 시간: ${unscheduledHours}시간${suggestion}`
+    // 남은 작업은 일반 작업으로 다시 배치 시도 (이제 시간 여유 있음)
+    for (const task of unscheduledTasks) {
+      for (const daySchedule of contentDaySchedules) {
+        const remainingHours = daySchedule.availableHours - daySchedule.usedHours + 0.5 // 30분 일찍 출근 추가
+        
+        if (task.duration <= remainingHours) {
+          const dayStartHour = isMonday(daySchedule.date) ? 10 : 8.5 // 일찍 출근 시 8:30 시작
+          const startHourOffset = dayStartHour + daySchedule.usedHours
+          const { hour: endHour, minute: endMinute } = addHours(startHourOffset, task.duration)
+
+          daySchedule.tasks.push({
+            hospitalId: task.hospitalId,
+            hospitalName: task.hospitalName,
+            type: task.type,
+            label: task.label,
+            startTime: formatTime(Math.floor(startHourOffset), (startHourOffset % 1) * 60),
+            endTime: formatTime(endHour, endMinute),
+            duration: task.duration,
+            isReport: false
+          })
+
+          daySchedule.usedHours += task.duration
+          break
+        }
+      }
     }
   }
 
