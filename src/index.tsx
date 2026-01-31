@@ -236,6 +236,19 @@ app.put('/api/schedules/:id', async (c) => {
   return c.json({ success: true })
 })
 
+// 스케줄 완료 상태 업데이트
+app.put('/api/schedules/:id/complete', async (c) => {
+  const db = c.env.DB
+  const scheduleId = parseInt(c.req.param('id'))
+  const { is_completed } = await c.req.json()
+
+  await db.prepare(
+    'UPDATE schedules SET is_completed = ? WHERE id = ?'
+  ).bind(is_completed, scheduleId).run()
+
+  return c.json({ success: true })
+})
+
 // =========================
 // 연차/휴가 관리 API
 // =========================
@@ -309,6 +322,26 @@ app.get('/', (c) => {
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="/static/styles.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+    
+    <style>
+      /* 완료된 작업 스타일 */
+      .completed-task .fc-event-title {
+        text-decoration: line-through !important;
+        opacity: 0.6;
+      }
+      
+      /* 이벤트 클릭 커서 */
+      .fc-event {
+        cursor: pointer !important;
+      }
+      
+      /* 드래그 가능 표시 */
+      .fc-event:hover {
+        opacity: 0.8;
+        transform: scale(1.02);
+        transition: all 0.2s;
+      }
+    </style>
     <link href='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.css' rel='stylesheet' />
 </head>
 <body class="bg-gradient-to-br from-purple-50 to-yellow-50 min-h-screen">
@@ -947,6 +980,7 @@ app.get('/', (c) => {
                 events: [],
                 editable: true, // 드래그 앤 드롭 활성화
                 eventDrop: handleEventDrop, // 이벤트 이동 핸들러
+                eventClick: handleEventClick, // 이벤트 클릭 핸들러 (완료 체크)
                 dayCellDidMount: async function(info) {
                     const date = info.date;
                     const dayOfWeek = date.getDay();
@@ -1000,14 +1034,19 @@ app.get('/', (c) => {
                     // 파스텔 톤 색상 (보고서: 파스텔 핑크, 작업: 파스텔 블루)
                     const color = s.is_report ? '#fda4af' : '#bfdbfe'; // 파스텔 핑크 vs 파스텔 블루
                     const textColor = s.is_report ? '#be123c' : '#1e40af'; // 진한 핑크 vs 진한 블루
+                    
+                    // 완료 상태면 취소선 추가
+                    const titlePrefix = s.is_completed ? '✅ ' : '';
+                    
                     return {
                         id: s.id, // 스케줄 ID 추가 (드래그 앤 드롭에 필요)
-                        title: \`\${s.hospital_name} - \${s.task_name} (\${s.start_time}-\${s.end_time})\`,
+                        title: \`\${titlePrefix}\${s.hospital_name} - \${s.task_name} (\${s.start_time}-\${s.end_time})\`,
                         start: s.task_date,
                         color: color,
                         textColor: textColor,
                         borderColor: textColor,
                         editable: true, // 이 이벤트는 이동 가능
+                        classNames: s.is_completed ? ['completed-task'] : [], // 완료 시 CSS 클래스 추가
                         extendedProps: {
                             scheduleId: s.id,
                             hospitalId: s.hospital_id,
@@ -1017,6 +1056,7 @@ app.get('/', (c) => {
                             endTime: s.end_time,
                             durationHours: s.duration_hours,
                             isReport: s.is_report,
+                            isCompleted: s.is_completed || 0,
                             pullDays: s.deadline_pull_days
                         }
                     };
@@ -1047,6 +1087,33 @@ app.get('/', (c) => {
                 calendar.gotoDate(\`\${year}-\${month.padStart(2, '0')}-01\`);
             } catch (error) {
                 console.error('캘린더 로드 실패', error);
+            }
+        }
+
+        // 이벤트 클릭 핸들러 (완료 체크)
+        async function handleEventClick(info) {
+            const event = info.event;
+            const scheduleId = event.extendedProps.scheduleId;
+            
+            if (!scheduleId) {
+                // 연차/휴가는 완료 체크 불가
+                return;
+            }
+
+            const currentCompleted = event.extendedProps.isCompleted;
+            const newCompleted = currentCompleted ? 0 : 1;
+
+            try {
+                // DB 업데이트 API 호출
+                await axios.put(\`/api/schedules/\${scheduleId}/complete\`, {
+                    is_completed: newCompleted
+                });
+
+                // 캘린더 새로고침
+                loadCalendar();
+            } catch (error) {
+                console.error('완료 상태 변경 실패', error);
+                alert('❌ 완료 상태 변경에 실패했습니다.');
             }
         }
 
