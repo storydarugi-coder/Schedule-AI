@@ -1132,8 +1132,21 @@ app.get('/', (c) => {
                     // 병원 색상 사용 (없으면 기본 파란색)
                     const hospitalColor = s.hospital_color || '#3b82f6';
                     
-                    // 보고서는 빨간색 계열, 일반 작업은 병원 색상 사용
-                    const color = s.is_report ? '#fda4af' : hospitalColor + '40'; // 투명도 추가
+                    // 밝은 파스텔 톤으로 변환 (보기 편하게)
+                    const lightenColor = (hex) => {
+                        // hex to RGB
+                        const r = parseInt(hex.slice(1, 3), 16);
+                        const g = parseInt(hex.slice(3, 5), 16);
+                        const b = parseInt(hex.slice(5, 7), 16);
+                        // 파스텔 톤으로 변환 (밝게)
+                        const pr = Math.round(r + (255 - r) * 0.6);
+                        const pg = Math.round(g + (255 - g) * 0.6);
+                        const pb = Math.round(b + (255 - b) * 0.6);
+                        return '#' + [pr, pg, pb].map(x => x.toString(16).padStart(2, '0')).join('');
+                    };
+                    
+                    // 보고서는 파스텔 핑크, 일반 작업은 병원 색상의 파스텔 버전
+                    const color = s.is_report ? '#fda4af' : lightenColor(hospitalColor);
                     const textColor = s.is_report ? '#be123c' : hospitalColor;
                     
                     // 완료 상태면 취소선 추가
