@@ -252,17 +252,21 @@ export async function generateSchedule(
   // 남은 상위노출 작업이 있으면 일반 작업 목록에 추가 (날짜 지정 안된 경우)
   normalTasks.push(...sanwiTasks)
 
-  // 12. 일반 작업 배치
-  // 12. 일반 작업 배치
+  // 12. 일반 작업 배치 (하루 최대 2개 작업)
   let taskIndex = 0
   for (const daySchedule of contentDaySchedules) {
     if (taskIndex >= normalTasks.length) break
 
-    while (taskIndex < normalTasks.length) {
+    // 보고서를 제외한 콘텐츠 작업 개수 계산
+    const contentTaskCount = daySchedule.tasks.filter(t => !t.isReport).length
+    const maxTasksPerDay = 2  // 하루 최대 2개 작업 (상위노출 제외)
+
+    while (taskIndex < normalTasks.length && contentTaskCount < maxTasksPerDay) {
       const task = normalTasks[taskIndex]
       const remainingHours = daySchedule.availableHours - daySchedule.usedHours
 
-      if (task.duration <= remainingHours) {
+      // 시간도 충분하고 작업 개수도 초과하지 않는 경우에만 배치
+      if (task.duration <= remainingHours && daySchedule.tasks.filter(t => !t.isReport).length < maxTasksPerDay) {
         // 시작 시간 계산 (월요일은 10시부터, 나머지는 9시부터)
         const dayStartHour = isMonday(daySchedule.date) ? 10 : 9
         const startHourOffset = dayStartHour + daySchedule.usedHours
@@ -282,7 +286,7 @@ export async function generateSchedule(
         daySchedule.usedHours += task.duration
         taskIndex++
       } else {
-        // 다음 날로 이동
+        // 시간 부족하거나 작업 개수 초과 시 다음 날로 이동
         break
       }
     }
