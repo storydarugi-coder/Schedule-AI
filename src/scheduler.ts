@@ -52,6 +52,8 @@ export async function generateSchedule(
   `).bind(year.toString(), month.toString().padStart(2, '0')).all()
   
   const vacations = vacationsResult.results.map((v: any) => v.vacation_date)
+  
+  console.log(`[DEBUG] 연차/휴가 목록 (${year}-${month}):`, vacations)
 
   // 1. 병원 정보 조회
   const hospital = await db.prepare('SELECT * FROM hospitals WHERE id = ?')
@@ -64,12 +66,16 @@ export async function generateSchedule(
 
   const hospitalName = hospital.name as string
   const baseDueDay = hospital.base_due_day as number
+  
+  console.log(`[DEBUG] 병원: ${hospitalName}, 기본 마감일: ${baseDueDay}, 당김: ${monthlyTask.deadline_pull_days}일`)
 
   // 2. 마감일 계산
   let dueDate: Date
   try {
     dueDate = calculateDueDate(year, month, baseDueDay, monthlyTask.deadline_pull_days, vacations)
+    console.log(`[DEBUG] 계산된 마감일: ${formatDate(dueDate)}`)
   } catch (error) {
+    console.error(`[DEBUG] 마감일 계산 실패:`, error)
     return {
       hospital_name: hospitalName,
       shortage_hours: 0,
@@ -83,6 +89,8 @@ export async function generateSchedule(
 
   // 4. 근무일 목록 생성
   const workdays = getWorkdays(year, month, vacations)
+  console.log(`[DEBUG] 근무일 개수: ${workdays.length}일`)
+  console.log(`[DEBUG] 근무일 목록 (처음 5개):`, workdays.slice(0, 5).map(d => formatDate(d)))
 
   // 5. 해당 월의 모든 스케줄 조회 (다른 병원 작업 시간 고려)
   const allSchedules = await db.prepare(`
@@ -113,8 +121,13 @@ export async function generateSchedule(
   const reportDayIndex = daySchedules.findIndex(
     d => formatDate(d.date) === formatDate(dueDate)
   )
+  
+  console.log(`[DEBUG] 마감일 근무일 목록에서 인덱스: ${reportDayIndex}`)
 
   if (reportDayIndex === -1) {
+    console.error(`[DEBUG] 근무일 목록에 마감일이 없음!`)
+    console.error(`[DEBUG] 마감일: ${formatDate(dueDate)}`)
+    console.error(`[DEBUG] 근무일 목록:`, daySchedules.map(d => formatDate(d.date)))
     return {
       hospital_name: hospitalName,
       shortage_hours: 0,

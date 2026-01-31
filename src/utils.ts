@@ -74,12 +74,14 @@ export function calculateDueDate(year: number, month: number, baseDueDay: number
   const adjustedDay = baseDueDay - pullDays
   const dueDate = createKSTDate(year, month, adjustedDay)
   
-  // 마감일이 주말/공휴일/연차인 경우 경고 (이미 당김 적용했는데도 근무 불가일이면 문제)
-  if (isWeekendOrHoliday(dueDate, vacations)) {
-    throw new Error(`마감일이 여전히 주말/공휴일/연차입니다: ${formatDate(dueDate)}`)
+  // 마감일이 주말/공휴일/연차인 경우 그 전 근무일로 자동 이동
+  let finalDueDate = dueDate
+  while (isWeekendOrHoliday(finalDueDate, vacations)) {
+    finalDueDate = new Date(finalDueDate)
+    finalDueDate.setDate(finalDueDate.getDate() - 1)
   }
   
-  return dueDate
+  return finalDueDate
 }
 
 /**
