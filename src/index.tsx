@@ -1100,14 +1100,42 @@ app.get('/', (c) => {
             }
 
             try {
-                await axios.post('/api/monthly-tasks', data);
+                console.log('[SaveTask] Sending data:', data);
+                const response = await axios.post('/api/monthly-tasks', data);
+                console.log('[SaveTask] Response:', response.data);
+                
                 document.getElementById('schedule-success').classList.remove('hidden');
-                document.getElementById('schedule-success').textContent = '작업량이 저장되었습니다';
+                document.getElementById('schedule-success').innerHTML = \`
+                    <strong><i class="fas fa-check-circle mr-2"></i>작업량이 저장되었습니다!</strong><br>
+                    <div class="mt-2 text-sm">
+                        병원: <strong>${document.getElementById('task-hospital').selectedOptions[0].text}</strong><br>
+                        기간: <strong>${year}년 ${month}월</strong><br>
+                        브랜드: ${data.brand}개, 트렌드: ${data.trend}개, 언론보도: ${data.eonron_bodo}개, 
+                        지식인: ${data.jisikin}개, 카페: ${data.cafe}개
+                    </div>
+                \`;
+                
                 setTimeout(() => {
                     document.getElementById('schedule-success').classList.add('hidden');
-                }, 3000);
+                }, 5000);
+                
+                // 저장 후 데이터 다시 불러오기
+                await loadExistingTaskData();
             } catch (error) {
-                alert('저장 실패');
+                console.error('[SaveTask] Error:', error);
+                console.error('[SaveTask] Error response:', error.response?.data);
+                
+                document.getElementById('schedule-error').classList.remove('hidden');
+                document.getElementById('schedule-error').innerHTML = \`
+                    <strong><i class="fas fa-exclamation-triangle mr-2"></i>저장 실패</strong><br>
+                    <div class="mt-2 text-sm">
+                        ${error.response?.data?.error || error.message}
+                    </div>
+                \`;
+                
+                setTimeout(() => {
+                    document.getElementById('schedule-error').classList.add('hidden');
+                }, 5000);
             }
         }
 
@@ -1166,11 +1194,50 @@ app.get('/', (c) => {
                 alert('병원과 년월을 선택해주세요');
                 return;
             }
+            
+            const hospitalName = document.getElementById('task-hospital').selectedOptions[0].text;
 
             document.getElementById('schedule-error').classList.add('hidden');
             document.getElementById('schedule-success').classList.add('hidden');
+            
+            // 먼저 작업량 데이터가 있는지 확인
+            try {
+                console.log('[GenerateSchedule] Checking monthly task data...');
+                const checkRes = await axios.get(\`/api/monthly-tasks/\${hospitalId}/\${year}/\${month}\`);
+                console.log('[GenerateSchedule] Monthly task data:', checkRes.data);
+                
+                if (!checkRes.data) {
+                    document.getElementById('schedule-error').classList.remove('hidden');
+                    document.getElementById('schedule-error').innerHTML = \`
+                        <strong><i class="fas fa-exclamation-triangle mr-2"></i>작업량 데이터가 없습니다</strong><br>
+                        <div class="mt-3 text-sm">
+                            <strong>선택한 정보:</strong><br>
+                            • 병원: <strong>${hospitalName}</strong><br>
+                            • 기간: <strong>${year}년 ${month}월</strong><br><br>
+                            <strong>💡 해결 방법:</strong><br>
+                            1. 위의 작업량 입력 필드에 값을 입력하세요<br>
+                            2. "<strong>저장</strong>" 버튼을 먼저 클릭하세요<br>
+                            3. 저장 성공 메시지 확인 후 "스케줄 생성" 버튼을 다시 클릭하세요
+                        </div>
+                    \`;
+                    return;
+                }
+            } catch (checkError) {
+                console.error('[GenerateSchedule] Check failed:', checkError);
+                document.getElementById('schedule-error').classList.remove('hidden');
+                document.getElementById('schedule-error').innerHTML = \`
+                    <strong><i class="fas fa-exclamation-triangle mr-2"></i>작업량 확인 실패</strong><br>
+                    <div class="mt-2 text-sm">
+                        병원: <strong>${hospitalName}</strong><br>
+                        기간: <strong>${year}년 ${month}월</strong><br><br>
+                        저장된 작업량이 없습니다. 위의 "저장" 버튼을 먼저 클릭하세요.
+                    </div>
+                \`;
+                return;
+            }
 
             try {
+                console.log('[GenerateSchedule] Generating schedule...');
                 await axios.post('/api/schedules/generate', {
                     hospital_id: parseInt(hospitalId),
                     year: parseInt(year),
@@ -1180,7 +1247,11 @@ app.get('/', (c) => {
                 document.getElementById('schedule-success').classList.remove('hidden');
                 document.getElementById('schedule-success').innerHTML = \`
                     <strong><i class="fas fa-check-circle mr-2"></i>스케줄 생성 완료!</strong><br>
-                    캘린더 탭에서 확인하세요.
+                    <div class="mt-2 text-sm">
+                        병원: <strong>${hospitalName}</strong><br>
+                        기간: <strong>${year}년 ${month}월</strong><br>
+                        캘린더 탭에서 확인하세요.
+                    </div>
                 \`;
                 
                 // 3초 후 캘린더 탭으로 자동 이동
@@ -1189,6 +1260,9 @@ app.get('/', (c) => {
                     loadCalendar();
                 }, 2000);
             } catch (error) {
+                console.error('[GenerateSchedule] Generation failed:', error);
+                console.error('[GenerateSchedule] Error response:', error.response?.data);
+                
                 const errorData = error.response?.data?.error;
                 document.getElementById('schedule-error').classList.remove('hidden');
                 
@@ -1215,6 +1289,11 @@ app.get('/', (c) => {
                         <strong><i class="fas fa-exclamation-triangle mr-2"></i>스케줄 생성 실패</strong><br>
                         <div class="mt-2 text-sm">
                             💡 작업량을 먼저 저장했는지 확인하세요.
+                        </div>
+                    \`;
+                }
+            }
+        }
                         </div>
                     \`;
                 }
