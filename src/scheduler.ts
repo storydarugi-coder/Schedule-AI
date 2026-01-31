@@ -441,18 +441,23 @@ export async function generateSchedule(
     
     // 콘텐츠 작업 가능한 날짜에 "일찍 출근" 일정 추가
     let addedEarlyDays = 0
+    let unscheduledIndex = 0
     for (const daySchedule of contentDaySchedules) {
       if (addedEarlyDays >= earlyDaysNeeded) break
       
       // 월요일은 이미 10시 시작이므로 제외
       if (isMonday(daySchedule.date)) continue
       
-      // 07:30~09:00 "1시간 30분 일찍 출근" 일정 추가
+      // 이 날에 배치될 작업 이름 확인
+      const nextTask = unscheduledTasks[unscheduledIndex]
+      const taskLabel = nextTask ? nextTask.label : '콘텐츠 작업'
+      
+      // 07:30~09:00 "일찍 출근" 일정 추가 (구체적 작업 표시)
       daySchedule.tasks.unshift({
         hospitalId,
         hospitalName,
         type: 'early_start',
-        label: '1시간 30분 일찍 출근',
+        label: `일찍 출근 (${taskLabel})`,
         startTime: '07:30',
         endTime: '09:00',
         duration: 1.5,
@@ -463,6 +468,7 @@ export async function generateSchedule(
       daySchedule.availableHours += 1.5
       
       addedEarlyDays++
+      unscheduledIndex++
     }
     
     // 남은 작업은 일반 작업으로 다시 배치 시도 (이제 시간 여유 있음)
