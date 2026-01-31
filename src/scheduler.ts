@@ -123,18 +123,7 @@ export async function generateSchedule(
     }
   }
 
-  // 보고서 작업 배치
-  daySchedules[reportDayIndex].tasks.push({
-    hospitalId,
-    hospitalName,
-    type: 'report',
-    label: '보고서',
-    startTime: '10:00',
-    endTime: '12:00',
-    duration: 2,
-    isReport: true
-  })
-  daySchedules[reportDayIndex].usedHours += 2
+  // 보고서는 나중에 배치 (마지막에 추가)
 
   // 8. 상위노출 일자 먼저 가져오기 (병원 관리에서 설정한 여러 날짜)
   let sanwiNosolDays: number[] = []
@@ -328,6 +317,24 @@ export async function generateSchedule(
       }
     }
   }
+
+  // 14. 보고서 작업을 마감일 마지막에 배치
+  const reportDay = daySchedules[reportDayIndex]
+  const dayStartHour = isMonday(reportDay.date) ? 10 : 9
+  const reportStartHourOffset = dayStartHour + reportDay.usedHours
+  const { hour: reportEndHour, minute: reportEndMinute } = addHours(reportStartHourOffset, 2)
+  
+  reportDay.tasks.push({
+    hospitalId,
+    hospitalName,
+    type: 'report',
+    label: '보고서',
+    startTime: formatTime(Math.floor(reportStartHourOffset), 0),
+    endTime: formatTime(reportEndHour, reportEndMinute),
+    duration: 2,
+    isReport: true
+  })
+  reportDay.usedHours += 2
 
   return daySchedules
 }
