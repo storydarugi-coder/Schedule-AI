@@ -1564,6 +1564,39 @@ app.get('/', (c) => {
                         showReorderMenu(e, info.event);
                         return false;
                     }, true); // 캡처 단계에서 처리
+
+                    // 롱프레스 삭제 기능 추가
+                    let longPressTimer = null;
+                    let isLongPress = false;
+
+                    const startLongPress = function(e) {
+                        isLongPress = false;
+                        longPressTimer = setTimeout(function() {
+                            isLongPress = true;
+                            const scheduleId = info.event.extendedProps.scheduleId;
+                            const title = info.event.title;
+                            if (scheduleId) {
+                                deleteScheduleItem(scheduleId, title);
+                            }
+                        }, 600); // 600ms 롱프레스
+                    };
+
+                    const cancelLongPress = function(e) {
+                        if (longPressTimer) {
+                            clearTimeout(longPressTimer);
+                            longPressTimer = null;
+                        }
+                    };
+
+                    // 마우스 이벤트
+                    info.el.addEventListener('mousedown', startLongPress);
+                    info.el.addEventListener('mouseup', cancelLongPress);
+                    info.el.addEventListener('mouseleave', cancelLongPress);
+
+                    // 터치 이벤트 (모바일)
+                    info.el.addEventListener('touchstart', startLongPress);
+                    info.el.addEventListener('touchend', cancelLongPress);
+                    info.el.addEventListener('touchcancel', cancelLongPress);
                 },
                 dayCellDidMount: function(info) {
                     const date = info.date;
