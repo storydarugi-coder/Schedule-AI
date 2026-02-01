@@ -319,27 +319,31 @@ app.put('/api/schedules/:id', async (c) => {
 
 // 스케줄 순서 변경 (같은 날짜 내에서)
 app.put('/api/schedules/reorder', async (c) => {
+  const db = c.env.DB
+
+  // DB 연결 확인
+  if (!db) {
+    return c.json({ error: 'DB 연결 없음', env: Object.keys(c.env || {}) }, 500)
+  }
+
   try {
-    const db = c.env.DB
     const body = await c.req.json()
     const updates = body?.updates
 
     if (!updates || !Array.isArray(updates)) {
-      return c.json({ error: 'updates 배열이 필요합니다' }, 400)
+      return c.json({ error: 'updates 배열이 필요합니다', received: body }, 400)
     }
 
-    let updated = 0
     for (const u of updates) {
-      if (u.id && u.order_index !== undefined) {
+      if (u.id != null && u.order_index != null) {
         await db.prepare('UPDATE schedules SET order_index = ? WHERE id = ?')
           .bind(Number(u.order_index), Number(u.id)).run()
-        updated++
       }
     }
 
-    return c.json({ success: true, updated })
+    return c.json({ success: true, updated: updates.length })
   } catch (e: any) {
-    return c.json({ error: e?.message || 'Unknown error' }, 500)
+    return c.json({ error: e?.message || 'Unknown error', stack: e?.stack }, 500)
   }
 })
 
