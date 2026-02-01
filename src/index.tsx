@@ -403,11 +403,7 @@ app.get('/', (c) => {
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
     
-    <script>
-      // Suppress Tailwind CDN production warning
-      window.process = { env: { NODE_ENV: 'production' } };
-    </script>
-    <script src="https://cdn.tailwindcss.com"></script>
+
     <link href="/static/styles.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
     
@@ -1293,7 +1289,7 @@ app.get('/', (c) => {
                     \`;
                 } else if (errorData && errorData.message) {
                     // 구조화된 에러 객체
-                    const messageWithBreaks = errorData.message.replace(/\\n/g, '<br>');
+                    const messageWithBreaks = errorData.message.replace(/\n/g, '<br>');
                     const shortageHtml = errorData.shortage_hours > 0 
                         ? '<strong>부족 시간:</strong> ' + errorData.shortage_hours + '시간' 
                         : '';
@@ -1310,11 +1306,6 @@ app.get('/', (c) => {
                         <strong><i class="fas fa-exclamation-triangle mr-2"></i>스케줄 생성 실패</strong><br>
                         <div class="mt-2 text-sm">
                             💡 작업량을 먼저 저장했는지 확인하세요.
-                        </div>
-                    \`;
-                }
-            }
-        }
                         </div>
                     \`;
                 }
@@ -1341,7 +1332,7 @@ app.get('/', (c) => {
                 const monthlyTasks = tasksRes.data;
 
                 if (monthlyTasks.length === 0) {
-                    alert('저장된 작업량이 없습니다.\\n\\n각 병원의 작업량을 먼저 저장해주세요.');
+                    alert('저장된 작업량이 없습니다.\n\n각 병원의 작업량을 먼저 저장해주세요.');
                     return;
                 }
 
