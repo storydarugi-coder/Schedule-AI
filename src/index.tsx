@@ -319,84 +319,27 @@ app.put('/api/schedules/:id', async (c) => {
 
 // 스케줄 순서 변경 (같은 날짜 내에서)
 app.put('/api/schedules/reorder', async (c) => {
-  const db = c.env.DB
-  
   try {
+    const db = c.env.DB
     const body = await c.req.json()
     const updates = body?.updates
-    
-    // 기본 검증
-    if (!updates || !Array.isArray(updates) || updates.length === 0) {
-      return c.json({ error: 'Invalid or empty updates array', received: updates }, 400)
+
+    if (!updates || !Array.isArray(updates)) {
+      return c.json({ error: 'updates 배열이 필요합니다' }, 400)
     }
 
-    console.log('[Reorder] Received updates:', JSON.stringify(updates))
-
-    // 각 업데이트 순차 처리 (가장 안전한 방법)
-    const results = []
-    for (const update of updates) {
-      try {
-        // ID와 order_index 검증
-        const id = parseInt(update?.id)
-        const orderIndex = parseInt(update?.order_index)
-        
-        if (isNaN(id) || isNaN(orderIndex)) {
-          console.error('[Reorder] Invalid data:', { id: update?.id, order_index: update?.order_index })
-          results.push({ id: update?.id, success: false, error: 'Invalid ID or order_index' })
-          continue
-        }
-
-        // DB에서 해당 스케줄 존재 확인
-        const existing = await db.prepare(
-          'SELECT id, task_date, order_index FROM schedules WHERE id = ?'
-        ).bind(id).first()
-
-        if (!existing) {
-          console.error('[Reorder] Schedule not found:', id)
-          results.push({ id, success: false, error: 'Schedule not found' })
-          continue
-        }
-
-        console.log('[Reorder] Updating:', { id, old_order: existing.order_index, new_order: orderIndex })
-
-        // order_index 업데이트
-        const result = await db.prepare(
-          'UPDATE schedules SET order_index = ? WHERE id = ?'
-        ).bind(orderIndex, id).run()
-
-        if (result.success) {
-          results.push({ id, success: true, old_order: existing.order_index, new_order: orderIndex })
-          console.log('[Reorder] Success:', id, '→', orderIndex)
-        } else {
-          results.push({ id, success: false, error: 'Update failed' })
-          console.error('[Reorder] Update failed for:', id)
-        }
-      } catch (updateError) {
-        console.error('[Reorder] Error updating:', update?.id, updateError)
-        results.push({ 
-          id: update?.id, 
-          success: false, 
-          error: updateError instanceof Error ? updateError.message : String(updateError) 
-        })
+    let updated = 0
+    for (const u of updates) {
+      if (u.id && u.order_index !== undefined) {
+        await db.prepare('UPDATE schedules SET order_index = ? WHERE id = ?')
+          .bind(Number(u.order_index), Number(u.id)).run()
+        updated++
       }
     }
 
-    const successCount = results.filter(r => r.success).length
-    console.log('[Reorder] Complete:', { total: updates.length, success: successCount, failed: updates.length - successCount })
-
-    return c.json({ 
-      success: successCount > 0, 
-      results,
-      summary: { total: updates.length, success: successCount, failed: updates.length - successCount }
-    })
-    
-  } catch (error) {
-    console.error('[Reorder] Fatal error:', error)
-    return c.json({ 
-      error: 'Internal server error',
-      message: error instanceof Error ? error.message : String(error),
-      details: String(error)
-    }, 500)
+    return c.json({ success: true, updated })
+  } catch (e: any) {
+    return c.json({ error: e?.message || 'Unknown error' }, 500)
   }
 })
 
