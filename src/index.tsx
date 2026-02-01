@@ -2271,9 +2271,9 @@ app.get('/', (c) => {
                 
                 let errorMsg = '❌ 순서 변경에 실패했습니다.';
                 if (error.response?.data) {
-                    errorMsg += '\n\n' + (error.response.data.error || error.response.data.message || JSON.stringify(error.response.data));
+                    errorMsg += '\\n\\n' + (error.response.data.error || error.response.data.message || JSON.stringify(error.response.data));
                 } else {
-                    errorMsg += '\n\n' + error.message;
+                    errorMsg += '\\n\\n' + error.message;
                 }
                 
                 alert(errorMsg);
