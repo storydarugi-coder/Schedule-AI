@@ -1562,8 +1562,8 @@ app.get('/', (c) => {
             const startTimeInput = prompt('보고서 시작 시간을 입력하세요 (HH:MM 형식):', '10:00');
             if (!startTimeInput) return;
             
-            // 시간 형식 검증
-            const timeRegex = /^([01]?[0-9]|2[0-3]):([0-5][0-9])$/;
+            // 시간 형식 검증 (RegExp 생성자 사용)
+            const timeRegex = new RegExp('^([01]?[0-9]|2[0-3]):([0-5][0-9])$');
             if (!timeRegex.test(startTimeInput)) {
                 alert('올바른 시간 형식이 아닙니다 (HH:MM).');
                 return;
