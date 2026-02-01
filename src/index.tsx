@@ -214,6 +214,44 @@ app.get('/api/schedules/:year/:month', async (c) => {
   return c.json(result.results)
 })
 
+// 보고서 수동 추가
+app.post('/api/schedules/add-report', async (c) => {
+  const db = c.env.DB
+  const { hospital_id, year, month, task_date, start_time, end_time } = await c.req.json()
+
+  // 병원 정보 가져오기
+  const hospital = await db.prepare('SELECT name FROM hospitals WHERE id = ?')
+    .bind(hospital_id).first()
+
+  if (!hospital) {
+    return c.json({ error: 'Hospital not found' }, 404)
+  }
+
+  // 해당 날짜의 마지막 order_index 가져오기
+  const lastOrder = await db.prepare(
+    'SELECT MAX(order_index) as max_order FROM schedules WHERE task_date = ?'
+  ).bind(task_date).first()
+
+  const orderIndex = (lastOrder?.max_order ?? -1) + 1
+
+  // 보고서 추가
+  const result = await db.prepare(`
+    INSERT INTO schedules (
+      hospital_id, year, month, task_date, task_type, task_name,
+      start_time, end_time, duration_hours, is_report, order_index
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    hospital_id, year, month, task_date, 'report', '보고서',
+    start_time, end_time, 2, 1, orderIndex
+  ).run()
+
+  return c.json({ 
+    success: true, 
+    id: result.meta.last_row_id,
+    hospital_name: hospital.name
+  })
+})
+
 // 스케줄 삭제
 app.delete('/api/schedules/:year/:month/:hospital_id', async (c) => {
   const db = c.env.DB
@@ -335,6 +373,61 @@ app.put('/api/schedules/:id/complete', async (c) => {
   ).bind(is_completed, scheduleId).run()
 
   return c.json({ success: true })
+})
+
+// 보고서 추가 API
+app.post('/api/schedules/add-report', async (c) => {
+  const db = c.env.DB
+  const { hospital_id, task_date, start_time } = await c.req.json()
+
+  if (!hospital_id || !task_date || !start_time) {
+    return c.json({ error: '병원, 날짜, 시작 시간을 모두 입력해주세요' }, 400)
+  }
+
+  try {
+    // 병원 정보 가져오기
+    const hospital = await db.prepare(
+      'SELECT name FROM hospitals WHERE id = ?'
+    ).bind(hospital_id).first()
+
+    if (!hospital) {
+      return c.json({ error: '병원을 찾을 수 없습니다' }, 404)
+    }
+
+    // 시작 시간 파싱
+    const [startHour, startMinute] = start_time.split(':').map(Number)
+    const startDecimal = startHour + startMinute / 60
+
+    // 종료 시간 계산 (보고서는 2시간)
+    const endDecimal = startDecimal + 2
+    const endHour = Math.floor(endDecimal)
+    const endMinute = Math.round((endDecimal - endHour) * 60)
+    const end_time = String(endHour).padStart(2, '0') + ':' + String(endMinute).padStart(2, '0')
+
+    // 연도와 월 추출
+    const [year, month] = task_date.split('-').map(Number)
+
+    // 해당 날짜의 마지막 order_index 가져오기
+    const lastOrder = await db.prepare(
+      'SELECT MAX(order_index) as max_order FROM schedules WHERE task_date = ?'
+    ).bind(task_date).first()
+
+    const newOrderIndex = (lastOrder?.max_order ?? -1) + 1
+
+    // 보고서 추가
+    await db.prepare(`
+      INSERT INTO schedules 
+      (hospital_id, year, month, task_date, task_type, task_name, start_time, end_time, duration_hours, is_report, order_index)
+      VALUES (?, ?, ?, ?, 'report', '보고서', ?, ?, 2.0, 1, ?)
+    `).bind(hospital_id, year, month, task_date, start_time, end_time, newOrderIndex).run()
+
+    return c.json({ success: true, message: '보고서가 추가되었습니다' })
+  } catch (error) {
+    console.error('보고서 추가 실패:', error)
+    return c.json({ 
+      error: '보고서 추가에 실패했습니다: ' + (error instanceof Error ? error.message : String(error))
+    }, 500)
+  }
 })
 
 // =========================
@@ -1430,6 +1523,68 @@ app.get('/', (c) => {
             }
         }
 
+        // 날짜 클릭 핸들러 (보고서 추가)
+        async function handleDateClick(info) {
+            const clickedDate = info.dateStr; // YYYY-MM-DD 형식
+            
+            // 병원 목록 가져오기
+            const hospitalsRes = await axios.get('/api/hospitals');
+            const hospitals = hospitalsRes.data;
+            
+            if (hospitals.length === 0) {
+                alert('병원이 없습니다. 먼저 병원을 추가해주세요.');
+                return;
+            }
+            
+            // 병원 선택 프롬프트
+            let hospitalOptions = '보고서를 추가할 병원을 선택하세요:\n\n';
+            hospitals.forEach((h, index) => {
+                hospitalOptions += (index + 1) + '. ' + h.name + '\n';
+            });
+            
+            const selection = prompt(hospitalOptions + '\n번호를 입력하세요 (취소하려면 빈칸):', '1');
+            
+            if (!selection || selection.trim() === '') {
+                return; // 취소
+            }
+            
+            const selectedIndex = parseInt(selection) - 1;
+            if (selectedIndex < 0 || selectedIndex >= hospitals.length || isNaN(selectedIndex)) {
+                alert('잘못된 번호입니다.');
+                return;
+            }
+            
+            const selectedHospital = hospitals[selectedIndex];
+            
+            // 시작 시간 입력
+            const startTimeInput = prompt('보고서 시작 시간을 입력하세요 (HH:MM 형식):', '10:00');
+            if (!startTimeInput) return;
+            
+            // 시간 형식 검증
+            const timeRegex = /^([01]?[0-9]|2[0-3]):([0-5][0-9])$/;
+            if (!timeRegex.test(startTimeInput)) {
+                alert('올바른 시간 형식이 아닙니다 (HH:MM).');
+                return;
+            }
+            
+            try {
+                // 보고서 추가 API 호출
+                await axios.post('/api/schedules/add-report', {
+                    hospital_id: selectedHospital.id,
+                    task_date: clickedDate,
+                    start_time: startTimeInput
+                });
+                
+                alert('✅ 보고서가 추가되었습니다!');
+                
+                // 캘린더 새로고침
+                loadCalendar();
+            } catch (error) {
+                const errorMsg = error.response?.data?.error || error.message;
+                alert('❌ 보고서 추가 실패: ' + errorMsg);
+            }
+        }
+
         // 캘린더 초기화
         function initCalendar() {
             const calendarEl = document.getElementById('calendar');
@@ -1442,6 +1597,7 @@ app.get('/', (c) => {
                 editable: true, // 드래그 앤 드롭 활성화
                 eventDrop: handleEventDrop, // 이벤트 이동 핸들러
                 eventClick: handleEventClick, // 이벤트 클릭 핸들러 (완료 체크)
+                dateClick: handleDateClick, // 날짜 클릭 핸들러 (보고서 추가)
                 eventDisplay: 'block', // 블록 형태로 표시 (동그라미 제거)
                 displayEventTime: false, // 시간 표시 제거
                 eventOrder: 'order_index,start', // order_index로 정렬

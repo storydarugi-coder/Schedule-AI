@@ -137,26 +137,24 @@ export async function generateSchedule(
     }
   })
 
-  // 7. 보고서 작업 고정 (마감일 당일 10:00~12:00)
-  const reportDayIndex = daySchedules.findIndex(
+  // 7. 마감일이 근무일 목록에 있는지 확인
+  const dueDateIndex = daySchedules.findIndex(
     d => formatDate(d.date) === formatDate(dueDate)
   )
   
-  console.log(`[DEBUG] 마감일 근무일 목록에서 인덱스: ${reportDayIndex}`)
+  console.log(`[DEBUG] 마감일 근무일 목록에서 인덱스: ${dueDateIndex}`)
 
-  if (reportDayIndex === -1) {
+  if (dueDateIndex === -1) {
     console.error(`[DEBUG] 근무일 목록에 마감일이 없음!`)
     console.error(`[DEBUG] 마감일: ${formatDate(dueDate)}`)
     console.error(`[DEBUG] 근무일 목록:`, daySchedules.map(d => formatDate(d.date)))
     return {
       hospital_name: hospitalName,
       shortage_hours: 0,
-      tasks: ['보고서'],
+      tasks: [],
       message: `마감일 ${formatDate(dueDate)}이 근무일이 아닙니다`
     }
   }
-
-  // 보고서는 나중에 배치 (마지막에 추가)
 
   // 8. 상위노출 일자 먼저 가져오기 (병원 관리에서 설정한 여러 날짜)
   let sanwiNosolDays: number[] = []
@@ -531,29 +529,6 @@ export async function generateSchedule(
       }
     }
   }
-
-  // 15. 보고서 작업을 마감일 맨 마지막에 배치 (다른 작업 후)
-  const reportDay = daySchedules[reportDayIndex]
-  
-  // 일찍 출근이 있는지 확인
-  const hasEarlyStart = reportDay.tasks.some(t => t.type === 'early_start')
-  const dayStartHour = isMonday(reportDay.date) ? 10 : (hasEarlyStart ? 7.5 : 9)
-  
-  // 보고서는 모든 작업 후 마지막에 배치
-  const reportStartHourOffset = dayStartHour + reportDay.usedHours
-  const { hour: reportEndHour, minute: reportEndMinute } = addHours(reportStartHourOffset, 2)
-  
-  reportDay.tasks.push({
-    hospitalId,
-    hospitalName,
-    type: 'report',
-    label: '보고서',
-    startTime: formatTime(Math.floor(reportStartHourOffset), (reportStartHourOffset % 1) * 60),
-    endTime: formatTime(reportEndHour, reportEndMinute),
-    duration: 2,
-    isReport: true
-  })
-  reportDay.usedHours += 2
 
   return daySchedules
 }
