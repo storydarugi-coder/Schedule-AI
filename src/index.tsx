@@ -1386,7 +1386,9 @@ app.get('/', (c) => {
                     \`;
                 } else if (errorData && errorData.message) {
                     // 구조화된 에러 객체
-                    const messageWithBreaks = errorData.message.replace(/\\n/g, '<br>');
+                    // 정규식을 변수로 미리 추출
+                    const newlineRegex = new RegExp('\\\\n', 'g');
+                    const messageWithBreaks = errorData.message.replace(newlineRegex, '<br>');
                     const shortageHtml = errorData.shortage_hours > 0 
                         ? '<strong>부족 시간:</strong> ' + errorData.shortage_hours + '시간' 
                         : '';
