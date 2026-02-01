@@ -1560,68 +1560,6 @@ app.get('/', (c) => {
             }
         }
 
-        // 날짜 클릭 핸들러 (보고서 추가)
-        async function handleDateClick(info) {
-            const clickedDate = info.dateStr; // YYYY-MM-DD 형식
-            
-            // 병원 목록 가져오기
-            const hospitalsRes = await axios.get('/api/hospitals');
-            const hospitals = hospitalsRes.data;
-            
-            if (hospitals.length === 0) {
-                alert('병원이 없습니다. 먼저 병원을 추가해주세요.');
-                return;
-            }
-            
-            // 병원 선택 프롬프트
-            let hospitalOptions = '보고서를 추가할 병원을 선택하세요:\n\n';
-            hospitals.forEach((h, index) => {
-                hospitalOptions += (index + 1) + '. ' + h.name + '\n';
-            });
-            
-            const selection = prompt(hospitalOptions + '\n번호를 입력하세요 (취소하려면 빈칸):', '1');
-            
-            if (!selection || selection.trim() === '') {
-                return; // 취소
-            }
-            
-            const selectedIndex = parseInt(selection) - 1;
-            if (selectedIndex < 0 || selectedIndex >= hospitals.length || isNaN(selectedIndex)) {
-                alert('잘못된 번호입니다.');
-                return;
-            }
-            
-            const selectedHospital = hospitals[selectedIndex];
-            
-            // 시작 시간 입력
-            const startTimeInput = prompt('보고서 시작 시간을 입력하세요 (HH:MM 형식):', '10:00');
-            if (!startTimeInput) return;
-            
-            // 시간 형식 검증 (RegExp 생성자 사용)
-            const timeRegex = new RegExp('^([01]?[0-9]|2[0-3]):([0-5][0-9])$');
-            if (!timeRegex.test(startTimeInput)) {
-                alert('올바른 시간 형식이 아닙니다 (HH:MM).');
-                return;
-            }
-            
-            try {
-                // 보고서 추가 API 호출
-                await axios.post('/api/schedules/add-report', {
-                    hospital_id: selectedHospital.id,
-                    task_date: clickedDate,
-                    start_time: startTimeInput
-                });
-                
-                alert('✅ 보고서가 추가되었습니다!');
-                
-                // 캘린더 새로고침
-                loadCalendar();
-            } catch (error) {
-                const errorMsg = error.response?.data?.error || error.message;
-                alert('❌ 보고서 추가 실패: ' + errorMsg);
-            }
-        }
-
         // 캘린더 초기화
         function initCalendar() {
             const calendarEl = document.getElementById('calendar');
