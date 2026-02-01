@@ -543,60 +543,10 @@ export async function generateSchedule(
     ...cafeTasks.slice(cafeTaskIndex)
   ]
 
+  // 남은 작업 배치 시도 (이미 일찍 출근 시간은 pre-allocation에서 확보됨)
   if (unscheduledTasks.length > 0) {
-    const unscheduledHours = unscheduledTasks.reduce((sum, t) => sum + t.duration, 0)
+    console.log(`[DEBUG] 남은 작업 ${unscheduledTasks.length}개 재배치 시도`)
 
-    // 현재 남은 가용 시간 계산
-    const remainingAvailableHours = contentDaySchedules.reduce(
-      (sum, d) => sum + (d.availableHours - d.usedHours), 0
-    )
-
-    // 실제로 시간이 부족한 경우에만 일찍 출근 추가
-    const actualShortage = unscheduledHours - remainingAvailableHours
-
-    if (actualShortage > 0) {
-      // 일찍 출근으로 필요한 일수 계산 (하루에 1시간씩 확보)
-      const earlyDaysNeeded = Math.ceil(actualShortage / 1) // 하루 1시간 = 08:00~09:00
-      console.log(`[DEBUG] 실제 시간 부족: ${actualShortage}시간 -> 일찍 출근 ${earlyDaysNeeded}일 필요`)
-
-      // 콘텐츠 작업 가능한 날짜에 "일찍 출근" 일정 추가
-      let addedEarlyDays = 0
-      let unscheduledIndex = 0
-      for (const daySchedule of contentDaySchedules) {
-        if (addedEarlyDays >= earlyDaysNeeded) break
-
-        // 월요일은 이미 10시 시작이므로 제외
-        if (isMonday(daySchedule.date)) continue
-
-        // 이미 다른 병원이 일찍 출근 중이면 건너뛰기
-        const dateStr = formatDate(daySchedule.date)
-        if (daysWithEarlyStart.has(dateStr)) continue
-
-        // 이 날에 배치될 작업 이름 확인
-        const nextTask = unscheduledTasks[unscheduledIndex]
-        const taskLabel = nextTask ? nextTask.label : '콘텐츠 작업'
-
-        // 08:00~09:00 "일찍 출근" 일정 추가 (구체적 작업 표시)
-        daySchedule.tasks.unshift({
-          hospitalId,
-          hospitalName,
-          type: 'early_start',
-          label: `☀️ 일찍 출근 (${taskLabel})`,
-          startTime: '08:00',
-          endTime: '09:00',
-          duration: 1,
-          isReport: false
-        })
-
-        // availableHours도 증가시킴 (1시간 추가)
-        daySchedule.availableHours += 1
-
-        addedEarlyDays++
-        unscheduledIndex++
-      }
-    }
-    
-    // 남은 작업은 일반 작업으로 다시 배치 시도 (이제 시간 여유 있음)
     for (const task of unscheduledTasks) {
       for (const daySchedule of contentDaySchedules) {
         const remainingHours = daySchedule.availableHours - daySchedule.usedHours
@@ -610,8 +560,9 @@ export async function generateSchedule(
         }
 
         if (task.duration <= remainingHours) {
-          const hasEarlyStart = daySchedule.tasks.some(t => t.type === 'early_start')
-          const dayStartHour = isMonday(daySchedule.date) ? 10 : (hasEarlyStart ? 8 : 9) // 일찍 출근 시 8:00 시작
+          // 일찍 출근 예정 날인지 확인
+          const isEarlyStartDay = earlyStartScheduledDays.includes(daySchedule)
+          const dayStartHour = isMonday(daySchedule.date) ? 10 : (isEarlyStartDay ? 8 : 9)
           const startHourOffset = dayStartHour + daySchedule.usedHours
           const { hour: endHour, minute: endMinute } = addHours(startHourOffset, task.duration)
 
@@ -627,6 +578,7 @@ export async function generateSchedule(
           })
 
           daySchedule.usedHours += task.duration
+          console.log(`[DEBUG] ${formatDate(daySchedule.date)}에 ${task.label} 재배치 완료`)
           break
         }
       }
