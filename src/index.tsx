@@ -1575,9 +1575,11 @@ app.get('/', (c) => {
                     const aOrder = a.extendedProps?.order_index ?? 999;
                     const bOrder = b.extendedProps?.order_index ?? 999;
                     if (aOrder !== bOrder) return aOrder - bOrder;
-                    // start는 Date 객체
-                    const aStart = a.start ? a.start.getTime() : 0;
-                    const bStart = b.start ? b.start.getTime() : 0;
+                    // start가 Date인지 확인
+                    const aStart = a.start && typeof a.start.getTime === 'function' ? a.start.getTime() :
+                                   a.start ? new Date(a.start).getTime() : 0;
+                    const bStart = b.start && typeof b.start.getTime === 'function' ? b.start.getTime() :
+                                   b.start ? new Date(b.start).getTime() : 0;
                     return aStart - bStart;
                 },
                 eventOrderStrict: true, // 엄격한 순서 적용
