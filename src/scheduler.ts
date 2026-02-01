@@ -506,7 +506,7 @@ export async function generateSchedule(
   // 3단계: 카페 포스팅은 금요일에만 배치 (주 1회)
   let cafeTaskIndex = 0
   const fridays = contentDaySchedules.filter(d => d.date.getDay() === 5) // 금요일만
-  console.log(`[DEBUG] 금요일 수: ${fridays.length}개, 카페 작업: ${cafeTasks.length}개`)
+  console.log(`[DEBUG] 금요일 수: ${fridays.length}개, 카페 작업: ${cafeTasks.length}개 (입력값: ${monthlyTask.cafe || 0})`)
 
   for (const daySchedule of fridays) {
     if (cafeTaskIndex >= cafeTasks.length) break
