@@ -369,38 +369,66 @@ export async function generateSchedule(
     }
   }
 
-  // 12. 상위노출 작업 먼저 배치 (지정된 날짜들에만)
-  if (sanwiNosolDays.length > 0 && sanwiTasks.length > 0) {
-    for (const daySchedule of contentDaySchedules) {
-      const dayOfMonth = daySchedule.date.getDate()
-      
-      // 상위노출 일자 중 하나인 경우에만 배치
-      if (sanwiNosolDays.includes(dayOfMonth) && sanwiTasks.length > 0) {
-        const task = sanwiTasks.shift()
-        if (!task) continue
-        
-        const remainingHours = daySchedule.availableHours - daySchedule.usedHours
-        
-        if (task.duration <= remainingHours) {
-          const dayStartHour = isMonday(daySchedule.date) ? 10 : 9
-          const startHourOffset = dayStartHour + daySchedule.usedHours
-          const { hour: endHour, minute: endMinute } = addHours(startHourOffset, task.duration)
+  // 12. 상위노출 작업 배치
+  if (sanwiTasks.length > 0) {
+    if (sanwiNosolDays.length > 0) {
+      // 지정된 날짜들에만 배치
+      for (const daySchedule of contentDaySchedules) {
+        const dayOfMonth = daySchedule.date.getDate()
 
-          daySchedule.tasks.push({
-            hospitalId: task.hospitalId,
-            hospitalName: task.hospitalName,
-            type: task.type,
-            label: task.label,
-            startTime: formatTime(Math.floor(startHourOffset), 0),
-            endTime: formatTime(endHour, endMinute),
-            duration: task.duration,
-            isReport: false
-          })
+        if (sanwiNosolDays.includes(dayOfMonth) && sanwiTasks.length > 0) {
+          const task = sanwiTasks.shift()
+          if (!task) continue
 
-          daySchedule.usedHours += task.duration
-        } else {
-          // 시간 부족하면 다시 넣기
-          sanwiTasks.unshift(task)
+          const remainingHours = daySchedule.availableHours - daySchedule.usedHours
+
+          if (task.duration <= remainingHours) {
+            const dayStartHour = isMonday(daySchedule.date) ? 10 : 9
+            const startHourOffset = dayStartHour + daySchedule.usedHours
+            const { hour: endHour, minute: endMinute } = addHours(startHourOffset, task.duration)
+
+            daySchedule.tasks.push({
+              hospitalId: task.hospitalId,
+              hospitalName: task.hospitalName,
+              type: task.type,
+              label: task.label,
+              startTime: formatTime(Math.floor(startHourOffset), 0),
+              endTime: formatTime(endHour, endMinute),
+              duration: task.duration,
+              isReport: false
+            })
+
+            daySchedule.usedHours += task.duration
+          } else {
+            sanwiTasks.unshift(task)
+          }
+        }
+      }
+    } else {
+      // 날짜 미지정 시 가능한 날에 배치
+      for (const task of sanwiTasks) {
+        for (const daySchedule of contentDaySchedules) {
+          const remainingHours = daySchedule.availableHours - daySchedule.usedHours
+
+          if (task.duration <= remainingHours) {
+            const dayStartHour = isMonday(daySchedule.date) ? 10 : 9
+            const startHourOffset = dayStartHour + daySchedule.usedHours
+            const { hour: endHour, minute: endMinute } = addHours(startHourOffset, task.duration)
+
+            daySchedule.tasks.push({
+              hospitalId: task.hospitalId,
+              hospitalName: task.hospitalName,
+              type: task.type,
+              label: task.label,
+              startTime: formatTime(Math.floor(startHourOffset), 0),
+              endTime: formatTime(endHour, endMinute),
+              duration: task.duration,
+              isReport: false
+            })
+
+            daySchedule.usedHours += task.duration
+            break
+          }
         }
       }
     }
