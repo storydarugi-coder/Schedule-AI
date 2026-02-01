@@ -852,37 +852,48 @@ app.get('/', (c) => {
                 hospitals.sort((a, b) => a.base_due_day - b.base_due_day);
                 
                 const list = document.getElementById('hospitals-list');
-                list.innerHTML = hospitals.map(h => \`
-                    <div class="flex justify-between items-center p-5 border-2 border-purple-100 rounded-xl hover:border-purple-300 transition-all bg-gradient-to-r from-purple-50 to-white shadow-sm hover:shadow-md">
-                        <div class="flex items-center space-x-4">
-                            <div class="text-white rounded-lg p-3" style="background: linear-gradient(135deg, \${h.color || '#3b82f6'} 0%, \${h.color || '#3b82f6'}dd 100%);">
-                                <i class="fas fa-hospital text-2xl"></i>
+                list.innerHTML = hospitals.map(h => {
+                    // 상위노출 날짜 HTML 생성
+                    let sanwiHtml = '';
+                    if (h.sanwi_nosul_days) {
+                        const days = JSON.parse(h.sanwi_nosul_days)
+                            .map(d => String(d).padStart(2, '0'))
+                            .join(', ');
+                        sanwiHtml = \`
+                            <div class="flex items-center">
+                                <i class="fas fa-star text-yellow-500 mr-2"></i>
+                                <span class="text-yellow-600 font-semibold">상위노출: \${days}일</span>
                             </div>
-                            <div>
-                                <span class="font-bold text-lg text-gray-800">\${h.name}</span>
-                                <div class="flex items-center mt-1 space-x-4">
-                                    <div class="flex items-center">
-                                        <i class="fas fa-calendar-day text-purple-500 mr-2"></i>
-                                        <span class="text-purple-600 font-semibold">마감일: 매월 \${String(h.base_due_day).padStart(2, '0')}일</span>
-                                    </div>
-                                    \${h.sanwi_nosul_days ? \`
+                        \`;
+                    }
+                    
+                    return \`
+                        <div class="flex justify-between items-center p-5 border-2 border-purple-100 rounded-xl hover:border-purple-300 transition-all bg-gradient-to-r from-purple-50 to-white shadow-sm hover:shadow-md">
+                            <div class="flex items-center space-x-4">
+                                <div class="text-white rounded-lg p-3" style="background: linear-gradient(135deg, \${h.color || '#3b82f6'} 0%, \${h.color || '#3b82f6'}dd 100%);">
+                                    <i class="fas fa-hospital text-2xl"></i>
+                                </div>
+                                <div>
+                                    <span class="font-bold text-lg text-gray-800">\${h.name}</span>
+                                    <div class="flex items-center mt-1 space-x-4">
                                         <div class="flex items-center">
-                                            <i class="fas fa-star text-yellow-500 mr-2"></i>
-                                            <span class="text-yellow-600 font-semibold">상위노출: \${JSON.parse(h.sanwi_nosul_days).map(d => String(d).padStart(2, '0')).join(', ')}일</span>
+                                            <i class="fas fa-calendar-day text-purple-500 mr-2"></i>
+                                            <span class="text-purple-600 font-semibold">마감일: 매월 \${String(h.base_due_day).padStart(2, '0')}일</span>
                                         </div>
-                                    \` : ''}
-                                    <div class="flex items-center">
-                                        <i class="fas fa-palette mr-2" style="color: \${h.color || '#3b82f6'}"></i>
-                                        <span class="text-sm text-gray-600 font-mono">\${h.color || '#3b82f6'}</span>
+                                        \${sanwiHtml}
+                                        <div class="flex items-center">
+                                            <i class="fas fa-palette mr-2" style="color: \${h.color || '#3b82f6'}"></i>
+                                            <span class="text-sm text-gray-600 font-mono">\${h.color || '#3b82f6'}</span>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
+                            <button onclick="deleteHospital(\${h.id})" class="text-red-500 hover:text-red-700 hover:bg-red-50 p-3 rounded-lg transition-all">
+                                <i class="fas fa-trash text-xl"></i>
+                            </button>
                         </div>
-                        <button onclick="deleteHospital(\${h.id})" class="text-red-500 hover:text-red-700 hover:bg-red-50 p-3 rounded-lg transition-all">
-                            <i class="fas fa-trash text-xl"></i>
-                        </button>
-                    </div>
-                \`).join('');
+                    \`;
+                }).join('');
 
                 // 작업량 입력 탭의 드롭다운 업데이트
                 const select = document.getElementById('task-hospital');
