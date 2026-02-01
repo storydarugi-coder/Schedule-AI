@@ -936,7 +936,7 @@ app.get('/', (c) => {
                 }
                 
                 loadHospitals();
-                alert(\`병원이 추가되었습니다!\n\n💡 이제 모든 병원의 스케줄을 재생성하시겠습니까?\n(작업량 입력 탭에서 각 병원의 작업량을 먼저 저장해주세요)\`);
+                alert('병원이 추가되었습니다!\n\n💡 이제 모든 병원의 스케줄을 재생성하시겠습니까?\n(작업량 입력 탭에서 각 병원의 작업량을 먼저 저장해주세요)');
                 
                 // 작업량 입력 탭으로 이동 제안
                 if (confirm('작업량 입력 탭으로 이동하시겠습니까?')) {
@@ -1757,9 +1757,9 @@ app.get('/', (c) => {
             
             let confirmMsg = '';
             if (isSameDay) {
-                confirmMsg = event.title + '\\n\\n같은 날짜 내에서 순서를 변경하시겠습니까?';
+                confirmMsg = event.title + '\n\n같은 날짜 내에서 순서를 변경하시겠습니까?';
             } else {
-                confirmMsg = event.title + '\\n\\n' + oldDate + ' → ' + newDate + '\\n\\n일정을 이동하시겠습니까?';
+                confirmMsg = event.title + '\n\n' + oldDate + ' → ' + newDate + '\n\n일정을 이동하시겠습니까?';
             }
 
             if (!confirm(confirmMsg)) {
@@ -1946,7 +1946,7 @@ app.get('/', (c) => {
                     loadCalendar();
                 } else {
                     console.error('[Frontend] Some updates failed:', response.data);
-                    alert('⚠️ 일부 순서 변경에 실패했습니다.\\n\\n성공: ' + response.data.summary.success + '개\\n실패: ' + response.data.summary.failed + '개');
+                    alert('⚠️ 일부 순서 변경에 실패했습니다.\n\n성공: ' + response.data.summary.success + '개\n실패: ' + response.data.summary.failed + '개');
                     loadCalendar(); // 부분 성공이라도 새로고침
                 }
             } catch (error) {
@@ -1955,9 +1955,9 @@ app.get('/', (c) => {
                 
                 let errorMsg = '❌ 순서 변경에 실패했습니다.';
                 if (error.response?.data) {
-                    errorMsg += '\\n\\n' + (error.response.data.error || error.response.data.message || JSON.stringify(error.response.data));
+                    errorMsg += '\n\n' + (error.response.data.error || error.response.data.message || JSON.stringify(error.response.data));
                 } else {
-                    errorMsg += '\\n\\n' + error.message;
+                    errorMsg += '\n\n' + error.message;
                 }
                 
                 alert(errorMsg);
