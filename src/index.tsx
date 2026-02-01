@@ -651,6 +651,11 @@ app.get('/', (c) => {
                         </div>
                     </div>
                     <div>
+                        <label class="block text-sm font-semibold mb-2 primary-color">상위노출</label>
+                        <input type="number" id="task-sanwi" min="0" value="0" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none">
+                        <p class="text-xs text-gray-500 mt-1">병원관리에서 날짜 지정 시 자동</p>
+                    </div>
+                    <div>
                         <label class="block text-sm font-semibold mb-2 primary-color">언론보도</label>
                         <input type="number" id="task-eonron" min="0" value="1" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none">
                     </div>
@@ -1156,7 +1161,7 @@ app.get('/', (c) => {
                 hospital_id: parseInt(hospitalId),
                 year: parseInt(year),
                 month: parseInt(month),
-                sanwi_nosul: 0, // 병원 관리에서 설정된 날짜 사용
+                sanwi_nosul: parseInt(document.getElementById('task-sanwi').value) || 0,
                 brand: parseInt(document.getElementById('task-brand').value),
                 trend: parseInt(document.getElementById('task-trend').value),
                 eonron_bodo: parseInt(document.getElementById('task-eonron').value),
@@ -1244,6 +1249,7 @@ app.get('/', (c) => {
 
                 if (data) {
                     // 기존 데이터가 있으면 폼에 채우기
+                    document.getElementById('task-sanwi').value = data.sanwi_nosul || 0;
                     document.getElementById('task-brand').value = data.brand || 0;
                     document.getElementById('task-trend').value = data.trend || 0;
                     document.getElementById('task-eonron').value = data.eonron_bodo || 0;
