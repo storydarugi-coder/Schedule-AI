@@ -1570,7 +1570,13 @@ app.get('/', (c) => {
                 dateClick: handleDateClick, // 날짜 클릭 핸들러 (보고서 추가)
                 eventDisplay: 'block', // 블록 형태로 표시 (동그라미 제거)
                 displayEventTime: false, // 시간 표시 제거
-                eventOrder: 'order_index,start', // order_index로 정렬
+                eventOrder: function(a, b) {
+                    // order_index로 먼저 정렬, 같으면 시작 시간으로 정렬
+                    const aOrder = a.extendedProps?.order_index ?? 999;
+                    const bOrder = b.extendedProps?.order_index ?? 999;
+                    if (aOrder !== bOrder) return aOrder - bOrder;
+                    return (a.start || '').localeCompare(b.start || '');
+                },
                 eventOrderStrict: true, // 엄격한 순서 적용
                 eventDidMount: function(info) {
                     // 일찍 출근 이벤트가 있는 날짜의 배경색 변경
