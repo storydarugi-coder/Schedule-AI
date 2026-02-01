@@ -304,20 +304,7 @@ app.delete('/api/schedules/:year/:month/:hospital_id', async (c) => {
   return c.json({ success: true })
 })
 
-// 스케줄 업데이트 (날짜 이동)
-app.put('/api/schedules/:id', async (c) => {
-  const db = c.env.DB
-  const scheduleId = parseInt(c.req.param('id'))
-  const { task_date } = await c.req.json()
-
-  await db.prepare(
-    'UPDATE schedules SET task_date = ? WHERE id = ?'
-  ).bind(task_date, scheduleId).run()
-
-  return c.json({ success: true })
-})
-
-// 스케줄 순서 변경 (같은 날짜 내에서)
+// 스케줄 순서 변경 (같은 날짜 내에서) - 반드시 :id 라우트보다 먼저 와야 함!
 app.put('/api/schedules/reorder', async (c) => {
   const db = c.env.DB
 
@@ -345,6 +332,19 @@ app.put('/api/schedules/reorder', async (c) => {
   } catch (e: any) {
     return c.json({ error: e?.message || 'Unknown error', stack: e?.stack }, 500)
   }
+})
+
+// 스케줄 업데이트 (날짜 이동)
+app.put('/api/schedules/:id', async (c) => {
+  const db = c.env.DB
+  const scheduleId = parseInt(c.req.param('id'))
+  const { task_date } = await c.req.json()
+
+  await db.prepare(
+    'UPDATE schedules SET task_date = ? WHERE id = ?'
+  ).bind(task_date, scheduleId).run()
+
+  return c.json({ success: true })
 })
 
 // 스케줄 완료 상태 업데이트
