@@ -1741,8 +1741,39 @@ app.get('/', (c) => {
                 
                 // 작업 통계 업데이트
                 updateTaskStats(scheduleRes.data);
+
+                // 일별 총 근무시간 표시
+                displayDailyTotalHours(scheduleRes.data);
             } catch (error) {
                 console.error('캘린더 로드 실패', error);
+            }
+        }
+
+        // 일별 총 근무시간 표시 함수
+        function displayDailyTotalHours(schedules) {
+            // 기존 표시 제거
+            document.querySelectorAll('.daily-total-hours').forEach(el => el.remove());
+
+            // 일별 시간 합계 계산
+            const dailyHours = {};
+            for (const s of schedules) {
+                if (!dailyHours[s.task_date]) {
+                    dailyHours[s.task_date] = 0;
+                }
+                dailyHours[s.task_date] += s.duration_hours || 0;
+            }
+
+            // 캘린더 셀에 시간 표시
+            for (const [dateStr, hours] of Object.entries(dailyHours)) {
+                const dayCell = document.querySelector('[data-date="' + dateStr + '"]');
+                if (dayCell) {
+                    const hoursLabel = document.createElement('div');
+                    hoursLabel.className = 'daily-total-hours';
+                    hoursLabel.style.cssText = 'position: absolute; bottom: 2px; right: 4px; font-size: 11px; font-weight: bold; color: #6b7280; background: rgba(255,255,255,0.8); padding: 1px 4px; border-radius: 3px;';
+                    hoursLabel.textContent = hours + 'h';
+                    dayCell.style.position = 'relative';
+                    dayCell.appendChild(hoursLabel);
+                }
             }
         }
         

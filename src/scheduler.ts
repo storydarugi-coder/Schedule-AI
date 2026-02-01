@@ -483,43 +483,54 @@ export async function generateSchedule(
   if (unscheduledTasks.length > 0) {
     const unscheduledHours = unscheduledTasks.reduce((sum, t) => sum + t.duration, 0)
 
-    // 일찍 출근으로 필요한 일수 계산 (하루에 1시간씩 확보)
-    const earlyDaysNeeded = Math.ceil(unscheduledHours / 1) // 하루 1시간 = 08:00~09:00
+    // 현재 남은 가용 시간 계산
+    const remainingAvailableHours = contentDaySchedules.reduce(
+      (sum, d) => sum + (d.availableHours - d.usedHours), 0
+    )
 
-    // 콘텐츠 작업 가능한 날짜에 "일찍 출근" 일정 추가
-    let addedEarlyDays = 0
-    let unscheduledIndex = 0
-    for (const daySchedule of contentDaySchedules) {
-      if (addedEarlyDays >= earlyDaysNeeded) break
+    // 실제로 시간이 부족한 경우에만 일찍 출근 추가
+    const actualShortage = unscheduledHours - remainingAvailableHours
 
-      // 월요일은 이미 10시 시작이므로 제외
-      if (isMonday(daySchedule.date)) continue
+    if (actualShortage > 0) {
+      // 일찍 출근으로 필요한 일수 계산 (하루에 1시간씩 확보)
+      const earlyDaysNeeded = Math.ceil(actualShortage / 1) // 하루 1시간 = 08:00~09:00
+      console.log(`[DEBUG] 실제 시간 부족: ${actualShortage}시간 -> 일찍 출근 ${earlyDaysNeeded}일 필요`)
 
-      // 이미 다른 병원이 일찍 출근 중이면 건너뛰기
-      const dateStr = formatDate(daySchedule.date)
-      if (daysWithEarlyStart.has(dateStr)) continue
+      // 콘텐츠 작업 가능한 날짜에 "일찍 출근" 일정 추가
+      let addedEarlyDays = 0
+      let unscheduledIndex = 0
+      for (const daySchedule of contentDaySchedules) {
+        if (addedEarlyDays >= earlyDaysNeeded) break
 
-      // 이 날에 배치될 작업 이름 확인
-      const nextTask = unscheduledTasks[unscheduledIndex]
-      const taskLabel = nextTask ? nextTask.label : '콘텐츠 작업'
+        // 월요일은 이미 10시 시작이므로 제외
+        if (isMonday(daySchedule.date)) continue
 
-      // 08:00~09:00 "일찍 출근" 일정 추가 (구체적 작업 표시)
-      daySchedule.tasks.unshift({
-        hospitalId,
-        hospitalName,
-        type: 'early_start',
-        label: `☀️ 일찍 출근 (${taskLabel})`,
-        startTime: '08:00',
-        endTime: '09:00',
-        duration: 1,
-        isReport: false
-      })
+        // 이미 다른 병원이 일찍 출근 중이면 건너뛰기
+        const dateStr = formatDate(daySchedule.date)
+        if (daysWithEarlyStart.has(dateStr)) continue
 
-      // availableHours도 증가시킴 (1시간 추가)
-      daySchedule.availableHours += 1
+        // 이 날에 배치될 작업 이름 확인
+        const nextTask = unscheduledTasks[unscheduledIndex]
+        const taskLabel = nextTask ? nextTask.label : '콘텐츠 작업'
 
-      addedEarlyDays++
-      unscheduledIndex++
+        // 08:00~09:00 "일찍 출근" 일정 추가 (구체적 작업 표시)
+        daySchedule.tasks.unshift({
+          hospitalId,
+          hospitalName,
+          type: 'early_start',
+          label: `☀️ 일찍 출근 (${taskLabel})`,
+          startTime: '08:00',
+          endTime: '09:00',
+          duration: 1,
+          isReport: false
+        })
+
+        // availableHours도 증가시킴 (1시간 추가)
+        daySchedule.availableHours += 1
+
+        addedEarlyDays++
+        unscheduledIndex++
+      }
     }
     
     // 남은 작업은 일반 작업으로 다시 배치 시도 (이제 시간 여유 있음)
