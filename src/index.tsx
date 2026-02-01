@@ -360,6 +360,20 @@ app.put('/api/schedules/:id/complete', async (c) => {
   return c.json({ success: true })
 })
 
+// 개별 스케줄 삭제
+app.delete('/api/schedules/item/:id', async (c) => {
+  const db = c.env.DB
+  const scheduleId = parseInt(c.req.param('id'))
+
+  if (!scheduleId || isNaN(scheduleId)) {
+    return c.json({ error: 'Invalid schedule ID' }, 400)
+  }
+
+  await db.prepare('DELETE FROM schedules WHERE id = ?').bind(scheduleId).run()
+
+  return c.json({ success: true })
+})
+
 // =========================
 // 연차/휴가 관리 API
 // =========================
@@ -2073,7 +2087,32 @@ app.get('/', (c) => {
                 await moveEvent(event, 1);
             };
             menu.appendChild(moveDownBtn);
-            
+
+            // 구분선
+            const divider = document.createElement('div');
+            divider.style.borderTop = '1px solid #eee';
+            divider.style.margin = '4px 0';
+            menu.appendChild(divider);
+
+            // 삭제 버튼
+            const deleteBtn = document.createElement('div');
+            deleteBtn.textContent = '🗑️ 삭제';
+            deleteBtn.style.padding = '8px 16px';
+            deleteBtn.style.cursor = 'pointer';
+            deleteBtn.style.fontSize = '14px';
+            deleteBtn.style.color = '#dc2626';
+            deleteBtn.onmouseover = () => deleteBtn.style.backgroundColor = '#fee2e2';
+            deleteBtn.onmouseout = () => deleteBtn.style.backgroundColor = 'white';
+            deleteBtn.onclick = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (document.body.contains(menu)) {
+                    document.body.removeChild(menu);
+                }
+                await deleteScheduleItem(scheduleId, event.title);
+            };
+            menu.appendChild(deleteBtn);
+
             document.body.appendChild(menu);
             
             // 메뉴 외부 클릭 시 닫기 (메뉴 내부 클릭은 제외)
@@ -2087,7 +2126,23 @@ app.get('/', (c) => {
                 document.addEventListener('mousedown', closeMenu);
             }, 0);
         }
-        
+
+        // 개별 일정 삭제
+        async function deleteScheduleItem(scheduleId, title) {
+            if (!confirm('이 일정을 삭제하시겠습니까?\\n\\n' + title)) {
+                return;
+            }
+
+            try {
+                await axios.delete('/api/schedules/item/' + scheduleId);
+                alert('✅ 삭제되었습니다!');
+                loadCalendar();
+            } catch (error) {
+                console.error('삭제 실패:', error);
+                alert('❌ 삭제에 실패했습니다: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
         // 이벤트 위/아래 이동
         async function moveEvent(event, direction) {
             // event.id를 직접 사용 (FullCalendar ID와 DB ID가 동일)
