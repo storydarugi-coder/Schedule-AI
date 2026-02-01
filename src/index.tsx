@@ -1392,6 +1392,11 @@ app.get('/', (c) => {
                         loadCalendar();
                     }, 2000);
                 } else {
+                    const failedList = results
+                        .filter(r => !r.success)
+                        .map(r => '- ' + r.hospital + ': ' + r.error)
+                        .join('<br>');
+                    
                     document.getElementById('schedule-error').classList.remove('hidden');
                     document.getElementById('schedule-error').innerHTML = \`
                         <strong><i class="fas fa-exclamation-triangle mr-2"></i>일부 병원 스케줄 생성 실패</strong><br>
@@ -1399,7 +1404,7 @@ app.get('/', (c) => {
                             ✅ 성공: \${successCount}개 병원<br>
                             ❌ 실패: \${failCount}개 병원<br><br>
                             <strong>실패 목록:</strong><br>
-                            \${results.filter(r => !r.success).map(r => \`- \${r.hospital}: \${r.error}\`).join('<br>')}
+                            \${failedList}
                         </div>
                     \`;
                 }
