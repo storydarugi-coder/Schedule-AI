@@ -1450,11 +1450,6 @@ app.get('/', (c) => {
                 }
             }
         }
-                        </div>
-                    \`;
-                }
-            }
-        }
 
         // 전체 병원 스케줄 재생성
         window.generateAllSchedules = async function() {
