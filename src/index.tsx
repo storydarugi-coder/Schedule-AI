@@ -214,6 +214,82 @@ app.get('/api/schedules/:year/:month', async (c) => {
   return c.json(result.results)
 })
 
+// 일정 수동 추가 (보고서, 카페 등)
+app.post('/api/schedules/add-item', async (c) => {
+  const db = c.env.DB
+  const { hospital_id, year, month, task_date, task_type, task_name, start_time, end_time, duration_hours, is_report } = await c.req.json()
+
+  // 병원 정보 가져오기
+  const hospital = await db.prepare('SELECT name FROM hospitals WHERE id = ?')
+    .bind(hospital_id).first()
+
+  if (!hospital) {
+    return c.json({ error: 'Hospital not found' }, 404)
+  }
+
+  // 해당 날짜의 마지막 order_index 가져오기
+  const lastOrder = await db.prepare(
+    'SELECT MAX(order_index) as max_order FROM schedules WHERE task_date = ?'
+  ).bind(task_date).first()
+
+  const orderIndex = (lastOrder?.max_order ?? -1) + 1
+
+  // 일정 추가
+  const result = await db.prepare(`
+    INSERT INTO schedules (
+      hospital_id, year, month, task_date, task_type, task_name,
+      start_time, end_time, duration_hours, is_report, order_index
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    hospital_id, year, month, task_date, task_type, task_name,
+    start_time, end_time, duration_hours, is_report ? 1 : 0, orderIndex
+  ).run()
+
+  return c.json({
+    success: true,
+    id: result.meta.last_row_id,
+    hospital_name: hospital.name
+  })
+})
+
+// 보고서 수동 추가 (하위 호환성)
+app.post('/api/schedules/add-report', async (c) => {
+  const db = c.env.DB
+  const { hospital_id, year, month, task_date, start_time, end_time } = await c.req.json()
+
+  // 병원 정보 가져오기
+  const hospital = await db.prepare('SELECT name FROM hospitals WHERE id = ?')
+    .bind(hospital_id).first()
+
+  if (!hospital) {
+    return c.json({ error: 'Hospital not found' }, 404)
+  }
+
+  // 해당 날짜의 마지막 order_index 가져오기
+  const lastOrder = await db.prepare(
+    'SELECT MAX(order_index) as max_order FROM schedules WHERE task_date = ?'
+  ).bind(task_date).first()
+
+  const orderIndex = (lastOrder?.max_order ?? -1) + 1
+
+  // 보고서 추가
+  const result = await db.prepare(`
+    INSERT INTO schedules (
+      hospital_id, year, month, task_date, task_type, task_name,
+      start_time, end_time, duration_hours, is_report, order_index
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    hospital_id, year, month, task_date, 'report', '보고서',
+    start_time, end_time, 2, 1, orderIndex
+  ).run()
+
+  return c.json({
+    success: true,
+    id: result.meta.last_row_id,
+    hospital_name: hospital.name
+  })
+})
+
 // 스케줄 삭제
 app.delete('/api/schedules/:year/:month/:hospital_id', async (c) => {
   const db = c.env.DB
@@ -243,84 +319,27 @@ app.put('/api/schedules/:id', async (c) => {
 
 // 스케줄 순서 변경 (같은 날짜 내에서)
 app.put('/api/schedules/reorder', async (c) => {
-  const db = c.env.DB
-  
   try {
+    const db = c.env.DB
     const body = await c.req.json()
     const updates = body?.updates
-    
-    // 기본 검증
-    if (!updates || !Array.isArray(updates) || updates.length === 0) {
-      return c.json({ error: 'Invalid or empty updates array', received: updates }, 400)
+
+    if (!updates || !Array.isArray(updates)) {
+      return c.json({ error: 'updates 배열이 필요합니다' }, 400)
     }
 
-    console.log('[Reorder] Received updates:', JSON.stringify(updates))
-
-    // 각 업데이트 순차 처리 (가장 안전한 방법)
-    const results = []
-    for (const update of updates) {
-      try {
-        // ID와 order_index 검증
-        const id = parseInt(update?.id)
-        const orderIndex = parseInt(update?.order_index)
-        
-        if (isNaN(id) || isNaN(orderIndex)) {
-          console.error('[Reorder] Invalid data:', { id: update?.id, order_index: update?.order_index })
-          results.push({ id: update?.id, success: false, error: 'Invalid ID or order_index' })
-          continue
-        }
-
-        // DB에서 해당 스케줄 존재 확인
-        const existing = await db.prepare(
-          'SELECT id, task_date, order_index FROM schedules WHERE id = ?'
-        ).bind(id).first()
-
-        if (!existing) {
-          console.error('[Reorder] Schedule not found:', id)
-          results.push({ id, success: false, error: 'Schedule not found' })
-          continue
-        }
-
-        console.log('[Reorder] Updating:', { id, old_order: existing.order_index, new_order: orderIndex })
-
-        // order_index 업데이트
-        const result = await db.prepare(
-          'UPDATE schedules SET order_index = ? WHERE id = ?'
-        ).bind(orderIndex, id).run()
-
-        if (result.success) {
-          results.push({ id, success: true, old_order: existing.order_index, new_order: orderIndex })
-          console.log('[Reorder] Success:', id, '→', orderIndex)
-        } else {
-          results.push({ id, success: false, error: 'Update failed' })
-          console.error('[Reorder] Update failed for:', id)
-        }
-      } catch (updateError) {
-        console.error('[Reorder] Error updating:', update?.id, updateError)
-        results.push({ 
-          id: update?.id, 
-          success: false, 
-          error: updateError instanceof Error ? updateError.message : String(updateError) 
-        })
+    let updated = 0
+    for (const u of updates) {
+      if (u.id && u.order_index !== undefined) {
+        await db.prepare('UPDATE schedules SET order_index = ? WHERE id = ?')
+          .bind(Number(u.order_index), Number(u.id)).run()
+        updated++
       }
     }
 
-    const successCount = results.filter(r => r.success).length
-    console.log('[Reorder] Complete:', { total: updates.length, success: successCount, failed: updates.length - successCount })
-
-    return c.json({ 
-      success: successCount > 0, 
-      results,
-      summary: { total: updates.length, success: successCount, failed: updates.length - successCount }
-    })
-    
-  } catch (error) {
-    console.error('[Reorder] Fatal error:', error)
-    return c.json({ 
-      error: 'Internal server error',
-      message: error instanceof Error ? error.message : String(error),
-      details: String(error)
-    }, 500)
+    return c.json({ success: true, updated })
+  } catch (e: any) {
+    return c.json({ error: e?.message || 'Unknown error' }, 500)
   }
 })
 
@@ -785,6 +804,58 @@ app.get('/', (c) => {
                     </div>
                 </div>
                 <div id="calendar"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 일정 추가 모달 -->
+    <div id="add-report-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-2xl p-6 w-96 max-w-full mx-4">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">
+                <i class="fas fa-calendar-plus text-purple-500 mr-2"></i>일정 추가
+            </h3>
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">날짜</label>
+                <input type="text" id="report-date" class="w-full border-2 border-gray-200 rounded-lg px-4 py-2 bg-gray-100" readonly>
+            </div>
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">일정 유형</label>
+                <select id="report-type" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2 focus:border-purple-400 focus:outline-none" onchange="onTaskTypeChange()">
+                    <option value="brand">✨ 브랜드 (3.5시간)</option>
+                    <option value="trend">📈 트렌드 (1.5시간)</option>
+                    <option value="report">📄 보고서 (1시간)</option>
+                    <option value="cafe_posting">☕ 카페 포스팅 (0.5시간)</option>
+                    <option value="eonron_bodo">📰 언론보도 (0.5시간)</option>
+                    <option value="jisikin">❓ 지식인 (0.5시간)</option>
+                </select>
+            </div>
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">병원 선택</label>
+                <select id="report-hospital" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2 focus:border-purple-400 focus:outline-none">
+                    <option value="">병원을 선택하세요</option>
+                </select>
+            </div>
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">시작 시간</label>
+                <select id="report-start-time" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2 focus:border-purple-400 focus:outline-none">
+                    <option value="09:00">09:00</option>
+                    <option value="10:00" selected>10:00</option>
+                    <option value="11:00">11:00</option>
+                    <option value="12:00">12:00</option>
+                    <option value="13:00">13:00</option>
+                    <option value="14:00">14:00</option>
+                    <option value="15:00">15:00</option>
+                    <option value="16:00">16:00</option>
+                    <option value="17:00">17:00</option>
+                </select>
+            </div>
+            <div class="flex justify-end gap-2">
+                <button onclick="closeReportModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">
+                    취소
+                </button>
+                <button onclick="addScheduleItem()" class="bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg px-6 py-2 font-semibold shadow-md hover:shadow-lg transition-all">
+                    <i class="fas fa-plus mr-2"></i>추가
+                </button>
             </div>
         </div>
     </div>
@@ -1289,7 +1360,8 @@ app.get('/', (c) => {
                     \`;
                 } else if (errorData && errorData.message) {
                     // 구조화된 에러 객체
-                    const messageWithBreaks = errorData.message.replace(/\n/g, '<br>');
+                    const newlineRegex = new RegExp('\\\\n', 'g');
+                    const messageWithBreaks = errorData.message.replace(newlineRegex, '<br>');
                     const shortageHtml = errorData.shortage_hours > 0 
                         ? '<strong>부족 시간:</strong> ' + errorData.shortage_hours + '시간' 
                         : '';
@@ -1433,9 +1505,21 @@ app.get('/', (c) => {
                 editable: true, // 드래그 앤 드롭 활성화
                 eventDrop: handleEventDrop, // 이벤트 이동 핸들러
                 eventClick: handleEventClick, // 이벤트 클릭 핸들러 (완료 체크)
+                dateClick: handleDateClick, // 날짜 클릭 핸들러 (보고서 추가)
                 eventDisplay: 'block', // 블록 형태로 표시 (동그라미 제거)
                 displayEventTime: false, // 시간 표시 제거
-                eventOrder: 'order_index,start', // order_index로 정렬
+                eventOrder: function(a, b) {
+                    // order_index로 먼저 정렬, 같으면 시작 시간으로 정렬
+                    const aOrder = a.extendedProps?.order_index ?? 999;
+                    const bOrder = b.extendedProps?.order_index ?? 999;
+                    if (aOrder !== bOrder) return aOrder - bOrder;
+                    // start가 Date인지 확인
+                    const aStart = a.start && typeof a.start.getTime === 'function' ? a.start.getTime() :
+                                   a.start ? new Date(a.start).getTime() : 0;
+                    const bStart = b.start && typeof b.start.getTime === 'function' ? b.start.getTime() :
+                                   b.start ? new Date(b.start).getTime() : 0;
+                    return aStart - bStart;
+                },
                 eventOrderStrict: true, // 엄격한 순서 적용
                 eventDidMount: function(info) {
                     // 일찍 출근 이벤트가 있는 날짜의 배경색 변경
@@ -1601,9 +1685,44 @@ app.get('/', (c) => {
                 
                 // 작업 통계 업데이트
                 updateTaskStats(scheduleRes.data);
+
+                // 일별 총 근무시간 표시
+                displayDailyTotalHours(scheduleRes.data);
             } catch (error) {
                 console.error('캘린더 로드 실패', error);
             }
+        }
+
+        // 일별 총 근무시간 표시 함수
+        function displayDailyTotalHours(schedules) {
+            // 약간의 딜레이 후 실행 (캘린더 렌더링 완료 대기)
+            setTimeout(() => {
+                // 기존 표시 제거
+                document.querySelectorAll('.daily-total-hours').forEach(el => el.remove());
+
+                // 일별 시간 합계 계산
+                const dailyHours = {};
+                for (const s of schedules) {
+                    if (!dailyHours[s.task_date]) {
+                        dailyHours[s.task_date] = 0;
+                    }
+                    dailyHours[s.task_date] += s.duration_hours || 0;
+                }
+
+                // 캘린더 셀에 시간 표시
+                for (const [dateStr, hours] of Object.entries(dailyHours)) {
+                    // FullCalendar는 td.fc-daygrid-day에 data-date 속성을 가짐
+                    const dayCell = document.querySelector('td.fc-daygrid-day[data-date="' + dateStr + '"]');
+                    if (dayCell) {
+                        const hoursLabel = document.createElement('div');
+                        hoursLabel.className = 'daily-total-hours';
+                        hoursLabel.style.cssText = 'position: absolute; bottom: 2px; right: 4px; font-size: 11px; font-weight: bold; color: #6b7280; background: rgba(255,255,255,0.9); padding: 2px 6px; border-radius: 4px; z-index: 10;';
+                        hoursLabel.textContent = hours.toFixed(1) + 'h';
+                        dayCell.style.position = 'relative';
+                        dayCell.appendChild(hoursLabel);
+                    }
+                }
+            }, 100);
         }
         
         // 통계용 병원 목록 업데이트
@@ -1735,6 +1854,98 @@ app.get('/', (c) => {
                 console.error('완료 상태 변경 실패', error);
                 alert('❌ 완료 상태 변경에 실패했습니다.');
             }
+        }
+
+        // 날짜 클릭 핸들러 (보고서 추가 모달)
+        function handleDateClick(info) {
+            const dateStr = info.dateStr;
+            document.getElementById('report-date').value = dateStr;
+
+            // 병원 목록 채우기
+            const hospitalSelect = document.getElementById('report-hospital');
+            hospitalSelect.innerHTML = '<option value="">병원을 선택하세요</option>' +
+                hospitals.map(h => \`<option value="\${h.id}">\${h.name}</option>\`).join('');
+
+            // 모달 열기
+            document.getElementById('add-report-modal').classList.remove('hidden');
+        }
+
+        // 보고서 모달 닫기
+        window.closeReportModal = function() {
+            document.getElementById('add-report-modal').classList.add('hidden');
+        }
+
+        // 일정 유형별 설정
+        const taskTypeConfig = {
+            brand: { label: '브랜드', duration: 3.5, isReport: false },
+            trend: { label: '트렌드', duration: 1.5, isReport: false },
+            report: { label: '보고서', duration: 1, isReport: true },
+            cafe_posting: { label: '카페 포스팅', duration: 0.5, isReport: false },
+            eonron_bodo: { label: '언론보도', duration: 0.5, isReport: false },
+            jisikin: { label: '지식인', duration: 0.5, isReport: false }
+        };
+
+        // 일정 유형 변경 시 (현재는 사용 안 함)
+        window.onTaskTypeChange = function() {
+            // 필요시 동적 UI 변경
+        }
+
+        // 일정 추가 (보고서, 카페 등)
+        window.addScheduleItem = async function() {
+            const dateStr = document.getElementById('report-date').value;
+            const hospitalId = document.getElementById('report-hospital').value;
+            const startTime = document.getElementById('report-start-time').value;
+            const taskType = document.getElementById('report-type').value;
+
+            if (!hospitalId) {
+                alert('병원을 선택해주세요');
+                return;
+            }
+
+            const config = taskTypeConfig[taskType];
+            if (!config) {
+                alert('유효하지 않은 일정 유형입니다');
+                return;
+            }
+
+            const dateParts = dateStr.split('-');
+            const year = parseInt(dateParts[0]);
+            const month = parseInt(dateParts[1]);
+
+            // 종료 시간 계산
+            const startHour = parseInt(startTime.split(':')[0]);
+            const startMin = parseInt(startTime.split(':')[1]) || 0;
+            const endHour = Math.floor(startHour + config.duration);
+            const endMin = (config.duration % 1) * 60;
+            const endTime = String(endHour).padStart(2, '0') + ':' + String(endMin).padStart(2, '0');
+
+            try {
+                await axios.post('/api/schedules/add-item', {
+                    hospital_id: parseInt(hospitalId),
+                    year: year,
+                    month: month,
+                    task_date: dateStr,
+                    task_type: taskType,
+                    task_name: config.label,
+                    start_time: startTime,
+                    end_time: endTime,
+                    duration_hours: config.duration,
+                    is_report: config.isReport
+                });
+
+                alert('✅ ' + config.label + '이(가) 추가되었습니다!');
+                closeReportModal();
+                loadCalendar();
+            } catch (error) {
+                console.error('일정 추가 실패:', error);
+                alert('❌ 일정 추가에 실패했습니다: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        // 보고서 추가 (하위 호환성)
+        window.addReport = function() {
+            document.getElementById('report-type').value = 'report';
+            addScheduleItem();
         }
 
         // 이벤트 드래그 앤 드롭 핸들러
