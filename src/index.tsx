@@ -1570,19 +1570,25 @@ app.get('/', (c) => {
                     let isLongPress = false;
 
                     const startLongPress = function(e) {
+                        console.log('롱프레스 시작:', info.event.title);
                         isLongPress = false;
                         longPressTimer = setTimeout(function() {
+                            console.log('롱프레스 완료! 삭제 실행');
                             isLongPress = true;
                             const scheduleId = info.event.extendedProps.scheduleId;
                             const title = info.event.title;
+                            console.log('scheduleId:', scheduleId, 'title:', title);
                             if (scheduleId) {
                                 deleteScheduleItem(scheduleId, title);
+                            } else {
+                                console.log('scheduleId 없음!');
                             }
                         }, 600); // 600ms 롱프레스
                     };
 
                     const cancelLongPress = function(e) {
                         if (longPressTimer) {
+                            console.log('롱프레스 취소됨');
                             clearTimeout(longPressTimer);
                             longPressTimer = null;
                         }
