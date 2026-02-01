@@ -882,6 +882,8 @@ app.get('/', (c) => {
             <div class="mb-4">
                 <label class="block text-sm font-medium text-gray-700 mb-1">일정 유형</label>
                 <select id="report-type" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2 focus:border-purple-400 focus:outline-none" onchange="onTaskTypeChange()">
+                    <option value="brand">✨ 브랜드 (3.5시간)</option>
+                    <option value="trend">📈 트렌드 (1.5시간)</option>
                     <option value="report">📄 보고서 (1시간)</option>
                     <option value="cafe_posting">☕ 카페 포스팅 (0.5시간)</option>
                     <option value="eonron_bodo">📰 언론보도 (0.5시간)</option>
@@ -1926,6 +1928,8 @@ app.get('/', (c) => {
 
         // 일정 유형별 설정
         const taskTypeConfig = {
+            brand: { label: '브랜드', duration: 3.5, isReport: false },
+            trend: { label: '트렌드', duration: 1.5, isReport: false },
             report: { label: '보고서', duration: 1, isReport: true },
             cafe_posting: { label: '카페 포스팅', duration: 0.5, isReport: false },
             eonron_bodo: { label: '언론보도', duration: 0.5, isReport: false },
