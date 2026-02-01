@@ -1751,30 +1751,34 @@ app.get('/', (c) => {
 
         // 일별 총 근무시간 표시 함수
         function displayDailyTotalHours(schedules) {
-            // 기존 표시 제거
-            document.querySelectorAll('.daily-total-hours').forEach(el => el.remove());
+            // 약간의 딜레이 후 실행 (캘린더 렌더링 완료 대기)
+            setTimeout(() => {
+                // 기존 표시 제거
+                document.querySelectorAll('.daily-total-hours').forEach(el => el.remove());
 
-            // 일별 시간 합계 계산
-            const dailyHours = {};
-            for (const s of schedules) {
-                if (!dailyHours[s.task_date]) {
-                    dailyHours[s.task_date] = 0;
+                // 일별 시간 합계 계산
+                const dailyHours = {};
+                for (const s of schedules) {
+                    if (!dailyHours[s.task_date]) {
+                        dailyHours[s.task_date] = 0;
+                    }
+                    dailyHours[s.task_date] += s.duration_hours || 0;
                 }
-                dailyHours[s.task_date] += s.duration_hours || 0;
-            }
 
-            // 캘린더 셀에 시간 표시
-            for (const [dateStr, hours] of Object.entries(dailyHours)) {
-                const dayCell = document.querySelector('[data-date="' + dateStr + '"]');
-                if (dayCell) {
-                    const hoursLabel = document.createElement('div');
-                    hoursLabel.className = 'daily-total-hours';
-                    hoursLabel.style.cssText = 'position: absolute; bottom: 2px; right: 4px; font-size: 11px; font-weight: bold; color: #6b7280; background: rgba(255,255,255,0.8); padding: 1px 4px; border-radius: 3px;';
-                    hoursLabel.textContent = hours + 'h';
-                    dayCell.style.position = 'relative';
-                    dayCell.appendChild(hoursLabel);
+                // 캘린더 셀에 시간 표시
+                for (const [dateStr, hours] of Object.entries(dailyHours)) {
+                    // FullCalendar는 td.fc-daygrid-day에 data-date 속성을 가짐
+                    const dayCell = document.querySelector('td.fc-daygrid-day[data-date="' + dateStr + '"]');
+                    if (dayCell) {
+                        const hoursLabel = document.createElement('div');
+                        hoursLabel.className = 'daily-total-hours';
+                        hoursLabel.style.cssText = 'position: absolute; bottom: 2px; right: 4px; font-size: 11px; font-weight: bold; color: #6b7280; background: rgba(255,255,255,0.9); padding: 2px 6px; border-radius: 4px; z-index: 10;';
+                        hoursLabel.textContent = hours.toFixed(1) + 'h';
+                        dayCell.style.position = 'relative';
+                        dayCell.appendChild(hoursLabel);
+                    }
                 }
-            }
+            }, 100);
         }
         
         // 통계용 병원 목록 업데이트

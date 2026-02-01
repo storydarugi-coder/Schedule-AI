@@ -382,9 +382,10 @@ export async function generateSchedule(
   const maxBlogPostsPerDay = 1  // 메인 블로그 하루 1개 포스팅
   const maxHoursPerHospitalPerDay = 6  // 한 병원당 하루 최대 6시간
 
-  // 브랜드/트렌드와 기타 작업 분리
+  // 브랜드/트렌드, 카페, 기타 작업 분리
   const blogTasks = normalTasks.filter(t => t.type === 'brand' || t.type === 'trend')
-  const otherTasks = normalTasks.filter(t => t.type !== 'brand' && t.type !== 'trend')
+  const cafeTasks = normalTasks.filter(t => t.type === 'cafe_posting')
+  const otherTasks = normalTasks.filter(t => t.type !== 'brand' && t.type !== 'trend' && t.type !== 'cafe_posting')
 
   console.log(`[DEBUG] 블로그 작업: ${blogTasks.length}개, 기타 작업: ${otherTasks.length}개`)
 
@@ -474,10 +475,44 @@ export async function generateSchedule(
     }
   }
 
+  // 3단계: 카페 포스팅은 금요일에만 배치 (주 1회)
+  let cafeTaskIndex = 0
+  const fridays = contentDaySchedules.filter(d => d.date.getDay() === 5) // 금요일만
+  console.log(`[DEBUG] 금요일 수: ${fridays.length}개, 카페 작업: ${cafeTasks.length}개`)
+
+  for (const daySchedule of fridays) {
+    if (cafeTaskIndex >= cafeTasks.length) break
+
+    const task = cafeTasks[cafeTaskIndex]
+    const remainingHours = daySchedule.availableHours - daySchedule.usedHours
+
+    if (task.duration <= remainingHours) {
+      const hasEarlyStart = daySchedule.tasks.some(t => t.type === 'early_start')
+      const dayStartHour = hasEarlyStart ? 8 : 9
+      const startHourOffset = dayStartHour + daySchedule.usedHours
+      const { hour: endHour, minute: endMinute } = addHours(startHourOffset, task.duration)
+
+      daySchedule.tasks.push({
+        hospitalId: task.hospitalId,
+        hospitalName: task.hospitalName,
+        type: task.type,
+        label: task.label,
+        startTime: formatTime(Math.floor(startHourOffset), (startHourOffset % 1) * 60),
+        endTime: formatTime(endHour, endMinute),
+        duration: task.duration,
+        isReport: false
+      })
+
+      daySchedule.usedHours += task.duration
+      cafeTaskIndex++
+    }
+  }
+
   // 14. 배치되지 못한 작업 확인 및 "일찍 출근" 일정 자동 추가
   const unscheduledTasks = [
     ...blogTasks.slice(blogTaskIndex),
-    ...otherTasks.slice(otherTaskIndex)
+    ...otherTasks.slice(otherTaskIndex),
+    ...cafeTasks.slice(cafeTaskIndex)
   ]
 
   if (unscheduledTasks.length > 0) {
