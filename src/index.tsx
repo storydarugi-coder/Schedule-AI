@@ -319,27 +319,31 @@ app.put('/api/schedules/:id', async (c) => {
 
 // 스케줄 순서 변경 (같은 날짜 내에서)
 app.put('/api/schedules/reorder', async (c) => {
+  const db = c.env.DB
+
+  // DB 연결 확인
+  if (!db) {
+    return c.json({ error: 'DB 연결 없음', env: Object.keys(c.env || {}) }, 500)
+  }
+
   try {
-    const db = c.env.DB
     const body = await c.req.json()
     const updates = body?.updates
 
     if (!updates || !Array.isArray(updates)) {
-      return c.json({ error: 'updates 배열이 필요합니다' }, 400)
+      return c.json({ error: 'updates 배열이 필요합니다', received: body }, 400)
     }
 
-    let updated = 0
     for (const u of updates) {
-      if (u.id && u.order_index !== undefined) {
+      if (u.id != null && u.order_index != null) {
         await db.prepare('UPDATE schedules SET order_index = ? WHERE id = ?')
           .bind(Number(u.order_index), Number(u.id)).run()
-        updated++
       }
     }
 
-    return c.json({ success: true, updated })
+    return c.json({ success: true, updated: updates.length })
   } catch (e: any) {
-    return c.json({ error: e?.message || 'Unknown error' }, 500)
+    return c.json({ error: e?.message || 'Unknown error', stack: e?.stack }, 500)
   }
 })
 
@@ -352,6 +356,20 @@ app.put('/api/schedules/:id/complete', async (c) => {
   await db.prepare(
     'UPDATE schedules SET is_completed = ? WHERE id = ?'
   ).bind(is_completed, scheduleId).run()
+
+  return c.json({ success: true })
+})
+
+// 개별 스케줄 삭제
+app.delete('/api/schedules/item/:id', async (c) => {
+  const db = c.env.DB
+  const scheduleId = parseInt(c.req.param('id'))
+
+  if (!scheduleId || isNaN(scheduleId)) {
+    return c.json({ error: 'Invalid schedule ID' }, 400)
+  }
+
+  await db.prepare('DELETE FROM schedules WHERE id = ?').bind(scheduleId).run()
 
   return c.json({ success: true })
 })
@@ -645,6 +663,11 @@ app.get('/', (c) => {
                                 <option value="2">2번째</option>
                             </select>
                         </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold mb-2 primary-color">상위노출</label>
+                        <input type="number" id="task-sanwi" min="0" value="0" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none">
+                        <p class="text-xs text-gray-500 mt-1">병원관리에서 날짜 지정 시 자동</p>
                     </div>
                     <div>
                         <label class="block text-sm font-semibold mb-2 primary-color">언론보도</label>
@@ -1152,7 +1175,7 @@ app.get('/', (c) => {
                 hospital_id: parseInt(hospitalId),
                 year: parseInt(year),
                 month: parseInt(month),
-                sanwi_nosul: 0, // 병원 관리에서 설정된 날짜 사용
+                sanwi_nosul: parseInt(document.getElementById('task-sanwi').value) || 0,
                 brand: parseInt(document.getElementById('task-brand').value),
                 trend: parseInt(document.getElementById('task-trend').value),
                 eonron_bodo: parseInt(document.getElementById('task-eonron').value),
@@ -1240,6 +1263,7 @@ app.get('/', (c) => {
 
                 if (data) {
                     // 기존 데이터가 있으면 폼에 채우기
+                    document.getElementById('task-sanwi').value = data.sanwi_nosul || 0;
                     document.getElementById('task-brand').value = data.brand || 0;
                     document.getElementById('task-trend').value = data.trend || 0;
                     document.getElementById('task-eonron').value = data.eonron_bodo || 0;
@@ -1540,6 +1564,39 @@ app.get('/', (c) => {
                         showReorderMenu(e, info.event);
                         return false;
                     }, true); // 캡처 단계에서 처리
+
+                    // 롱프레스 삭제 기능 추가
+                    let longPressTimer = null;
+                    let isLongPress = false;
+
+                    const startLongPress = function(e) {
+                        isLongPress = false;
+                        longPressTimer = setTimeout(function() {
+                            isLongPress = true;
+                            const scheduleId = info.event.extendedProps.scheduleId;
+                            const title = info.event.title;
+                            if (scheduleId) {
+                                deleteScheduleItem(scheduleId, title);
+                            }
+                        }, 600); // 600ms 롱프레스
+                    };
+
+                    const cancelLongPress = function(e) {
+                        if (longPressTimer) {
+                            clearTimeout(longPressTimer);
+                            longPressTimer = null;
+                        }
+                    };
+
+                    // 마우스 이벤트
+                    info.el.addEventListener('mousedown', startLongPress);
+                    info.el.addEventListener('mouseup', cancelLongPress);
+                    info.el.addEventListener('mouseleave', cancelLongPress);
+
+                    // 터치 이벤트 (모바일)
+                    info.el.addEventListener('touchstart', startLongPress);
+                    info.el.addEventListener('touchend', cancelLongPress);
+                    info.el.addEventListener('touchcancel', cancelLongPress);
                 },
                 dayCellDidMount: function(info) {
                     const date = info.date;
@@ -2063,7 +2120,32 @@ app.get('/', (c) => {
                 await moveEvent(event, 1);
             };
             menu.appendChild(moveDownBtn);
-            
+
+            // 구분선
+            const divider = document.createElement('div');
+            divider.style.borderTop = '1px solid #eee';
+            divider.style.margin = '4px 0';
+            menu.appendChild(divider);
+
+            // 삭제 버튼
+            const deleteBtn = document.createElement('div');
+            deleteBtn.textContent = '🗑️ 삭제';
+            deleteBtn.style.padding = '8px 16px';
+            deleteBtn.style.cursor = 'pointer';
+            deleteBtn.style.fontSize = '14px';
+            deleteBtn.style.color = '#dc2626';
+            deleteBtn.onmouseover = () => deleteBtn.style.backgroundColor = '#fee2e2';
+            deleteBtn.onmouseout = () => deleteBtn.style.backgroundColor = 'white';
+            deleteBtn.onclick = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (document.body.contains(menu)) {
+                    document.body.removeChild(menu);
+                }
+                await deleteScheduleItem(scheduleId, event.title);
+            };
+            menu.appendChild(deleteBtn);
+
             document.body.appendChild(menu);
             
             // 메뉴 외부 클릭 시 닫기 (메뉴 내부 클릭은 제외)
@@ -2077,7 +2159,23 @@ app.get('/', (c) => {
                 document.addEventListener('mousedown', closeMenu);
             }, 0);
         }
-        
+
+        // 개별 일정 삭제
+        async function deleteScheduleItem(scheduleId, title) {
+            if (!confirm('이 일정을 삭제하시겠습니까?\\n\\n' + title)) {
+                return;
+            }
+
+            try {
+                await axios.delete('/api/schedules/item/' + scheduleId);
+                alert('✅ 삭제되었습니다!');
+                loadCalendar();
+            } catch (error) {
+                console.error('삭제 실패:', error);
+                alert('❌ 삭제에 실패했습니다: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
         // 이벤트 위/아래 이동
         async function moveEvent(event, direction) {
             // event.id를 직접 사용 (FullCalendar ID와 DB ID가 동일)
