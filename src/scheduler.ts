@@ -332,12 +332,40 @@ export async function generateSchedule(
     (sum, d) => sum + (d.availableHours - d.usedHours), 0
   )
 
-  if (totalRequiredHours > totalAvailableHours) {
+  // 일찍 출근 가능한 날 계산 (월요일 제외, 다른 병원 일찍출근 제외)
+  const earlyStartCandidates = contentDaySchedules.filter(d =>
+    !isMonday(d.date) && !daysWithEarlyStart.has(formatDate(d.date))
+  )
+  const maxEarlyHours = earlyStartCandidates.length * 1 // 하루 1시간 (08:00~09:00)
+
+  const shortageHours = totalRequiredHours - totalAvailableHours
+
+  if (shortageHours > maxEarlyHours) {
+    // 일찍 출근으로도 해결 불가능한 경우만 에러
     return {
       hospital_name: hospitalName,
-      shortage_hours: totalRequiredHours - totalAvailableHours,
+      shortage_hours: shortageHours - maxEarlyHours,
       tasks: tasks.map(t => t.label),
-      message: `콘텐츠 작업 시간 부족: 필요 ${totalRequiredHours}시간, 가능 ${totalAvailableHours}시간`
+      message: `일찍 출근(${maxEarlyHours}시간)으로도 부족: 필요 ${totalRequiredHours}시간, 가능 ${totalAvailableHours + maxEarlyHours}시간`
+    }
+  }
+
+  // 시간 부족하면 미리 일찍 출근 시간 확보
+  const earlyStartScheduledDays: DaySchedule[] = []
+  if (shortageHours > 0) {
+    const earlyDaysNeeded = Math.ceil(shortageHours / 1)
+    console.log(`[DEBUG] 시간 부족 ${shortageHours}시간 -> 일찍 출근 ${earlyDaysNeeded}일 미리 확보`)
+
+    let addedEarlyDays = 0
+    for (const daySchedule of earlyStartCandidates) {
+      if (addedEarlyDays >= earlyDaysNeeded) break
+
+      // 일찍 출근 시간 추가 (08:00~09:00, 1시간)
+      daySchedule.availableHours += 1
+      earlyStartScheduledDays.push(daySchedule)
+      addedEarlyDays++
+
+      console.log(`[DEBUG] ${formatDate(daySchedule.date)} 일찍 출근 예정 (가용시간: ${daySchedule.availableHours}시간)`)
     }
   }
 
@@ -602,6 +630,29 @@ export async function generateSchedule(
           break
         }
       }
+    }
+  }
+
+  // 미리 확보한 일찍 출근 날짜에 일정 추가 (아직 추가 안 된 경우)
+  for (const daySchedule of earlyStartScheduledDays) {
+    const hasEarlyStartTask = daySchedule.tasks.some(t => t.type === 'early_start')
+    if (!hasEarlyStartTask) {
+      // 해당 날짜에 배치된 첫 번째 작업 라벨 사용
+      const firstTask = daySchedule.tasks.find(t => t.hospitalId === hospitalId && !t.isReport)
+      const taskLabel = firstTask ? firstTask.label : '콘텐츠 작업'
+
+      daySchedule.tasks.unshift({
+        hospitalId,
+        hospitalName,
+        type: 'early_start',
+        label: `☀️ 일찍 출근 (${taskLabel})`,
+        startTime: '08:00',
+        endTime: '09:00',
+        duration: 1,
+        isReport: false
+      })
+
+      console.log(`[DEBUG] ${formatDate(daySchedule.date)} 일찍 출근 일정 추가: ${taskLabel}`)
     }
   }
 
