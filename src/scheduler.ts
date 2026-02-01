@@ -389,19 +389,19 @@ export async function generateSchedule(
 
   console.log(`[DEBUG] 블로그 작업: ${blogTasks.length}개, 기타 작업: ${otherTasks.length}개`)
 
-  // 1단계: 브랜드/트렌드 골고루 분산 배치
+  // 1단계: 브랜드/트렌드 골고루 분산 배치 (같은 타입은 하루 1개, 브+트는 OK)
   let blogTaskIndex = 0
   for (const daySchedule of contentDaySchedules) {
     if (blogTaskIndex >= blogTasks.length) break
 
-    // 이미 메인 블로그 작업이 있으면 건너뛰기
-    const mainBlogTaskCount = daySchedule.tasks.filter(t => 
-      !t.isReport && (t.type === 'brand' || t.type === 'trend') && t.hospitalId === hospitalId
-    ).length
-    
-    if (mainBlogTaskCount >= maxBlogPostsPerDay) continue
-
     const task = blogTasks[blogTaskIndex]
+
+    // 같은 타입(브랜드 or 트렌드)이 이미 있으면 건너뛰기 (브+트는 가능)
+    const sameTypeCount = daySchedule.tasks.filter(t =>
+      !t.isReport && t.type === task.type && t.hospitalId === hospitalId
+    ).length
+
+    if (sameTypeCount >= 1) continue
     const remainingHours = daySchedule.availableHours - daySchedule.usedHours
     const hospitalUsedHours = daySchedule.tasks
       .filter(t => t.hospitalId === hospitalId)
@@ -572,7 +572,15 @@ export async function generateSchedule(
     for (const task of unscheduledTasks) {
       for (const daySchedule of contentDaySchedules) {
         const remainingHours = daySchedule.availableHours - daySchedule.usedHours
-        
+
+        // 브랜드/트렌드 각각 하루 1개 (같은 병원) - 브+트는 가능, 브+브 또는 트+트는 불가
+        if (task.type === 'brand' || task.type === 'trend') {
+          const sameTypeCount = daySchedule.tasks.filter(t =>
+            t.type === task.type && t.hospitalId === task.hospitalId
+          ).length
+          if (sameTypeCount >= 1) continue
+        }
+
         if (task.duration <= remainingHours) {
           const hasEarlyStart = daySchedule.tasks.some(t => t.type === 'early_start')
           const dayStartHour = isMonday(daySchedule.date) ? 10 : (hasEarlyStart ? 8 : 9) // 일찍 출근 시 8:00 시작
