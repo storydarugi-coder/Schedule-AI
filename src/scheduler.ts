@@ -112,18 +112,30 @@ export async function generateSchedule(
     console.log(`[DEBUG] 근무일 목록 (처음 5개):`, workdays.slice(0, 5).map(d => formatDate(d)))
   }
 
-  // 5. 해당 월의 모든 스케줄 조회 (다른 병원 작업 시간 고려)
+  // 5. 해당 월의 모든 스케줄 조회 (다른 병원 작업 시간 고려 - 현재 병원 제외)
   const allSchedules = await db.prepare(`
     SELECT task_date, SUM(duration_hours) as total_hours
     FROM schedules
-    WHERE year = ? AND month = ? AND is_report = 0
+    WHERE year = ? AND month = ? AND is_report = 0 AND hospital_id != ?
     GROUP BY task_date
-  `).bind(year, month).all()
-  
+  `).bind(year, month, hospitalId).all()
+
   const existingHoursPerDay = new Map<string, number>()
   for (const row of allSchedules.results) {
     existingHoursPerDay.set((row as any).task_date, (row as any).total_hours || 0)
   }
+
+  // 5-1. 이미 일찍 출근이 있는 날 조회 (현재 병원 제외 - 재생성 시 기존 데이터가 아직 남아있음)
+  const earlyStartSchedules = await db.prepare(`
+    SELECT task_date FROM schedules
+    WHERE year = ? AND month = ? AND task_type = 'early_start' AND hospital_id != ?
+  `).bind(year, month, hospitalId).all()
+
+  const daysWithEarlyStart = new Set<string>()
+  for (const row of earlyStartSchedules.results) {
+    daysWithEarlyStart.add((row as any).task_date)
+  }
+  console.log(`[DEBUG] 이미 일찍 출근 있는 날: ${daysWithEarlyStart.size}일`)
 
   // 6. 일별 스케줄 초기화 (기존 작업 시간 반영)
   const daySchedules: DaySchedule[] = workdays.map(date => {

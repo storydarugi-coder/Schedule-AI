@@ -375,58 +375,58 @@ app.put('/api/schedules/:id/complete', async (c) => {
   return c.json({ success: true })
 })
 
-// 보고서 추가 API
+// 보고서 추가 (수동)
 app.post('/api/schedules/add-report', async (c) => {
   const db = c.env.DB
-  const { hospital_id, task_date, start_time } = await c.req.json()
-
-  if (!hospital_id || !task_date || !start_time) {
-    return c.json({ error: '병원, 날짜, 시작 시간을 모두 입력해주세요' }, 400)
-  }
 
   try {
-    // 병원 정보 가져오기
-    const hospital = await db.prepare(
-      'SELECT name FROM hospitals WHERE id = ?'
-    ).bind(hospital_id).first()
+    const { hospital_id, year, month, task_date, start_time, end_time } = await c.req.json()
+
+    if (!hospital_id || !task_date || !start_time) {
+      return c.json({ error: '병원, 날짜, 시작 시간을 모두 입력해주세요' }, 400)
+    }
+
+    // 병원 정보 조회
+    const hospital = await db.prepare('SELECT name FROM hospitals WHERE id = ?')
+      .bind(hospital_id)
+      .first()
 
     if (!hospital) {
       return c.json({ error: '병원을 찾을 수 없습니다' }, 404)
     }
 
-    // 시작 시간 파싱
-    const [startHour, startMinute] = start_time.split(':').map(Number)
-    const startDecimal = startHour + startMinute / 60
+    // 해당 날짜의 마지막 order_index 조회
+    const lastOrder = await db.prepare(`
+      SELECT MAX(order_index) as max_order FROM schedules
+      WHERE task_date = ?
+    `).bind(task_date).first()
 
-    // 종료 시간 계산 (보고서는 2시간)
-    const endDecimal = startDecimal + 2
-    const endHour = Math.floor(endDecimal)
-    const endMinute = Math.round((endDecimal - endHour) * 60)
-    const end_time = String(endHour).padStart(2, '0') + ':' + String(endMinute).padStart(2, '0')
-
-    // 연도와 월 추출
-    const [year, month] = task_date.split('-').map(Number)
-
-    // 해당 날짜의 마지막 order_index 가져오기
-    const lastOrder = await db.prepare(
-      'SELECT MAX(order_index) as max_order FROM schedules WHERE task_date = ?'
-    ).bind(task_date).first()
-
-    const newOrderIndex = (lastOrder?.max_order ?? -1) + 1
+    const orderIndex = ((lastOrder as any)?.max_order || 0) + 1
 
     // 보고서 추가
     await db.prepare(`
-      INSERT INTO schedules 
-      (hospital_id, year, month, task_date, task_type, task_name, start_time, end_time, duration_hours, is_report, order_index)
-      VALUES (?, ?, ?, ?, 'report', '보고서', ?, ?, 2.0, 1, ?)
-    `).bind(hospital_id, year, month, task_date, start_time, end_time, newOrderIndex).run()
+      INSERT INTO schedules (
+        hospital_id, year, month, task_date, task_type, task_name,
+        start_time, end_time, duration_hours, is_report, order_index
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      hospital_id,
+      year,
+      month,
+      task_date,
+      'report',
+      '보고서',
+      start_time,
+      end_time,
+      2, // 보고서는 2시간
+      1, // is_report = true
+      orderIndex
+    ).run()
 
     return c.json({ success: true, message: '보고서가 추가되었습니다' })
   } catch (error) {
     console.error('보고서 추가 실패:', error)
-    return c.json({ 
-      error: '보고서 추가에 실패했습니다: ' + (error instanceof Error ? error.message : String(error))
-    }, 500)
+    return c.json({ error: error instanceof Error ? error.message : '보고서 추가 실패' }, 500)
   }
 })
 
@@ -882,6 +882,46 @@ app.get('/', (c) => {
                     </div>
                 </div>
                 <div id="calendar"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 보고서 추가 모달 -->
+    <div id="add-report-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-2xl p-6 w-96 max-w-full mx-4">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">
+                <i class="fas fa-file-alt text-pink-500 mr-2"></i>보고서 추가
+            </h3>
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">날짜</label>
+                <input type="text" id="report-date" class="w-full border-2 border-gray-200 rounded-lg px-4 py-2 bg-gray-100" readonly>
+            </div>
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">병원 선택</label>
+                <select id="report-hospital" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2 focus:border-purple-400 focus:outline-none">
+                    <option value="">병원을 선택하세요</option>
+                </select>
+            </div>
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">시작 시간</label>
+                <select id="report-start-time" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2 focus:border-purple-400 focus:outline-none">
+                    <option value="09:00">09:00</option>
+                    <option value="10:00" selected>10:00</option>
+                    <option value="11:00">11:00</option>
+                    <option value="12:00">12:00</option>
+                    <option value="13:00">13:00</option>
+                    <option value="14:00">14:00</option>
+                    <option value="15:00">15:00</option>
+                    <option value="16:00">16:00</option>
+                </select>
+            </div>
+            <div class="flex justify-end gap-2">
+                <button onclick="closeReportModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">
+                    취소
+                </button>
+                <button onclick="addReport()" class="bg-gradient-to-r from-pink-500 to-rose-500 text-white rounded-lg px-6 py-2 font-semibold shadow-md hover:shadow-lg transition-all">
+                    <i class="fas fa-plus mr-2"></i>추가
+                </button>
             </div>
         </div>
     </div>
@@ -1901,6 +1941,63 @@ app.get('/', (c) => {
             } catch (error) {
                 console.error('완료 상태 변경 실패', error);
                 alert('❌ 완료 상태 변경에 실패했습니다.');
+            }
+        }
+
+        // 날짜 클릭 핸들러 (보고서 추가 모달)
+        function handleDateClick(info) {
+            const dateStr = info.dateStr;
+            document.getElementById('report-date').value = dateStr;
+
+            // 병원 목록 채우기
+            const hospitalSelect = document.getElementById('report-hospital');
+            hospitalSelect.innerHTML = '<option value="">병원을 선택하세요</option>' +
+                hospitals.map(h => \`<option value="\${h.id}">\${h.name}</option>\`).join('');
+
+            // 모달 열기
+            document.getElementById('add-report-modal').classList.remove('hidden');
+        }
+
+        // 보고서 모달 닫기
+        window.closeReportModal = function() {
+            document.getElementById('add-report-modal').classList.add('hidden');
+        }
+
+        // 보고서 추가
+        window.addReport = async function() {
+            const dateStr = document.getElementById('report-date').value;
+            const hospitalId = document.getElementById('report-hospital').value;
+            const startTime = document.getElementById('report-start-time').value;
+
+            if (!hospitalId) {
+                alert('병원을 선택해주세요');
+                return;
+            }
+
+            const dateParts = dateStr.split('-');
+            const year = parseInt(dateParts[0]);
+            const month = parseInt(dateParts[1]);
+
+            // 종료 시간 계산 (시작 + 2시간)
+            const startHour = parseInt(startTime.split(':')[0]);
+            const endTime = String(startHour + 2).padStart(2, '0') + ':00';
+
+            try {
+                await axios.post('/api/schedules/add-report', {
+                    hospital_id: parseInt(hospitalId),
+                    year: year,
+                    month: month,
+                    task_date: dateStr,
+                    start_time: startTime,
+                    end_time: endTime
+                });
+
+                alert('✅ 보고서가 추가되었습니다!');
+                closeReportModal();
+                loadCalendar();
+            } catch (error) {
+                console.error('보고서 추가 실패:', error);
+                alert('❌ 보고서 추가에 실패했습니다: ' + (error.response?.data?.error || error.message));
             }
         }
 
