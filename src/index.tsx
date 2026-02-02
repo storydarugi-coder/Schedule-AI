@@ -865,6 +865,7 @@ app.get('/', (c) => {
                     <option value="trend">📈 트렌드 (1.5시간)</option>
                     <option value="sanwi_nosul">🔝 상위노출 (3.5시간)</option>
                     <option value="report">📄 보고서 (1시간)</option>
+                    <option value="meeting">🤝 회의 (1시간)</option>
                     <option value="cafe_posting">☕ 카페 포스팅 (0.5시간)</option>
                     <option value="eonron_bodo">📰 언론보도 (0.5시간)</option>
                     <option value="jisikin">❓ 지식인 (0.5시간)</option>
@@ -1988,6 +1989,7 @@ app.get('/', (c) => {
             trend: { label: '트렌드', duration: 1.5, isReport: false },
             sanwi_nosul: { label: '상위노출', duration: 3.5, isReport: false },
             report: { label: '보고서', duration: 1, isReport: true },
+            meeting: { label: '회의', duration: 1, isReport: false },
             cafe_posting: { label: '카페 포스팅', duration: 0.5, isReport: false },
             eonron_bodo: { label: '언론보도', duration: 0.5, isReport: false },
             jisikin: { label: '지식인', duration: 0.5, isReport: false }
