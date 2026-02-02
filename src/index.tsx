@@ -2006,13 +2006,7 @@ app.get('/', (c) => {
 
         // 일정 유형 변경 시 - 회의는 병원 선택 숨김
         window.onTaskTypeChange = function() {
-            const taskType = document.getElementById('report-type').value;
-            const hospitalContainer = document.getElementById('report-hospital').parentElement;
-            if (taskType === 'meeting') {
-                hospitalContainer.style.display = 'none';
-            } else {
-                hospitalContainer.style.display = 'block';
-            }
+            // 모든 일정 유형에 병원 선택 필요
         }
 
         // 일정 추가 (보고서, 카페 등)
@@ -2022,8 +2016,8 @@ app.get('/', (c) => {
             const startTime = document.getElementById('report-start-time').value;
             const taskType = document.getElementById('report-type').value;
 
-            // 회의가 아닌 경우에만 병원 필수
-            if (taskType !== 'meeting' && !hospitalId) {
+            // 모든 일정에 병원 필수
+            if (!hospitalId) {
                 alert('병원을 선택해주세요');
                 return;
             }
@@ -2050,7 +2044,7 @@ app.get('/', (c) => {
                 const taskName = taskType === 'meeting' ? '회의' : config.label;
 
                 await axios.post('/api/schedules/add-item', {
-                    hospital_id: taskType === 'meeting' ? 0 : parseInt(hospitalId),
+                    hospital_id: parseInt(hospitalId),
                     year: year,
                     month: month,
                     task_date: dateStr,
