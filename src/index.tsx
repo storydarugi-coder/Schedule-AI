@@ -374,6 +374,22 @@ app.delete('/api/schedules/item/:id', async (c) => {
   return c.json({ success: true })
 })
 
+// 스케줄 메모 업데이트
+app.put('/api/schedules/memo/:id', async (c) => {
+  const db = c.env.DB
+  const scheduleId = parseInt(c.req.param('id'))
+  const { memo } = await c.req.json()
+
+  if (!scheduleId || isNaN(scheduleId)) {
+    return c.json({ error: 'Invalid schedule ID' }, 400)
+  }
+
+  await db.prepare('UPDATE schedules SET memo = ? WHERE id = ?')
+    .bind(memo || '', scheduleId).run()
+
+  return c.json({ success: true })
+})
+
 // =========================
 // 연차/휴가 관리 API
 // =========================
@@ -880,6 +896,30 @@ app.get('/', (c) => {
                 </button>
                 <button onclick="addScheduleItem()" class="bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg px-6 py-2 font-semibold shadow-md hover:shadow-lg transition-all">
                     <i class="fas fa-plus mr-2"></i>추가
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 메모 모달 -->
+    <div id="memo-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-2xl p-6 w-96 max-w-full mx-4">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">
+                <i class="fas fa-sticky-note text-blue-500 mr-2"></i>메모
+            </h3>
+            <input type="hidden" id="memo-schedule-id">
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1" id="memo-title-label">일정</label>
+            </div>
+            <div class="mb-4">
+                <textarea id="memo-content" rows="4" class="w-full border-2 border-blue-200 rounded-lg px-4 py-2 focus:border-blue-400 focus:outline-none" placeholder="메모를 입력하세요..."></textarea>
+            </div>
+            <div class="flex justify-end gap-2">
+                <button onclick="closeMemoModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">
+                    취소
+                </button>
+                <button onclick="saveMemo()" class="bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-lg px-6 py-2 font-semibold shadow-md hover:shadow-lg transition-all">
+                    <i class="fas fa-save mr-2"></i>저장
                 </button>
             </div>
         </div>
@@ -1695,9 +1735,10 @@ app.get('/', (c) => {
                         classNames.push('early-start-event');
                     }
                     
+                    const memoIcon = s.memo ? '📝 ' : '';
                     return {
                         id: s.id, // 스케줄 ID 추가 (드래그 앤 드롭에 필요)
-                        title: \`\${earlyIcon}\${titlePrefix}\${s.hospital_name} - \${s.task_name}\`,
+                        title: \`\${earlyIcon}\${memoIcon}\${titlePrefix}\${s.hospital_name} - \${s.task_name}\`,
                         start: \`\${s.task_date}T\${s.start_time}\`, // 시간 포함하여 정렬
                         order_index: s.order_index || 0, // 순서 인덱스 추가
                         color: color,
@@ -1716,7 +1757,8 @@ app.get('/', (c) => {
                             isReport: s.is_report,
                             isCompleted: s.is_completed || 0,
                             pullDays: s.deadline_pull_days,
-                            order_index: s.order_index || 0 // 순서 인덱스
+                            order_index: s.order_index || 0, // 순서 인덱스
+                            memo: s.memo || '' // 메모
                         }
                     };
                 });
@@ -2136,6 +2178,25 @@ app.get('/', (c) => {
             divider.style.margin = '4px 0';
             menu.appendChild(divider);
 
+            // 메모 버튼
+            const memoBtn = document.createElement('div');
+            memoBtn.textContent = '📝 메모';
+            memoBtn.style.padding = '8px 16px';
+            memoBtn.style.cursor = 'pointer';
+            memoBtn.style.fontSize = '14px';
+            memoBtn.style.color = '#2563eb';
+            memoBtn.onmouseover = () => memoBtn.style.backgroundColor = '#dbeafe';
+            memoBtn.onmouseout = () => memoBtn.style.backgroundColor = 'white';
+            memoBtn.onclick = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (document.body.contains(menu)) {
+                    document.body.removeChild(menu);
+                }
+                openMemoModal(scheduleId, event.title, event.extendedProps.memo || '');
+            };
+            menu.appendChild(memoBtn);
+
             // 삭제 버튼
             const deleteBtn = document.createElement('div');
             deleteBtn.textContent = '🗑️ 삭제';
@@ -2182,6 +2243,35 @@ app.get('/', (c) => {
             } catch (error) {
                 console.error('삭제 실패:', error);
                 alert('❌ 삭제에 실패했습니다: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        // 메모 모달 열기
+        function openMemoModal(scheduleId, title, currentMemo) {
+            document.getElementById('memo-schedule-id').value = scheduleId;
+            document.getElementById('memo-title-label').textContent = title;
+            document.getElementById('memo-content').value = currentMemo || '';
+            document.getElementById('memo-modal').classList.remove('hidden');
+        }
+
+        // 메모 모달 닫기
+        window.closeMemoModal = function() {
+            document.getElementById('memo-modal').classList.add('hidden');
+        }
+
+        // 메모 저장
+        window.saveMemo = async function() {
+            const scheduleId = document.getElementById('memo-schedule-id').value;
+            const memo = document.getElementById('memo-content').value;
+
+            try {
+                await axios.put('/api/schedules/memo/' + scheduleId, { memo: memo });
+                alert('✅ 메모가 저장되었습니다!');
+                closeMemoModal();
+                loadCalendar();
+            } catch (error) {
+                console.error('메모 저장 실패:', error);
+                alert('❌ 메모 저장에 실패했습니다: ' + (error.response?.data?.error || error.message));
             }
         }
 
