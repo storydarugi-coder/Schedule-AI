@@ -246,7 +246,7 @@ app.post('/api/schedules/add-item', async (c) => {
       start_time, end_time, duration_hours, is_report, order_index
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
-    hospital_id || null, year, month, task_date, task_type, task_name,
+    hospital_id || 0, year, month, task_date, task_type, task_name,
     start_time, end_time, duration_hours, is_report ? 1 : 0, orderIndex
   ).run()
 
@@ -2050,7 +2050,7 @@ app.get('/', (c) => {
                 const taskName = taskType === 'meeting' ? '회의' : config.label;
 
                 await axios.post('/api/schedules/add-item', {
-                    hospital_id: taskType === 'meeting' ? null : parseInt(hospitalId),
+                    hospital_id: taskType === 'meeting' ? 0 : parseInt(hospitalId),
                     year: year,
                     month: month,
                     task_date: dateStr,
