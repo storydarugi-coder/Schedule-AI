@@ -219,12 +219,17 @@ app.post('/api/schedules/add-item', async (c) => {
   const db = c.env.DB
   const { hospital_id, year, month, task_date, task_type, task_name, start_time, end_time, duration_hours, is_report } = await c.req.json()
 
-  // 병원 정보 가져오기
-  const hospital = await db.prepare('SELECT name FROM hospitals WHERE id = ?')
-    .bind(hospital_id).first()
+  let hospitalName = ''
 
-  if (!hospital) {
-    return c.json({ error: 'Hospital not found' }, 404)
+  // 회의는 병원 없이 추가 가능
+  if (hospital_id) {
+    const hospital = await db.prepare('SELECT name FROM hospitals WHERE id = ?')
+      .bind(hospital_id).first()
+
+    if (!hospital) {
+      return c.json({ error: 'Hospital not found' }, 404)
+    }
+    hospitalName = hospital.name
   }
 
   // 해당 날짜의 마지막 order_index 가져오기
@@ -241,14 +246,14 @@ app.post('/api/schedules/add-item', async (c) => {
       start_time, end_time, duration_hours, is_report, order_index
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
-    hospital_id, year, month, task_date, task_type, task_name,
+    hospital_id || null, year, month, task_date, task_type, task_name,
     start_time, end_time, duration_hours, is_report ? 1 : 0, orderIndex
   ).run()
 
   return c.json({
     success: true,
     id: result.meta.last_row_id,
-    hospital_name: hospital.name
+    hospital_name: hospitalName || task_name
   })
 })
 
@@ -1737,9 +1742,13 @@ app.get('/', (c) => {
                     }
                     
                     const memoIcon = s.memo ? '📝 ' : '';
+                    // 병원명이 있으면 "병원 - 작업", 없으면 작업만 표시
+                    const displayTitle = s.hospital_name
+                        ? \`\${s.hospital_name} - \${s.task_name}\`
+                        : s.task_name;
                     return {
                         id: s.id, // 스케줄 ID 추가 (드래그 앤 드롭에 필요)
-                        title: \`\${earlyIcon}\${memoIcon}\${titlePrefix}\${s.hospital_name} - \${s.task_name}\`,
+                        title: \`\${earlyIcon}\${memoIcon}\${titlePrefix}\${displayTitle}\`,
                         start: \`\${s.task_date}T\${s.start_time}\`, // 시간 포함하여 정렬
                         order_index: s.order_index || 0, // 순서 인덱스 추가
                         color: color,
@@ -1995,9 +2004,15 @@ app.get('/', (c) => {
             jisikin: { label: '지식인', duration: 0.5, isReport: false }
         };
 
-        // 일정 유형 변경 시 (현재는 사용 안 함)
+        // 일정 유형 변경 시 - 회의는 병원 선택 숨김
         window.onTaskTypeChange = function() {
-            // 필요시 동적 UI 변경
+            const taskType = document.getElementById('report-type').value;
+            const hospitalContainer = document.getElementById('report-hospital').parentElement;
+            if (taskType === 'meeting') {
+                hospitalContainer.style.display = 'none';
+            } else {
+                hospitalContainer.style.display = 'block';
+            }
         }
 
         // 일정 추가 (보고서, 카페 등)
@@ -2007,7 +2022,8 @@ app.get('/', (c) => {
             const startTime = document.getElementById('report-start-time').value;
             const taskType = document.getElementById('report-type').value;
 
-            if (!hospitalId) {
+            // 회의가 아닌 경우에만 병원 필수
+            if (taskType !== 'meeting' && !hospitalId) {
                 alert('병원을 선택해주세요');
                 return;
             }
@@ -2030,20 +2046,23 @@ app.get('/', (c) => {
             const endTime = String(endHour).padStart(2, '0') + ':' + String(endMin).padStart(2, '0');
 
             try {
+                // 회의는 병원 없이, 나머지는 병원 필수
+                const taskName = taskType === 'meeting' ? '회의' : config.label;
+
                 await axios.post('/api/schedules/add-item', {
-                    hospital_id: parseInt(hospitalId),
+                    hospital_id: taskType === 'meeting' ? null : parseInt(hospitalId),
                     year: year,
                     month: month,
                     task_date: dateStr,
                     task_type: taskType,
-                    task_name: config.label,
+                    task_name: taskName,
                     start_time: startTime,
                     end_time: endTime,
                     duration_hours: config.duration,
                     is_report: config.isReport
                 });
 
-                alert('✅ ' + config.label + '이(가) 추가되었습니다!');
+                alert('✅ ' + taskName + '이(가) 추가되었습니다!');
                 closeReportModal();
                 loadCalendar();
             } catch (error) {
