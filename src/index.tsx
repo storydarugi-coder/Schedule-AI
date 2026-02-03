@@ -874,6 +874,8 @@ app.get('/', (c) => {
                     <option value="cafe_posting">☕ 카페 포스팅 (0.5시간)</option>
                     <option value="eonron_bodo">📰 언론보도 (0.5시간)</option>
                     <option value="jisikin">❓ 지식인 (0.5시간)</option>
+                    <option value="insta_request">📸 인스타그램 요청 (0.5시간)</option>
+                    <option value="insta_posting">📷 인스타그램 포스팅 (0.5시간)</option>
                 </select>
             </div>
             <div class="mb-4">
@@ -2001,7 +2003,9 @@ app.get('/', (c) => {
             meeting: { label: '회의', duration: 1, isReport: false },
             cafe_posting: { label: '카페 포스팅', duration: 0.5, isReport: false },
             eonron_bodo: { label: '언론보도', duration: 0.5, isReport: false },
-            jisikin: { label: '지식인', duration: 0.5, isReport: false }
+            jisikin: { label: '지식인', duration: 0.5, isReport: false },
+            insta_request: { label: '인스타그램 요청', duration: 0.5, isReport: false },
+            insta_posting: { label: '인스타그램 포스팅', duration: 0.5, isReport: false }
         };
 
         // 일정 유형 변경 시 - 회의는 병원 선택 숨김
