@@ -219,10 +219,26 @@ app.post('/api/schedules/add-item', async (c) => {
   const db = c.env.DB
   const { hospital_id, year, month, task_date, task_type, task_name, start_time, end_time, duration_hours, is_report } = await c.req.json()
 
+  let finalHospitalId = hospital_id
   let hospitalName = ''
 
-  // 회의는 병원 없이 추가 가능
-  if (hospital_id) {
+  // 회의는 병원 없이 추가 가능 - 자동으로 "회의/기타" 병원 사용
+  if (!hospital_id && task_type === 'meeting') {
+    // 회의/기타 병원 찾기 또는 생성
+    let meetingHospital = await db.prepare('SELECT id, name FROM hospitals WHERE name = ?')
+      .bind('회의/기타').first()
+
+    if (!meetingHospital) {
+      // 없으면 생성
+      await db.prepare('INSERT INTO hospitals (name, base_due_day) VALUES (?, ?)')
+        .bind('회의/기타', 1).run()
+      meetingHospital = await db.prepare('SELECT id, name FROM hospitals WHERE name = ?')
+        .bind('회의/기타').first()
+    }
+
+    finalHospitalId = meetingHospital.id
+    hospitalName = '회의'
+  } else if (hospital_id) {
     const hospital = await db.prepare('SELECT name FROM hospitals WHERE id = ?')
       .bind(hospital_id).first()
 
@@ -230,6 +246,8 @@ app.post('/api/schedules/add-item', async (c) => {
       return c.json({ error: 'Hospital not found' }, 404)
     }
     hospitalName = hospital.name
+  } else {
+    return c.json({ error: 'Hospital is required' }, 400)
   }
 
   // 해당 날짜의 마지막 order_index 가져오기
@@ -246,7 +264,7 @@ app.post('/api/schedules/add-item', async (c) => {
       start_time, end_time, duration_hours, is_report, order_index
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
-    hospital_id || 0, year, month, task_date, task_type, task_name,
+    finalHospitalId, year, month, task_date, task_type, task_name,
     start_time, end_time, duration_hours, is_report ? 1 : 0, orderIndex
   ).run()
 
@@ -2010,7 +2028,13 @@ app.get('/', (c) => {
 
         // 일정 유형 변경 시 - 회의는 병원 선택 숨김
         window.onTaskTypeChange = function() {
-            // 모든 일정 유형에 병원 선택 필요
+            const taskType = document.getElementById('report-type').value;
+            const hospitalContainer = document.getElementById('report-hospital').parentElement;
+            if (taskType === 'meeting') {
+                hospitalContainer.style.display = 'none';
+            } else {
+                hospitalContainer.style.display = 'block';
+            }
         }
 
         // 일정 추가 (보고서, 카페 등)
@@ -2020,8 +2044,8 @@ app.get('/', (c) => {
             const startTime = document.getElementById('report-start-time').value;
             const taskType = document.getElementById('report-type').value;
 
-            // 모든 일정에 병원 필수
-            if (!hospitalId) {
+            // 회의 제외 병원 필수
+            if (taskType !== 'meeting' && !hospitalId) {
                 alert('병원을 선택해주세요');
                 return;
             }
@@ -2048,7 +2072,7 @@ app.get('/', (c) => {
                 const taskName = taskType === 'meeting' ? '회의' : config.label;
 
                 await axios.post('/api/schedules/add-item', {
-                    hospital_id: parseInt(hospitalId),
+                    hospital_id: taskType === 'meeting' ? null : parseInt(hospitalId),
                     year: year,
                     month: month,
                     task_date: dateStr,
