@@ -1008,9 +1008,12 @@ app.get('/', (c) => {
                 
                 // 날짜 오름차순으로 정렬
                 hospitals.sort((a, b) => a.base_due_day - b.base_due_day);
-                
+
+                // 회의/기타 병원은 목록에서 숨김
+                const visibleHospitals = hospitals.filter(h => h.name !== '회의/기타');
+
                 const list = document.getElementById('hospitals-list');
-                list.innerHTML = hospitals.map(h => {
+                list.innerHTML = visibleHospitals.map(h => {
                     // 상위노출 날짜 HTML 생성
                     let sanwiHtml = '';
                     if (h.sanwi_nosul_days) {
@@ -1053,10 +1056,10 @@ app.get('/', (c) => {
                     \`;
                 }).join('');
 
-                // 작업량 입력 탭의 드롭다운 업데이트
+                // 작업량 입력 탭의 드롭다운 업데이트 (회의/기타 제외)
                 const select = document.getElementById('task-hospital');
-                select.innerHTML = '<option value="">병원 선택</option>' + 
-                    hospitals.map(h => \`<option value="\${h.id}">\${h.name}</option>\`).join('');
+                select.innerHTML = '<option value="">병원 선택</option>' +
+                    hospitals.filter(h => h.name !== '회의/기타').map(h => \`<option value="\${h.id}">\${h.name}</option>\`).join('');
             } catch (error) {
                 alert('병원 목록 로드 실패');
             }
@@ -1998,10 +2001,10 @@ app.get('/', (c) => {
             const dateStr = info.dateStr;
             document.getElementById('report-date').value = dateStr;
 
-            // 병원 목록 채우기
+            // 병원 목록 채우기 (회의/기타 제외)
             const hospitalSelect = document.getElementById('report-hospital');
             hospitalSelect.innerHTML = '<option value="">병원을 선택하세요</option>' +
-                hospitals.map(h => \`<option value="\${h.id}">\${h.name}</option>\`).join('');
+                hospitals.filter(h => h.name !== '회의/기타').map(h => \`<option value="\${h.id}">\${h.name}</option>\`).join('');
 
             // 모달 열기
             document.getElementById('add-report-modal').classList.remove('hidden');
