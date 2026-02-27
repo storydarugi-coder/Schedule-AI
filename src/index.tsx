@@ -113,7 +113,6 @@ app.post('/api/monthly-tasks', async (c) => {
     eonron_bodo,
     jisikin,
     cafe,
-    deadline_pull_days,
     task_order
   } = data
 
@@ -130,13 +129,13 @@ app.post('/api/monthly-tasks', async (c) => {
     await db.prepare(`
       UPDATE monthly_tasks
       SET sanwi_nosul = ?, brand = ?, trend = ?, eonron_bodo = ?, jisikin = ?, cafe = ?,
-          deadline_pull_days = ?, task_order = ?, brand_order = ?, trend_order = ?, sanwi_dates = ?,
+          task_order = ?, brand_order = ?, trend_order = ?, sanwi_dates = ?,
           work_start_date = ?, work_end_date = ?
       WHERE hospital_id = ? AND year = ? AND month = ?
     `).bind(
-      sanwi_nosul, brand, trend, eonron_bodo, jisikin, cafe || 0, deadline_pull_days, 
-      task_order || 'brand,trend', 
-      data.brand_order || 1, 
+      sanwi_nosul, brand, trend, eonron_bodo, jisikin, cafe || 0,
+      task_order || 'brand,trend',
+      data.brand_order || 1,
       data.trend_order || 2,
       sanwiDatesJson,
       data.work_start_date || null,
@@ -146,10 +145,10 @@ app.post('/api/monthly-tasks', async (c) => {
   } else {
     // 삽입
     await db.prepare(`
-      INSERT INTO monthly_tasks (hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, cafe, deadline_pull_days, task_order, brand_order, trend_order, sanwi_dates, work_start_date, work_end_date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO monthly_tasks (hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, cafe, task_order, brand_order, trend_order, sanwi_dates, work_start_date, work_end_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
-      hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, cafe || 0, deadline_pull_days, 
+      hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, cafe || 0,
       task_order || 'brand,trend',
       data.brand_order || 1,
       data.trend_order || 2,
@@ -201,12 +200,9 @@ app.get('/api/schedules/:year/:month', async (c) => {
   const month = parseInt(c.req.param('month'))
 
   const result = await db.prepare(`
-    SELECT s.*, h.name as hospital_name, h.base_due_day, h.color as hospital_color,
-           mt.deadline_pull_days
+    SELECT s.*, h.name as hospital_name, h.base_due_day, h.color as hospital_color
     FROM schedules s
     JOIN hospitals h ON s.hospital_id = h.id
-    LEFT JOIN monthly_tasks mt ON s.hospital_id = mt.hospital_id 
-      AND s.year = mt.year AND s.month = mt.month
     WHERE s.year = ? AND s.month = ?
     ORDER BY s.task_date, s.order_index, s.start_time
   `).bind(year, month).all()
@@ -720,17 +716,6 @@ app.get('/', (c) => {
                     <div>
                         <label class="block text-sm font-semibold mb-2 primary-color">카페 포스팅</label>
                         <input type="number" id="task-cafe" min="0" value="4" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold mb-2 primary-color">마감 당김 일수</label>
-                        <select id="task-pull-days" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none">
-                            <option value="0">0일</option>
-                            <option value="1">1일</option>
-                            <option value="2">2일</option>
-                            <option value="3">3일</option>
-                            <option value="4">4일</option>
-                            <option value="5">5일</option>
-                        </select>
                     </div>
                 </div>
 
@@ -1252,7 +1237,6 @@ app.get('/', (c) => {
                 eonron_bodo: parseInt(document.getElementById('task-eonron').value),
                 jisikin: parseInt(document.getElementById('task-jisikin').value),
                 cafe: parseInt(document.getElementById('task-cafe').value),
-                deadline_pull_days: parseInt(document.getElementById('task-pull-days').value),
                 task_order: 'brand,trend', // 기본값
                 brand_order: parseInt(document.getElementById('brand-order')?.value || '1'),
                 trend_order: parseInt(document.getElementById('trend-order')?.value || '2'),
@@ -1340,7 +1324,6 @@ app.get('/', (c) => {
                     document.getElementById('task-eonron').value = data.eonron_bodo || 0;
                     document.getElementById('task-jisikin').value = data.jisikin || 0;
                     document.getElementById('task-cafe').value = data.cafe || 4;
-                    document.getElementById('task-pull-days').value = data.deadline_pull_days || 0;
                     document.getElementById('work-start-date').value = data.work_start_date || '';
                     document.getElementById('work-end-date').value = data.work_end_date || '';
 
@@ -1789,7 +1772,6 @@ app.get('/', (c) => {
                             durationHours: s.duration_hours,
                             isReport: s.is_report,
                             isCompleted: s.is_completed || 0,
-                            pullDays: s.deadline_pull_days,
                             order_index: s.order_index || 0, // 순서 인덱스
                             memo: s.memo || '' // 메모
                         }

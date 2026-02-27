@@ -67,7 +67,7 @@ export async function generateSchedule(
   const hospitalName = hospital.name as string
   const baseDueDay = hospital.base_due_day as number
   
-  console.log(`[DEBUG] 병원: ${hospitalName}, 기본 마감일: ${baseDueDay}, 당김: ${monthlyTask.deadline_pull_days}일`)
+  console.log(`[DEBUG] 병원: ${hospitalName}, 기본 마감일: ${baseDueDay}`)
 
   // 2. 마감일 및 작업 기간 계산
   let dueDate: Date
@@ -83,7 +83,7 @@ export async function generateSchedule(
   } else {
     // 기존 로직: 마감일 기준으로 계산
     try {
-      dueDate = calculateDueDate(year, month, baseDueDay, monthlyTask.deadline_pull_days, vacations)
+      dueDate = calculateDueDate(year, month, baseDueDay, vacations)
       console.log(`[DEBUG] 계산된 마감일: ${formatDate(dueDate)}`)
     } catch (error) {
       console.error(`[DEBUG] 마감일 계산 실패:`, error)
