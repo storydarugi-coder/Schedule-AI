@@ -183,8 +183,9 @@ app.get('/api/schedules/:year/:month', async (c) => {
   return c.json(result.results)
 })
 
-// 일정 수동 추가 (보고서, 카페 등)
+// 일정 수동 추가
 app.post('/api/schedules/add-item', async (c) => {
+  try {
   const db = c.env.DB
   const { hospital_id, year, month, task_date, task_type, task_name, start_time, end_time, duration_hours, is_report } = await c.req.json()
 
@@ -238,6 +239,9 @@ app.post('/api/schedules/add-item', async (c) => {
     id: result.meta.last_row_id,
     hospital_name: hospitalName || task_name
   })
+  } catch (e: any) {
+    return c.json({ error: e?.message || 'Unknown error' }, 500)
+  }
 })
 
 // 보고서 수동 추가 (하위 호환성)
@@ -1879,18 +1883,6 @@ app.get('/', (c) => {
             
             const currentYear = kstTime.getFullYear();
             const currentMonth = kstTime.getMonth() + 1;
-
-            // 작업량 입력 탭
-            const taskYear = document.getElementById('task-year');
-            const taskMonth = document.getElementById('task-month');
-
-            for (let y = currentYear - 1; y <= currentYear + 2; y++) {
-                taskYear.innerHTML += \`<option value="\${y}" \${y === currentYear ? 'selected' : ''}>\${y}년</option>\`;
-            }
-
-            for (let m = 1; m <= 12; m++) {
-                taskMonth.innerHTML += \`<option value="\${m}" \${m === currentMonth ? 'selected' : ''}>\${m}월</option>\`;
-            }
 
             // 연차/휴가 탭
             const vacYear = document.getElementById('vacation-year');
