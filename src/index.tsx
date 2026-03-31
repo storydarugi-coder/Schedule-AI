@@ -815,7 +815,7 @@ app.get('/', (c) => {
                 hospitals.sort((a, b) => a.base_due_day - b.base_due_day);
 
                 // 회의/기타 병원은 목록에서 숨김
-                const visibleHospitals = hospitals.filter(h => h.name !== '회의/기타');
+                const visibleHospitals = hospitals.filter(h => h.name !== '회의/기타' && h.name !== '기타');
 
                 const list = document.getElementById('hospitals-list');
                 list.innerHTML = visibleHospitals.map(h => {
@@ -860,11 +860,6 @@ app.get('/', (c) => {
                         </div>
                     \`;
                 }).join('');
-
-                // 작업량 입력 탭의 드롭다운 업데이트 (회의/기타 제외)
-                const select = document.getElementById('task-hospital');
-                select.innerHTML = '<option value="">병원 선택</option>' +
-                    hospitals.filter(h => h.name !== '회의/기타').map(h => \`<option value="\${h.id}">\${h.name}</option>\`).join('');
             } catch (error) {
                 alert('병원 목록 로드 실패');
             }
@@ -1489,10 +1484,10 @@ app.get('/', (c) => {
             const dateStr = info.dateStr;
             document.getElementById('report-date').value = dateStr;
 
-            // 병원 목록 채우기 (회의/기타 제외)
+            // 병원 목록 채우기 (기타 제외)
             const hospitalSelect = document.getElementById('report-hospital');
-            hospitalSelect.innerHTML = '<option value="">병원을 선택하세요</option>' +
-                hospitals.filter(h => h.name !== '회의/기타').map(h => \`<option value="\${h.id}">\${h.name}</option>\`).join('');
+            hospitalSelect.innerHTML = '<option value="">병원 선택 안함</option>' +
+                hospitals.filter(h => h.name !== '회의/기타' && h.name !== '기타').map(h => \`<option value="\${h.id}">\${h.name}</option>\`).join('');
 
             // 커스텀 작업 유형 로드
             updateModalTaskTypes();
