@@ -593,22 +593,6 @@ app.get('/', (c) => {
                         </div>
                     </div>
                 </div>
-                <div class="mt-4">
-                    <label class="block text-sm font-semibold mb-2 primary-color">
-                        <i class="fas fa-star mr-1"></i>상위노출 일자 (선택, 최대 5개)
-                    </label>
-                    <div class="flex flex-wrap gap-2">
-                        <input type="number" id="hospital-sanwi-day-1" placeholder="1번째 (예: 5)" min="1" max="31" class="border-2 border-purple-200 rounded-lg px-4 py-2 w-32 focus:border-purple-400 focus:outline-none">
-                        <input type="number" id="hospital-sanwi-day-2" placeholder="2번째 (예: 15)" min="1" max="31" class="border-2 border-purple-200 rounded-lg px-4 py-2 w-32 focus:border-purple-400 focus:outline-none">
-                        <input type="number" id="hospital-sanwi-day-3" placeholder="3번째 (예: 25)" min="1" max="31" class="border-2 border-purple-200 rounded-lg px-4 py-2 w-32 focus:border-purple-400 focus:outline-none">
-                        <input type="number" id="hospital-sanwi-day-4" placeholder="4번째" min="1" max="31" class="border-2 border-purple-200 rounded-lg px-4 py-2 w-32 focus:border-purple-400 focus:outline-none">
-                        <input type="number" id="hospital-sanwi-day-5" placeholder="5번째" min="1" max="31" class="border-2 border-purple-200 rounded-lg px-4 py-2 w-32 focus:border-purple-400 focus:outline-none">
-                    </div>
-                    <p class="text-sm text-purple-600 mt-2">
-                        <i class="fas fa-info-circle mr-1"></i>
-                        상위노출 일자를 여러 개 지정하면 해당 날짜들에 상위노출 작업이 배치됩니다 (빈 칸은 무시됨)
-                    </p>
-                </div>
                 <button onclick="addHospital()" class="mt-4 btn-primary text-white rounded-lg px-6 py-3 font-semibold shadow-md hover:shadow-lg transition-all">
                     <i class="fas fa-plus mr-2"></i>추가
                 </button>
