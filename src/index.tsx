@@ -687,24 +687,12 @@ app.get('/', (c) => {
                 <input type="text" id="report-date" class="w-full border-2 border-gray-200 rounded-lg px-4 py-2 bg-gray-100" readonly>
             </div>
             <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-700 mb-1">일정 유형</label>
-                <select id="report-type" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2 focus:border-purple-400 focus:outline-none" onchange="onTaskTypeChange()">
-                    <option value="__custom__">✏️ 직접 입력</option>
-                    <option value="report">📄 보고서 (1시간)</option>
-                    <option value="meeting">🤝 회의 (1시간)</option>
-                </select>
+                <label class="block text-sm font-medium text-gray-700 mb-1">작업 이름</label>
+                <input type="text" id="custom-task-name-input" placeholder="예: 브랜드, 보고서, 회의..." class="w-full border-2 border-purple-200 rounded-lg px-4 py-2 focus:border-purple-400 focus:outline-none">
             </div>
-            <div id="custom-task-inputs" class="mb-4">
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">작업 이름</label>
-                        <input type="text" id="custom-task-name-input" placeholder="예: 브랜드" class="w-full border-2 border-purple-200 rounded-lg px-3 py-2 focus:border-purple-400 focus:outline-none text-sm">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">소요 시간</label>
-                        <input type="number" id="custom-task-duration-input" value="1" min="0.5" step="0.5" class="w-full border-2 border-purple-200 rounded-lg px-3 py-2 focus:border-purple-400 focus:outline-none text-sm">
-                    </div>
-                </div>
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">소요 시간</label>
+                <input type="number" id="custom-task-duration-input" value="1" min="0.5" step="0.5" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2 focus:border-purple-400 focus:outline-none">
             </div>
             <div class="mb-4">
                 <label class="block text-sm font-medium text-gray-700 mb-1">병원 선택 (선택사항)</label>
@@ -1058,36 +1046,6 @@ app.get('/', (c) => {
             } catch (error) {
                 alert('연차/휴가 삭제 실패');
             }
-        }
-
-        // 캘린더 모달의 일정 유형 드롭다운 업데이트 (task_types 테이블 기반)
-        async function updateModalTaskTypes() {
-            const select = document.getElementById('report-type');
-            if (!select) return;
-
-            select.innerHTML = \`
-                <option value="__custom__">✏️ 직접 입력</option>
-                <option value="report" data-duration="1">📄 보고서 (1시간)</option>
-                <option value="meeting" data-duration="1">🤝 회의 (1시간)</option>
-            \`;
-
-            try {
-                const res = await axios.get('/api/task-types');
-                for (const t of res.data) {
-                    const opt = document.createElement('option');
-                    opt.value = 'custom_' + t.name;
-                    opt.dataset.duration = t.duration;
-                    opt.textContent = t.name + ' (' + t.duration + '시간)';
-                    // 직접 입력 다음에 삽입
-                    select.insertBefore(opt, select.options[1]);
-                }
-                select.selectedIndex = 0;
-            } catch(e) {
-                console.log('일정 유형 로드 실패', e);
-            }
-
-            // 직접 입력 토글
-            onTaskTypeChange();
         }
 
         // 캘린더 초기화
@@ -1495,9 +1453,6 @@ app.get('/', (c) => {
             hospitalSelect.innerHTML = '<option value="">병원 선택 안함</option>' +
                 hospitals.filter(h => h.name !== '회의/기타' && h.name !== '기타').map(h => \`<option value="\${h.id}">\${h.name}</option>\`).join('');
 
-            // 커스텀 작업 유형 로드
-            updateModalTaskTypes();
-
             // 모달 열기
             document.getElementById('add-report-modal').classList.remove('hidden');
         }
@@ -1508,63 +1463,22 @@ app.get('/', (c) => {
         }
 
         // 기본 일정 유형 설정
-        const taskTypeConfig = {
-            report: { label: '보고서', duration: 1, isReport: true },
-            meeting: { label: '회의', duration: 1, isReport: false }
-        };
-
-        // 선택된 일정 유형의 config 가져오기 (커스텀 타입 포함)
-        function getTaskConfig(taskType) {
-            if (taskTypeConfig[taskType]) return taskTypeConfig[taskType];
-
-            // 커스텀 타입: "custom_이름" 형식
-            if (taskType.startsWith('custom_')) {
-                const name = taskType.substring(7);
-                const select = document.getElementById('report-type');
-                const option = select.querySelector(\`option[value="\${taskType}"]\`);
-                const duration = option ? parseFloat(option.dataset.duration) || 1 : 1;
-                return { label: name, duration: duration, isReport: false };
-            }
-            return null;
-        }
-
-        // 일정 유형 변경 시 - 직접 입력 토글
-        window.onTaskTypeChange = function() {
-            const taskType = document.getElementById('report-type').value;
-            const customInputs = document.getElementById('custom-task-inputs');
-            customInputs.style.display = taskType === '__custom__' ? 'block' : 'none';
-        }
-
         // 일정 추가
         window.addScheduleItem = async function() {
             const dateStr = document.getElementById('report-date').value;
             const hospitalId = document.getElementById('report-hospital').value;
             const startTime = document.getElementById('report-start-time').value;
-            const taskType = document.getElementById('report-type').value;
 
-            let taskName, duration, isReport, actualType;
+            const taskName = document.getElementById('custom-task-name-input').value.trim();
+            const duration = parseFloat(document.getElementById('custom-task-duration-input').value) || 1;
 
-            if (taskType === '__custom__') {
-                // 직접 입력
-                taskName = document.getElementById('custom-task-name-input').value.trim();
-                duration = parseFloat(document.getElementById('custom-task-duration-input').value) || 1;
-                if (!taskName) {
-                    alert('작업 이름을 입력해주세요');
-                    return;
-                }
-                isReport = false;
-                actualType = taskName;
-            } else {
-                const config = getTaskConfig(taskType);
-                if (!config) {
-                    alert('유효하지 않은 일정 유형입니다');
-                    return;
-                }
-                taskName = config.label;
-                duration = config.duration;
-                isReport = config.isReport;
-                actualType = taskType.startsWith('custom_') ? taskType.substring(7) : taskType;
+            if (!taskName) {
+                alert('작업 이름을 입력해주세요');
+                return;
             }
+
+            const actualType = taskName;
+            const isReport = false;
 
             const dateParts = dateStr.split('-');
             const year = parseInt(dateParts[0]);
