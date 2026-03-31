@@ -1,8 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import type { Bindings } from './types'
-import { generateSchedule, saveSchedule } from './scheduler'
-import { formatDate } from './utils'
 
 const app = new Hono<{ Bindings: Bindings }>()
 
@@ -103,21 +101,10 @@ app.get('/api/monthly-tasks/:hospital_id/:year/:month', async (c) => {
 app.post('/api/monthly-tasks', async (c) => {
   const db = c.env.DB
   const data = await c.req.json()
-  const {
-    hospital_id,
-    year,
-    month,
-    sanwi_nosul,
-    brand,
-    trend,
-    eonron_bodo,
-    jisikin,
-    cafe,
-    task_order
-  } = data
+  const { hospital_id, year, month } = data
 
-  // sanwi_dates를 JSON 문자열로 변환
-  const sanwiDatesJson = JSON.stringify(data.sanwi_dates || [])
+  // custom_tasks를 JSON 문자열로 저장
+  const customTasksJson = JSON.stringify(data.custom_tasks || [])
 
   // 기존 데이터 확인
   const existing = await db.prepare(`
@@ -125,37 +112,13 @@ app.post('/api/monthly-tasks', async (c) => {
   `).bind(hospital_id, year, month).first()
 
   if (existing) {
-    // 업데이트
     await db.prepare(`
-      UPDATE monthly_tasks
-      SET sanwi_nosul = ?, brand = ?, trend = ?, eonron_bodo = ?, jisikin = ?, cafe = ?,
-          task_order = ?, brand_order = ?, trend_order = ?, sanwi_dates = ?,
-          work_start_date = ?, work_end_date = ?
-      WHERE hospital_id = ? AND year = ? AND month = ?
-    `).bind(
-      sanwi_nosul, brand, trend, eonron_bodo, jisikin, cafe || 0,
-      task_order || 'brand,trend',
-      data.brand_order || 1,
-      data.trend_order || 2,
-      sanwiDatesJson,
-      data.work_start_date || null,
-      data.work_end_date || null,
-      hospital_id, year, month
-    ).run()
+      UPDATE monthly_tasks SET custom_tasks = ? WHERE hospital_id = ? AND year = ? AND month = ?
+    `).bind(customTasksJson, hospital_id, year, month).run()
   } else {
-    // 삽입
     await db.prepare(`
-      INSERT INTO monthly_tasks (hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, cafe, task_order, brand_order, trend_order, sanwi_dates, work_start_date, work_end_date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      hospital_id, year, month, sanwi_nosul, brand, trend, eonron_bodo, jisikin, cafe || 0,
-      task_order || 'brand,trend',
-      data.brand_order || 1,
-      data.trend_order || 2,
-      sanwiDatesJson,
-      data.work_start_date || null,
-      data.work_end_date || null
-    ).run()
+      INSERT INTO monthly_tasks (hospital_id, year, month, custom_tasks) VALUES (?, ?, ?, ?)
+    `).bind(hospital_id, year, month, customTasksJson).run()
   }
 
   return c.json({ success: true })
@@ -164,34 +127,6 @@ app.post('/api/monthly-tasks', async (c) => {
 // =========================
 // 스케줄 생성 API
 // =========================
-
-// 스케줄 생성
-app.post('/api/schedules/generate', async (c) => {
-  const db = c.env.DB
-  const { hospital_id, year, month } = await c.req.json()
-
-  // 월별 작업량 조회
-  const monthlyTask = await db.prepare(`
-    SELECT * FROM monthly_tasks WHERE hospital_id = ? AND year = ? AND month = ?
-  `).bind(hospital_id, year, month).first()
-
-  if (!monthlyTask) {
-    return c.json({ error: '해당 월의 작업량 데이터가 없습니다' }, 400)
-  }
-
-  // 스케줄 생성
-  const result = await generateSchedule(db, hospital_id, year, month, monthlyTask as any)
-
-  // 에러 체크
-  if ('message' in result) {
-    return c.json({ error: result }, 400)
-  }
-
-  // 스케줄 저장
-  await saveSchedule(db, hospital_id, year, month, result)
-
-  return c.json({ success: true, schedules: result })
-})
 
 // 스케줄 조회
 app.get('/api/schedules/:year/:month', async (c) => {
@@ -657,98 +592,29 @@ app.get('/', (c) => {
                 <div class="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 mb-4" id="existing-data-notice" style="display: none;">
                     <p class="text-sm text-blue-800">
                         <i class="fas fa-info-circle mr-2"></i>
-                        <strong>기존 데이터가 있습니다!</strong> 아래 값을 수정하고 "저장" 버튼을 클릭하면 업데이트됩니다.
+                        <strong>기존 데이터가 있습니다.</strong> 수정 후 "저장" 버튼을 클릭하면 업데이트됩니다.
                     </p>
                 </div>
 
-                <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
-                    <div>
-                        <label class="block text-sm font-semibold mb-2 primary-color">브랜드</label>
-                        <input type="number" id="task-brand" min="0" value="0" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none" onchange="updateBrandTrendOrder()">
-                        <div id="brand-order-container" class="mt-2 hidden">
-                            <label class="text-xs text-gray-600">게시 순서:</label>
-                            <select id="brand-order" class="text-sm border border-gray-300 rounded px-2 py-1 w-full">
-                                <option value="1">1번째</option>
-                                <option value="2">2번째</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold mb-2 primary-color">트렌드</label>
-                        <input type="number" id="task-trend" min="0" value="0" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none" onchange="updateBrandTrendOrder()">
-                        <div id="trend-order-container" class="mt-2 hidden">
-                            <label class="text-xs text-gray-600">게시 순서:</label>
-                            <select id="trend-order" class="text-sm border border-gray-300 rounded px-2 py-1 w-full">
-                                <option value="1">1번째</option>
-                                <option value="2">2번째</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold mb-2 primary-color">상위노출</label>
-                        <input type="number" id="task-sanwi" min="0" value="0" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none">
-                        <p class="text-xs text-gray-500 mt-1">병원관리에서 날짜 지정 시 자동</p>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold mb-2 primary-color">언론보도</label>
-                        <input type="number" id="task-eonron" min="0" value="1" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold mb-2 primary-color">지식인</label>
-                        <input type="number" id="task-jisikin" min="0" value="1" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold mb-2 primary-color">카페 포스팅</label>
-                        <input type="number" id="task-cafe" min="0" value="4" class="border-2 border-purple-200 rounded-lg px-4 py-3 w-full focus:border-purple-400 focus:outline-none">
-                    </div>
-                </div>
+                <!-- 동적 작업 목록 -->
+                <div id="custom-tasks-list" class="space-y-3 mb-4"></div>
 
-                <div class="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4 mb-4">
-                    <p class="text-sm text-yellow-800 font-semibold mb-2">
-                        <i class="fas fa-calendar-alt mr-2"></i>작업 기간 설정 (선택사항)
-                    </p>
-                    <p class="text-xs text-yellow-700 mb-3">
-                        기본값: 마감일 기준으로 자동 계산됩니다. 특정 기간을 지정하려면 아래 날짜를 입력하세요.
-                    </p>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-sm font-semibold mb-2 text-yellow-800">작업 시작일</label>
-                            <input type="date" id="work-start-date" class="border-2 border-yellow-300 rounded-lg px-4 py-2 w-full focus:border-yellow-400 focus:outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-semibold mb-2 text-yellow-800">작업 종료일 (=마감일)</label>
-                            <input type="date" id="work-end-date" class="border-2 border-yellow-300 rounded-lg px-4 py-2 w-full focus:border-yellow-400 focus:outline-none">
-                        </div>
-                    </div>
-                </div>
+                <button onclick="addCustomTaskRow()" class="mb-6 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg px-5 py-2.5 font-semibold transition-all border-2 border-purple-300">
+                    <i class="fas fa-plus mr-2"></i>작업 추가
+                </button>
 
                 <div class="bg-purple-50 border-2 border-purple-200 rounded-lg p-4 mb-6">
                     <p class="text-sm text-purple-800">
                         <i class="fas fa-info-circle mr-2"></i>
-                        <strong>사용 방법:</strong> 
-                        1) 병원, 년월 선택 → 2) 작업 개수 입력 → 3) <strong class="text-purple-600">"저장" 버튼 클릭 필수</strong> → 4) "스케줄 생성" 클릭
+                        <strong>사용 방법:</strong>
+                        1) 병원, 년월 선택 → 2) 작업 추가 → 3) 이름/개수/시간 입력 → 4) <strong class="text-purple-600">"저장"</strong> 클릭
+                        <br>일정은 캘린더 탭에서 날짜를 클릭하여 직접 추가합니다.
                     </p>
                 </div>
 
-                <div class="flex gap-4 flex-wrap">
-                    <button onclick="saveMonthlyTask()" class="btn-primary text-white rounded-lg px-8 py-3 font-semibold shadow-md hover:shadow-lg transition-all">
-                        <i class="fas fa-save mr-2"></i>저장
-                    </button>
-                    <button onclick="generateSchedule()" class="btn-secondary text-gray-800 rounded-lg px-8 py-3 font-semibold shadow-md hover:shadow-lg transition-all">
-                        <i class="fas fa-magic mr-2"></i>스케줄 생성
-                    </button>
-                    <button onclick="generateAllSchedules()" class="bg-gradient-to-r from-green-500 to-teal-500 text-white rounded-lg px-8 py-3 font-semibold shadow-md hover:shadow-lg transition-all">
-                        <i class="fas fa-sync-alt mr-2"></i>전체 병원 재생성
-                    </button>
-                </div>
-                
-                <div class="bg-green-50 border-2 border-green-200 rounded-lg p-4 mt-4">
-                    <p class="text-sm text-green-800">
-                        <i class="fas fa-lightbulb mr-2"></i>
-                        <strong>💡 전체 병원 재생성:</strong> 
-                        모든 병원의 작업량을 저장한 후, 이 버튼을 클릭하면 <strong class="text-green-600">한 번에 모든 병원의 스케줄을 재생성</strong>합니다!
-                    </p>
-                </div>
+                <button onclick="saveMonthlyTask()" class="btn-primary text-white rounded-lg px-8 py-3 font-semibold shadow-md hover:shadow-lg transition-all">
+                    <i class="fas fa-save mr-2"></i>저장
+                </button>
             </div>
 
             <div id="schedule-error" class="hidden bg-red-50 border-2 border-red-300 text-red-700 px-6 py-4 rounded-xl mb-4 shadow-md"></div>
@@ -770,55 +636,7 @@ app.get('/', (c) => {
                         </select>
                     </div>
                 </div>
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div class="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 text-center">
-                        <div class="text-sm text-gray-600 mb-1">브랜드</div>
-                        <div class="text-2xl font-bold text-blue-600">
-                            <span id="stat-brand-completed">0</span> / <span id="stat-brand-total">0</span>
-                        </div>
-                    </div>
-                    <div class="bg-green-50 border-2 border-green-200 rounded-lg p-4 text-center">
-                        <div class="text-sm text-gray-600 mb-1">트렌드</div>
-                        <div class="text-2xl font-bold text-green-600">
-                            <span id="stat-trend-completed">0</span> / <span id="stat-trend-total">0</span>
-                        </div>
-                    </div>
-                    <div class="bg-purple-50 border-2 border-purple-200 rounded-lg p-4 text-center">
-                        <div class="text-sm text-gray-600 mb-1">상위노출</div>
-                        <div class="text-2xl font-bold text-purple-600">
-                            <span id="stat-sanwi-completed">0</span> / <span id="stat-sanwi-total">0</span>
-                        </div>
-                    </div>
-                    <div class="bg-orange-50 border-2 border-orange-200 rounded-lg p-4 text-center">
-                        <div class="text-sm text-gray-600 mb-1">언론보도</div>
-                        <div class="text-2xl font-bold text-orange-600">
-                            <span id="stat-eonron-completed">0</span> / <span id="stat-eonron-total">0</span>
-                        </div>
-                    </div>
-                    <div class="bg-pink-50 border-2 border-pink-200 rounded-lg p-4 text-center">
-                        <div class="text-sm text-gray-600 mb-1">지식인</div>
-                        <div class="text-2xl font-bold text-pink-600">
-                            <span id="stat-jisikin-completed">0</span> / <span id="stat-jisikin-total">0</span>
-                        </div>
-                    </div>
-                    <div class="bg-indigo-50 border-2 border-indigo-200 rounded-lg p-4 text-center">
-                        <div class="text-sm text-gray-600 mb-1">카페 포스팅</div>
-                        <div class="text-2xl font-bold text-indigo-600">
-                            <span id="stat-cafe-completed">0</span> / <span id="stat-cafe-total">0</span>
-                        </div>
-                    </div>
-                    <div class="bg-red-50 border-2 border-red-200 rounded-lg p-4 text-center">
-                        <div class="text-sm text-gray-600 mb-1">보고서</div>
-                        <div class="text-2xl font-bold text-red-600">
-                            <span id="stat-report-completed">0</span> / <span id="stat-report-total">0</span>
-                        </div>
-                    </div>
-                    <div class="bg-gray-50 border-2 border-gray-200 rounded-lg p-4 text-center">
-                        <div class="text-sm text-gray-600 mb-1">전체 진행률</div>
-                        <div class="text-2xl font-bold text-gray-700">
-                            <span id="stat-progress">0</span>%
-                        </div>
-                    </div>
+                <div id="stats-grid" class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 </div>
             </div>
             
@@ -853,17 +671,10 @@ app.get('/', (c) => {
             <div class="mb-4">
                 <label class="block text-sm font-medium text-gray-700 mb-1">일정 유형</label>
                 <select id="report-type" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2 focus:border-purple-400 focus:outline-none" onchange="onTaskTypeChange()">
-                    <option value="brand">✨ 브랜드 (3.5시간)</option>
-                    <option value="trend">📈 트렌드 (1.5시간)</option>
-                    <option value="sanwi_nosul">🔝 상위노출 (3.5시간)</option>
                     <option value="report">📄 보고서 (1시간)</option>
                     <option value="meeting">🤝 회의 (1시간)</option>
-                    <option value="cafe_posting">☕ 카페 포스팅 (0.5시간)</option>
-                    <option value="eonron_bodo">📰 언론보도 (0.5시간)</option>
-                    <option value="jisikin">❓ 지식인 (0.5시간)</option>
-                    <option value="insta_request">📸 인스타그램 요청 (0.5시간)</option>
-                    <option value="insta_posting">📷 인스타그램 포스팅 (0.5시간)</option>
                 </select>
+                <p class="text-xs text-gray-500 mt-1">작업량 입력 탭에서 추가한 작업 유형도 여기에 표시됩니다.</p>
             </div>
             <div class="mb-4">
                 <label class="block text-sm font-medium text-gray-700 mb-1">병원 선택</label>
@@ -1039,15 +850,6 @@ app.get('/', (c) => {
             const name = document.getElementById('hospital-name').value;
             const baseDueDay = document.getElementById('hospital-due-day').value;
             const color = document.getElementById('hospital-color').value;
-            
-            // 상위노출 날짜 수집 (최대 5개)
-            const sanwiDays = [];
-            for (let i = 1; i <= 5; i++) {
-                const dayInput = document.getElementById(\`hospital-sanwi-day-\${i}\`);
-                if (dayInput && dayInput.value) {
-                    sanwiDays.push(parseInt(dayInput.value));
-                }
-            }
 
             if (!name || !baseDueDay) {
                 alert('병원명과 기본 마감일을 입력해주세요');
@@ -1055,27 +857,18 @@ app.get('/', (c) => {
             }
 
             try {
-                const result = await axios.post('/api/hospitals', { 
-                    name, 
+                await axios.post('/api/hospitals', {
+                    name,
                     base_due_day: parseInt(baseDueDay),
-                    sanwi_nosul_days: sanwiDays.length > 0 ? sanwiDays : null,
                     color: color || '#3b82f6'
                 });
-                
+
                 document.getElementById('hospital-name').value = '';
                 document.getElementById('hospital-due-day').value = '';
                 document.getElementById('hospital-color').value = '#3b82f6';
-                for (let i = 1; i <= 5; i++) {
-                    document.getElementById(\`hospital-sanwi-day-\${i}\`).value = '';
-                }
-                
+
                 loadHospitals();
-                alert('병원이 추가되었습니다!\\n\\n💡 이제 모든 병원의 스케줄을 재생성하시겠습니까?\\n(작업량 입력 탭에서 각 병원의 작업량을 먼저 저장해주세요)');
-                
-                // 작업량 입력 탭으로 이동 제안
-                if (confirm('작업량 입력 탭으로 이동하시겠습니까?')) {
-                    showTab('tasks');
-                }
+                alert('병원이 추가되었습니다!');
             } catch (error) {
                 alert('병원 추가 실패: ' + (error.response?.data?.error || '알 수 없는 오류'));
             }
@@ -1094,21 +887,21 @@ app.get('/', (c) => {
             }
         }
 
-        // 상위노출 날짜 선택 UI 업데이트
-        // 브랜드/트렌드 게시 순서 UI 업데이트
-        function updateBrandTrendOrder() {
-            const brandCount = parseInt(document.getElementById('task-brand').value) || 0;
-            const trendCount = parseInt(document.getElementById('task-trend').value) || 0;
-            const brandOrderContainer = document.getElementById('brand-order-container');
-            const trendOrderContainer = document.getElementById('trend-order-container');
-            
-            if (brandCount > 0 && trendCount > 0) {
-                brandOrderContainer.classList.remove('hidden');
-                trendOrderContainer.classList.remove('hidden');
-            } else {
-                brandOrderContainer.classList.add('hidden');
-                trendOrderContainer.classList.add('hidden');
-            }
+        // 커스텀 작업 행 추가
+        window.addCustomTaskRow = function(name, count, duration) {
+            const list = document.getElementById('custom-tasks-list');
+            const row = document.createElement('div');
+            row.className = 'flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200';
+            row.innerHTML = \`
+                <input type="text" placeholder="작업 이름 (예: 브랜드)" value="\${name || ''}" class="custom-task-name flex-1 border-2 border-purple-200 rounded-lg px-3 py-2 focus:border-purple-400 focus:outline-none text-sm">
+                <input type="number" placeholder="개수" min="0" value="\${count || 0}" class="custom-task-count w-20 border-2 border-purple-200 rounded-lg px-3 py-2 focus:border-purple-400 focus:outline-none text-sm text-center">
+                <input type="number" placeholder="시간" min="0" step="0.5" value="\${duration || 1}" class="custom-task-duration w-20 border-2 border-purple-200 rounded-lg px-3 py-2 focus:border-purple-400 focus:outline-none text-sm text-center">
+                <span class="text-xs text-gray-500">시간</span>
+                <button onclick="this.parentElement.remove()" class="text-red-400 hover:text-red-600 p-1 transition-all">
+                    <i class="fas fa-times-circle text-lg"></i>
+                </button>
+            \`;
+            list.appendChild(row);
         }
 
         // 연차/휴가 목록 로드
@@ -1211,77 +1004,41 @@ app.get('/', (c) => {
                 return;
             }
 
-            const data = {
-                hospital_id: parseInt(hospitalId),
-                year: parseInt(year),
-                month: parseInt(month),
-                sanwi_nosul: parseInt(document.getElementById('task-sanwi').value) || 0,
-                brand: parseInt(document.getElementById('task-brand').value),
-                trend: parseInt(document.getElementById('task-trend').value),
-                eonron_bodo: parseInt(document.getElementById('task-eonron').value),
-                jisikin: parseInt(document.getElementById('task-jisikin').value),
-                cafe: parseInt(document.getElementById('task-cafe').value),
-                task_order: 'brand,trend', // 기본값
-                brand_order: parseInt(document.getElementById('brand-order')?.value || '1'),
-                trend_order: parseInt(document.getElementById('trend-order')?.value || '2'),
-                sanwi_dates: [], // 병원 관리에서 설정된 날짜 사용
-                work_start_date: document.getElementById('work-start-date').value || null,
-                work_end_date: document.getElementById('work-end-date').value || null
-            };
-
-            // 브랜드/트렌드 게시 순서 검증
-            const brandCount = data.brand;
-            const trendCount = data.trend;
-            if (brandCount > 0 && trendCount > 0) {
-                if (data.brand_order === data.trend_order) {
-                    alert('브랜드와 트렌드의 게시 순서가 같을 수 없습니다');
-                    return;
+            // 커스텀 작업 목록 수집
+            const rows = document.querySelectorAll('#custom-tasks-list > div');
+            const customTasks = [];
+            for (const row of rows) {
+                const name = row.querySelector('.custom-task-name').value.trim();
+                const count = parseInt(row.querySelector('.custom-task-count').value) || 0;
+                const duration = parseFloat(row.querySelector('.custom-task-duration').value) || 1;
+                if (name) {
+                    customTasks.push({ name, count, duration });
                 }
             }
 
             try {
-                console.log('[SaveTask] Sending data:', data);
-                const response = await axios.post('/api/monthly-tasks', data);
-                console.log('[SaveTask] Response:', response.data);
-                
-                // 병원명 가져오기
-                const hospitalSelect = document.getElementById('task-hospital');
-                const hospitalName = hospitalSelect.selectedOptions[0].text;
-                
+                await axios.post('/api/monthly-tasks', {
+                    hospital_id: parseInt(hospitalId),
+                    year: parseInt(year),
+                    month: parseInt(month),
+                    custom_tasks: customTasks
+                });
+
+                const hospitalName = document.getElementById('task-hospital').selectedOptions[0].text;
+                const taskSummary = customTasks.map(t => t.name + ' ' + t.count + '개').join(', ');
+
                 document.getElementById('schedule-success').classList.remove('hidden');
                 document.getElementById('schedule-success').innerHTML = \`
-                    <strong><i class="fas fa-check-circle mr-2"></i>작업량이 저장되었습니다!</strong><br>
-                    <div class="mt-2 text-sm">
-                        병원: <strong>\${hospitalName}</strong><br>
-                        기간: <strong>\${year}년 \${month}월</strong><br>
-                        브랜드: \${data.brand}개, 트렌드: \${data.trend}개, 언론보도: \${data.eonron_bodo}개, 
-                        지식인: \${data.jisikin}개, 카페: \${data.cafe}개
-                    </div>
+                    <strong><i class="fas fa-check-circle mr-2"></i>저장 완료!</strong>
+                    <span class="text-sm ml-2">\${hospitalName} / \${year}년 \${month}월 — \${taskSummary || '작업 없음'}</span>
                 \`;
-                
-                setTimeout(() => {
-                    document.getElementById('schedule-success').classList.add('hidden');
-                }, 5000);
-                
-                // 저장 후 데이터 다시 불러오기
+                setTimeout(() => document.getElementById('schedule-success').classList.add('hidden'), 4000);
+
                 await loadExistingTaskData();
             } catch (error) {
-                console.error('[SaveTask] Error:', error);
-                console.error('[SaveTask] Error response:', error.response?.data);
-                
-                const errorMsg = error.response?.data?.error || error.message;
-                
                 document.getElementById('schedule-error').classList.remove('hidden');
-                document.getElementById('schedule-error').innerHTML = \`
-                    <strong><i class="fas fa-exclamation-triangle mr-2"></i>저장 실패</strong><br>
-                    <div class="mt-2 text-sm">
-                        \${errorMsg}
-                    </div>
-                \`;
-                
-                setTimeout(() => {
-                    document.getElementById('schedule-error').classList.add('hidden');
-                }, 5000);
+                document.getElementById('schedule-error').textContent = '저장 실패: ' + (error.response?.data?.error || error.message);
+                setTimeout(() => document.getElementById('schedule-error').classList.add('hidden'), 4000);
             }
         }
 
@@ -1293,6 +1050,7 @@ app.get('/', (c) => {
 
             if (!hospitalId || !year || !month) {
                 document.getElementById('existing-data-notice').style.display = 'none';
+                document.getElementById('custom-tasks-list').innerHTML = '';
                 return;
             }
 
@@ -1300,258 +1058,75 @@ app.get('/', (c) => {
                 const res = await axios.get(\`/api/monthly-tasks/\${hospitalId}/\${year}/\${month}\`);
                 const data = res.data;
 
-                if (data) {
-                    // 기존 데이터가 있으면 폼에 채우기
-                    document.getElementById('task-sanwi').value = data.sanwi_nosul || 0;
-                    document.getElementById('task-brand').value = data.brand || 0;
-                    document.getElementById('task-trend').value = data.trend || 0;
-                    document.getElementById('task-eonron').value = data.eonron_bodo || 0;
-                    document.getElementById('task-jisikin').value = data.jisikin || 0;
-                    document.getElementById('task-cafe').value = data.cafe || 4;
-                    document.getElementById('work-start-date').value = data.work_start_date || '';
-                    document.getElementById('work-end-date').value = data.work_end_date || '';
+                // 기존 행 초기화
+                document.getElementById('custom-tasks-list').innerHTML = '';
 
-                    // 브랜드/트렌드 순서 복원
-                    updateBrandTrendOrder();
-                    if (data.brand_order) {
-                        document.getElementById('brand-order').value = data.brand_order;
-                    }
-                    if (data.trend_order) {
-                        document.getElementById('trend-order').value = data.trend_order;
-                    }
+                if (data && data.custom_tasks) {
+                    let tasks = [];
+                    try {
+                        tasks = typeof data.custom_tasks === 'string' ? JSON.parse(data.custom_tasks) : data.custom_tasks;
+                    } catch(e) { tasks = []; }
 
-                    document.getElementById('existing-data-notice').style.display = 'block';
+                    for (const t of tasks) {
+                        addCustomTaskRow(t.name, t.count, t.duration);
+                    }
+                    document.getElementById('existing-data-notice').style.display = tasks.length > 0 ? 'block' : 'none';
                 } else {
                     document.getElementById('existing-data-notice').style.display = 'none';
                 }
             } catch (error) {
-                // 데이터가 없으면 무시
                 document.getElementById('existing-data-notice').style.display = 'none';
+                document.getElementById('custom-tasks-list').innerHTML = '';
             }
+
+            // 캘린더 모달 드롭다운도 업데이트
+            updateModalTaskTypes();
         }
 
-        // 스케줄 생성
-        window.generateSchedule = async function() {
-            const hospitalId = document.getElementById('task-hospital').value;
-            const year = document.getElementById('task-year').value;
-            const month = document.getElementById('task-month').value;
+        // 캘린더 모달의 일정 유형 드롭다운 업데이트
+        async function updateModalTaskTypes() {
+            const select = document.getElementById('report-type');
+            if (!select) return;
 
-            if (!hospitalId || !year || !month) {
-                alert('병원과 년월을 선택해주세요');
-                return;
-            }
-            
-            const hospitalName = document.getElementById('task-hospital').selectedOptions[0].text;
+            // 기본 유형 유지
+            select.innerHTML = \`
+                <option value="report" data-duration="1">📄 보고서 (1시간)</option>
+                <option value="meeting" data-duration="1">🤝 회의 (1시간)</option>
+            \`;
 
-            document.getElementById('schedule-error').classList.add('hidden');
-            document.getElementById('schedule-success').classList.add('hidden');
-            
-            // 먼저 작업량 데이터가 있는지 확인
+            // 모든 병원의 커스텀 작업 유형 수집
             try {
-                console.log('[GenerateSchedule] Checking monthly task data...');
-                const checkRes = await axios.get(\`/api/monthly-tasks/\${hospitalId}/\${year}/\${month}\`);
-                console.log('[GenerateSchedule] Monthly task data:', checkRes.data);
-                
-                if (!checkRes.data) {
-                    document.getElementById('schedule-error').classList.remove('hidden');
-                    document.getElementById('schedule-error').innerHTML = \`
-                        <strong><i class="fas fa-exclamation-triangle mr-2"></i>작업량 데이터가 없습니다</strong><br>
-                        <div class="mt-3 text-sm">
-                            <strong>선택한 정보:</strong><br>
-                            • 병원: <strong>\${hospitalName}</strong><br>
-                            • 기간: <strong>\${year}년 \${month}월</strong><br><br>
-                            <strong>💡 해결 방법:</strong><br>
-                            1. 위의 작업량 입력 필드에 값을 입력하세요<br>
-                            2. "<strong>저장</strong>" 버튼을 먼저 클릭하세요<br>
-                            3. 저장 성공 메시지 확인 후 "스케줄 생성" 버튼을 다시 클릭하세요
-                        </div>
-                    \`;
-                    return;
-                }
-            } catch (checkError) {
-                console.error('[GenerateSchedule] Check failed:', checkError);
-                document.getElementById('schedule-error').classList.remove('hidden');
-                document.getElementById('schedule-error').innerHTML = \`
-                    <strong><i class="fas fa-exclamation-triangle mr-2"></i>작업량 확인 실패</strong><br>
-                    <div class="mt-2 text-sm">
-                        병원: <strong>\${hospitalName}</strong><br>
-                        기간: <strong>\${year}년 \${month}월</strong><br><br>
-                        저장된 작업량이 없습니다. 위의 "저장" 버튼을 먼저 클릭하세요.
-                    </div>
-                \`;
-                return;
-            }
+                const year = document.getElementById('calendar-year')?.value || document.getElementById('task-year')?.value || new Date().getFullYear();
+                const month = document.getElementById('calendar-month')?.value || document.getElementById('task-month')?.value || (new Date().getMonth() + 1);
+                const res = await axios.get(\`/api/monthly-tasks/\${year}/\${month}\`);
+                const allTasks = res.data || [];
 
-            try {
-                console.log('[GenerateSchedule] Generating schedule...');
-                await axios.post('/api/schedules/generate', {
-                    hospital_id: parseInt(hospitalId),
-                    year: parseInt(year),
-                    month: parseInt(month)
-                });
-
-                document.getElementById('schedule-success').classList.remove('hidden');
-                document.getElementById('schedule-success').innerHTML = \`
-                    <strong><i class="fas fa-check-circle mr-2"></i>스케줄 생성 완료!</strong><br>
-                    <div class="mt-2 text-sm">
-                        병원: <strong>\${hospitalName}</strong><br>
-                        기간: <strong>\${year}년 \${month}월</strong><br>
-                        캘린더 탭에서 확인하세요.
-                    </div>
-                \`;
-                
-                // 3초 후 캘린더 탭으로 자동 이동
-                setTimeout(() => {
-                    showTab('calendar');
-                    loadCalendar();
-                }, 2000);
-            } catch (error) {
-                console.error('[GenerateSchedule] Generation failed:', error);
-                console.error('[GenerateSchedule] Error response:', error.response?.data);
-                
-                const errorData = error.response?.data?.error;
-                document.getElementById('schedule-error').classList.remove('hidden');
-                
-                if (typeof errorData === 'string') {
-                    // 단순 문자열 에러 (예: "해당 월의 작업량 데이터가 없습니다")
-                    document.getElementById('schedule-error').innerHTML = \`
-                        <strong><i class="fas fa-exclamation-triangle mr-2"></i>오류:</strong> \${errorData}<br>
-                        <div class="mt-2 text-sm">
-                            💡 <strong>해결 방법:</strong> 위의 "저장" 버튼을 먼저 클릭하여 작업량을 저장한 후 스케줄을 생성하세요.
-                        </div>
-                    \`;
-                } else if (errorData && errorData.message) {
-                    // 구조화된 에러 객체
-                    const newlineRegex = new RegExp('\\\\n', 'g');
-                    const messageWithBreaks = errorData.message.replace(newlineRegex, '<br>');
-                    const shortageHtml = errorData.shortage_hours > 0 
-                        ? '<strong>부족 시간:</strong> ' + errorData.shortage_hours + '시간' 
-                        : '';
-                    
-                    document.getElementById('schedule-error').innerHTML = \`
-                        <div style="white-space: pre-wrap;">\${messageWithBreaks}</div>
-                        <div class="mt-4 text-sm">
-                            <strong>병원:</strong> \${errorData.hospital_name}<br>
-                            \${shortageHtml}
-                        </div>
-                    \`;
-                } else {
-                    document.getElementById('schedule-error').innerHTML = \`
-                        <strong><i class="fas fa-exclamation-triangle mr-2"></i>스케줄 생성 실패</strong><br>
-                        <div class="mt-2 text-sm">
-                            💡 작업량을 먼저 저장했는지 확인하세요.
-                        </div>
-                    \`;
-                }
-            }
-        }
-
-        // 전체 병원 스케줄 재생성
-        window.generateAllSchedules = async function() {
-            const year = document.getElementById('task-year').value;
-            const month = document.getElementById('task-month').value;
-
-            if (!year || !month) {
-                alert('년월을 선택해주세요');
-                return;
-            }
-
-            if (!confirm(\`\${year}년 \${month}월의 모든 병원 스케줄을 재생성하시겠습니까?\\n\\n⚠️ 이 작업은 기존 스케줄을 모두 삭제하고 새로 생성합니다.\`)) {
-                return;
-            }
-
-            try {
-                // 1. 해당 월의 모든 작업량 데이터 가져오기
-                const tasksRes = await axios.get(\`/api/monthly-tasks/\${year}/\${month}\`);
-                const monthlyTasks = tasksRes.data;
-
-                if (monthlyTasks.length === 0) {
-                    alert('저장된 작업량이 없습니다.\\n\\n각 병원의 작업량을 먼저 저장해주세요.');
-                    return;
-                }
-
-                document.getElementById('schedule-error').classList.add('hidden');
-                document.getElementById('schedule-success').classList.add('hidden');
-
-                // 2. 진행 상황 표시
-                const progressHtml = \`
-                    <strong><i class="fas fa-spinner fa-spin mr-2"></i>전체 병원 스케줄 생성 중...</strong><br>
-                    <div class="mt-2 text-sm">총 \${monthlyTasks.length}개 병원 처리 중...</div>
-                \`;
-                document.getElementById('schedule-success').classList.remove('hidden');
-                document.getElementById('schedule-success').innerHTML = progressHtml;
-
-                // 3. 각 병원별로 스케줄 생성
-                const results = [];
-                for (let i = 0; i < monthlyTasks.length; i++) {
-                    const task = monthlyTasks[i];
+                const addedTypes = new Set();
+                for (const mt of allTasks) {
+                    let customs = [];
                     try {
-                        await axios.post('/api/schedules/generate', {
-                            hospital_id: task.hospital_id,
-                            year: parseInt(year),
-                            month: parseInt(month)
-                        });
-                        results.push({ hospital: task.hospital_name, success: true });
-                        
-                        // 진행 상황 업데이트
-                        document.getElementById('schedule-success').innerHTML = \`
-                            <strong><i class="fas fa-spinner fa-spin mr-2"></i>전체 병원 스케줄 생성 중...</strong><br>
-                            <div class="mt-2 text-sm">
-                                진행: \${i + 1}/\${monthlyTasks.length} - \${task.hospital_name} 완료 ✅
-                            </div>
-                        \`;
-                    } catch (error) {
-                        results.push({ 
-                            hospital: task.hospital_name, 
-                            success: false, 
-                            error: error.response?.data?.error?.message || '생성 실패' 
-                        });
+                        customs = typeof mt.custom_tasks === 'string' ? JSON.parse(mt.custom_tasks || '[]') : (mt.custom_tasks || []);
+                    } catch(e) { continue; }
+
+                    for (const ct of customs) {
+                        const key = ct.name;
+                        if (!addedTypes.has(key)) {
+                            addedTypes.add(key);
+                            const opt = document.createElement('option');
+                            opt.value = 'custom_' + key;
+                            opt.dataset.duration = ct.duration;
+                            opt.textContent = key + ' (' + ct.duration + '시간)';
+                            select.insertBefore(opt, select.firstChild);
+                        }
                     }
                 }
 
-                // 4. 결과 표시
-                const successCount = results.filter(r => r.success).length;
-                const failCount = results.filter(r => !r.success).length;
-
-                if (failCount === 0) {
-                    document.getElementById('schedule-success').innerHTML = \`
-                        <strong><i class="fas fa-check-circle mr-2"></i>전체 병원 스케줄 생성 완료!</strong><br>
-                        <div class="mt-2 text-sm">
-                            ✅ 성공: \${successCount}개 병원<br>
-                            캘린더 탭에서 확인하세요.
-                        </div>
-                    \`;
-                    
-                    // 2초 후 캘린더 탭으로 자동 이동
-                    setTimeout(() => {
-                        showTab('calendar');
-                        loadCalendar();
-                    }, 2000);
-                } else {
-                    const failedList = results
-                        .filter(r => !r.success)
-                        .map(r => '- ' + r.hospital + ': ' + r.error)
-                        .join('<br>');
-                    
-                    document.getElementById('schedule-error').classList.remove('hidden');
-                    document.getElementById('schedule-error').innerHTML = \`
-                        <strong><i class="fas fa-exclamation-triangle mr-2"></i>일부 병원 스케줄 생성 실패</strong><br>
-                        <div class="mt-2 text-sm">
-                            ✅ 성공: \${successCount}개 병원<br>
-                            ❌ 실패: \${failCount}개 병원<br><br>
-                            <strong>실패 목록:</strong><br>
-                            \${failedList}
-                        </div>
-                    \`;
+                // 첫 번째 옵션 선택
+                if (select.options.length > 0) {
+                    select.selectedIndex = 0;
                 }
-            } catch (error) {
-                const errorMessage = error.message || String(error);
-                
-                document.getElementById('schedule-error').classList.remove('hidden');
-                document.getElementById('schedule-error').innerHTML = \`
-                    <strong><i class="fas fa-exclamation-triangle mr-2"></i>전체 재생성 실패</strong><br>
-                    \${errorMessage}
-                \`;
+            } catch(e) {
+                console.log('커스텀 작업 유형 로드 실패', e);
             }
         }
 
@@ -1865,73 +1440,61 @@ app.get('/', (c) => {
             }
         }
         
-        // 작업 통계 업데이트
+        // 작업 통계 업데이트 (동적)
         function updateTaskStats(schedules) {
+            const statsGrid = document.getElementById('stats-grid');
             if (!schedules || schedules.length === 0) {
                 document.getElementById('task-stats').classList.add('hidden');
                 return;
             }
-            
-            // 선택된 병원 필터링
+
             const selectedHospital = document.getElementById('stats-hospital').value;
-            const filteredSchedules = selectedHospital === 'all' 
-                ? schedules 
+            const filteredSchedules = selectedHospital === 'all'
+                ? schedules
                 : schedules.filter(s => s.hospital_id == selectedHospital);
-            
+
             if (filteredSchedules.length === 0) {
                 document.getElementById('task-stats').classList.add('hidden');
                 return;
             }
-            
-            // 작업 타입별 통계 계산
-            const stats = {
-                brand: { total: 0, completed: 0 },
-                trend: { total: 0, completed: 0 },
-                sanwi_nosul: { total: 0, completed: 0 },
-                eonron_bodo: { total: 0, completed: 0 },
-                jisikin: { total: 0, completed: 0 },
-                cafe_posting: { total: 0, completed: 0 },
-                report: { total: 0, completed: 0 }
-            };
-            
+
+            // 작업 타입별 통계 (동적 수집)
+            const stats = {};
             filteredSchedules.forEach(s => {
-                if (stats[s.task_type] !== undefined) {
-                    stats[s.task_type].total++;
-                    if (s.is_completed) {
-                        stats[s.task_type].completed++;
-                    }
-                }
+                const type = s.task_type || 'unknown';
+                const label = s.task_name || type;
+                if (!stats[type]) stats[type] = { label: label, total: 0, completed: 0 };
+                stats[type].total++;
+                if (s.is_completed) stats[type].completed++;
             });
-            
-            // 통계 표시 업데이트
-            document.getElementById('stat-brand-total').textContent = stats.brand.total;
-            document.getElementById('stat-brand-completed').textContent = stats.brand.completed;
-            
-            document.getElementById('stat-trend-total').textContent = stats.trend.total;
-            document.getElementById('stat-trend-completed').textContent = stats.trend.completed;
-            
-            document.getElementById('stat-sanwi-total').textContent = stats.sanwi_nosul.total;
-            document.getElementById('stat-sanwi-completed').textContent = stats.sanwi_nosul.completed;
-            
-            document.getElementById('stat-eonron-total').textContent = stats.eonron_bodo.total;
-            document.getElementById('stat-eonron-completed').textContent = stats.eonron_bodo.completed;
-            
-            document.getElementById('stat-jisikin-total').textContent = stats.jisikin.total;
-            document.getElementById('stat-jisikin-completed').textContent = stats.jisikin.completed;
-            
-            document.getElementById('stat-cafe-total').textContent = stats.cafe_posting.total;
-            document.getElementById('stat-cafe-completed').textContent = stats.cafe_posting.completed;
-            
-            document.getElementById('stat-report-total').textContent = stats.report.total;
-            document.getElementById('stat-report-completed').textContent = stats.report.completed;
-            
-            // 전체 진행률 계산
+
+            // 전체 진행률
             const totalTasks = Object.values(stats).reduce((sum, s) => sum + s.total, 0);
             const completedTasks = Object.values(stats).reduce((sum, s) => sum + s.completed, 0);
             const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
-            document.getElementById('stat-progress').textContent = progress;
-            
-            // 통계 표시
+
+            const colors = ['blue', 'green', 'purple', 'orange', 'pink', 'indigo', 'red', 'teal', 'cyan', 'amber'];
+            let html = '';
+            let colorIdx = 0;
+            for (const [type, s] of Object.entries(stats)) {
+                const c = colors[colorIdx % colors.length];
+                html += \`
+                    <div class="bg-\${c}-50 border-2 border-\${c}-200 rounded-lg p-4 text-center">
+                        <div class="text-sm text-gray-600 mb-1">\${s.label}</div>
+                        <div class="text-2xl font-bold text-\${c}-600">\${s.completed} / \${s.total}</div>
+                    </div>
+                \`;
+                colorIdx++;
+            }
+            // 전체 진행률
+            html += \`
+                <div class="bg-gray-50 border-2 border-gray-200 rounded-lg p-4 text-center">
+                    <div class="text-sm text-gray-600 mb-1">전체 진행률</div>
+                    <div class="text-2xl font-bold text-gray-700">\${progress}%</div>
+                </div>
+            \`;
+
+            statsGrid.innerHTML = html;
             document.getElementById('task-stats').classList.remove('hidden');
         }
 
@@ -1972,6 +1535,9 @@ app.get('/', (c) => {
             hospitalSelect.innerHTML = '<option value="">병원을 선택하세요</option>' +
                 hospitals.filter(h => h.name !== '회의/기타').map(h => \`<option value="\${h.id}">\${h.name}</option>\`).join('');
 
+            // 커스텀 작업 유형 로드
+            updateModalTaskTypes();
+
             // 모달 열기
             document.getElementById('add-report-modal').classList.remove('hidden');
         }
@@ -1981,19 +1547,26 @@ app.get('/', (c) => {
             document.getElementById('add-report-modal').classList.add('hidden');
         }
 
-        // 일정 유형별 설정
+        // 기본 일정 유형 설정
         const taskTypeConfig = {
-            brand: { label: '브랜드', duration: 3.5, isReport: false },
-            trend: { label: '트렌드', duration: 1.5, isReport: false },
-            sanwi_nosul: { label: '상위노출', duration: 3.5, isReport: false },
             report: { label: '보고서', duration: 1, isReport: true },
-            meeting: { label: '회의', duration: 1, isReport: false },
-            cafe_posting: { label: '카페 포스팅', duration: 0.5, isReport: false },
-            eonron_bodo: { label: '언론보도', duration: 0.5, isReport: false },
-            jisikin: { label: '지식인', duration: 0.5, isReport: false },
-            insta_request: { label: '인스타그램 요청', duration: 0.5, isReport: false },
-            insta_posting: { label: '인스타그램 포스팅', duration: 0.5, isReport: false }
+            meeting: { label: '회의', duration: 1, isReport: false }
         };
+
+        // 선택된 일정 유형의 config 가져오기 (커스텀 타입 포함)
+        function getTaskConfig(taskType) {
+            if (taskTypeConfig[taskType]) return taskTypeConfig[taskType];
+
+            // 커스텀 타입: "custom_이름" 형식
+            if (taskType.startsWith('custom_')) {
+                const name = taskType.substring(7);
+                const select = document.getElementById('report-type');
+                const option = select.querySelector(\`option[value="\${taskType}"]\`);
+                const duration = option ? parseFloat(option.dataset.duration) || 1 : 1;
+                return { label: name, duration: duration, isReport: false };
+            }
+            return null;
+        }
 
         // 일정 유형 변경 시 - 회의는 병원 선택 숨김
         window.onTaskTypeChange = function() {
@@ -2006,20 +1579,19 @@ app.get('/', (c) => {
             }
         }
 
-        // 일정 추가 (보고서, 카페 등)
+        // 일정 추가
         window.addScheduleItem = async function() {
             const dateStr = document.getElementById('report-date').value;
             const hospitalId = document.getElementById('report-hospital').value;
             const startTime = document.getElementById('report-start-time').value;
             const taskType = document.getElementById('report-type').value;
 
-            // 회의 제외 병원 필수
             if (taskType !== 'meeting' && !hospitalId) {
                 alert('병원을 선택해주세요');
                 return;
             }
 
-            const config = taskTypeConfig[taskType];
+            const config = getTaskConfig(taskType);
             if (!config) {
                 alert('유효하지 않은 일정 유형입니다');
                 return;
@@ -2029,23 +1601,23 @@ app.get('/', (c) => {
             const year = parseInt(dateParts[0]);
             const month = parseInt(dateParts[1]);
 
-            // 종료 시간 계산
             const startHour = parseInt(startTime.split(':')[0]);
-            const startMin = parseInt(startTime.split(':')[1]) || 0;
-            const endHour = Math.floor(startHour + config.duration);
-            const endMin = (config.duration % 1) * 60;
+            const endTotalMin = startHour * 60 + config.duration * 60;
+            const endHour = Math.floor(endTotalMin / 60);
+            const endMin = Math.floor(endTotalMin % 60);
             const endTime = String(endHour).padStart(2, '0') + ':' + String(endMin).padStart(2, '0');
 
             try {
-                // 회의는 병원 없이, 나머지는 병원 필수
                 const taskName = taskType === 'meeting' ? '회의' : config.label;
+                // 커스텀 타입은 task_type을 원래 이름으로 저장
+                const actualType = taskType.startsWith('custom_') ? taskType.substring(7) : taskType;
 
                 await axios.post('/api/schedules/add-item', {
                     hospital_id: taskType === 'meeting' ? null : parseInt(hospitalId),
                     year: year,
                     month: month,
                     task_date: dateStr,
-                    task_type: taskType,
+                    task_type: actualType,
                     task_name: taskName,
                     start_time: startTime,
                     end_time: endTime,
@@ -2053,19 +1625,13 @@ app.get('/', (c) => {
                     is_report: config.isReport
                 });
 
-                alert('✅ ' + taskName + '이(가) 추가되었습니다!');
+                alert(taskName + ' 추가 완료!');
                 closeReportModal();
                 loadCalendar();
             } catch (error) {
                 console.error('일정 추가 실패:', error);
-                alert('❌ 일정 추가에 실패했습니다: ' + (error.response?.data?.error || error.message));
+                alert('일정 추가 실패: ' + (error.response?.data?.error || error.message));
             }
-        }
-
-        // 보고서 추가 (하위 호환성)
-        window.addReport = function() {
-            document.getElementById('report-type').value = 'report';
-            addScheduleItem();
         }
 
         // 이벤트 드래그 앤 드롭 핸들러
