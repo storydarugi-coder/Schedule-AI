@@ -103,8 +103,13 @@ app.get('/api/monthly-tasks/:hospital_id/:year/:month', async (c) => {
 
 app.get('/api/task-types', async (c) => {
   const db = c.env.DB
-  const result = await db.prepare('SELECT * FROM task_types ORDER BY name').all()
-  return c.json(result.results)
+  try {
+    const result = await db.prepare('SELECT * FROM task_types ORDER BY name').all()
+    return c.json(result.results)
+  } catch (e) {
+    // 테이블이 없으면 빈 배열 반환
+    return c.json([])
+  }
 })
 
 app.post('/api/task-types', async (c) => {
@@ -861,7 +866,8 @@ app.get('/', (c) => {
                     \`;
                 }).join('');
             } catch (error) {
-                alert('병원 목록 로드 실패');
+                console.error('병원 목록 로드 실패:', error);
+                alert('병원 목록 로드 실패: ' + (error.response?.data?.error || error.message));
             }
         }
 
