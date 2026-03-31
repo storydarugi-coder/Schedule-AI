@@ -97,6 +97,39 @@ app.get('/api/monthly-tasks/:hospital_id/:year/:month', async (c) => {
   return c.json(result)
 })
 
+// =========================
+// 일정 유형 관리 API
+// =========================
+
+app.get('/api/task-types', async (c) => {
+  const db = c.env.DB
+  const result = await db.prepare('SELECT * FROM task_types ORDER BY name').all()
+  return c.json(result.results)
+})
+
+app.post('/api/task-types', async (c) => {
+  const db = c.env.DB
+  const { name, duration, color } = await c.req.json()
+  if (!name) return c.json({ error: '이름을 입력해주세요' }, 400)
+  try {
+    const result = await db.prepare('INSERT INTO task_types (name, duration, color) VALUES (?, ?, ?)')
+      .bind(name, duration || 1, color || '#787FFF').run()
+    return c.json({ id: result.meta.last_row_id, name, duration, color })
+  } catch (e) {
+    return c.json({ error: '이미 존재하는 유형입니다' }, 400)
+  }
+})
+
+app.delete('/api/task-types/:id', async (c) => {
+  const db = c.env.DB
+  await db.prepare('DELETE FROM task_types WHERE id = ?').bind(c.req.param('id')).run()
+  return c.json({ success: true })
+})
+
+// =========================
+// 월별 작업량
+// =========================
+
 // 월별 작업량 저장/수정
 app.post('/api/monthly-tasks', async (c) => {
   const db = c.env.DB
@@ -499,7 +532,7 @@ app.get('/', (c) => {
                     <i class="fas fa-umbrella-beach mr-2"></i>연차/휴가
                 </button>
                 <button onclick="showTab('tasks')" id="tab-tasks" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
-                    <i class="fas fa-tasks mr-2"></i>작업량 입력
+                    <i class="fas fa-tags mr-2"></i>일정 유형
                 </button>
                 <button onclick="showTab('calendar')" id="tab-calendar" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
                     <i class="fas fa-calendar mr-2"></i>캘린더
@@ -575,46 +608,30 @@ app.get('/', (c) => {
         <div id="content-tasks" class="tab-content hidden">
             <div class="bg-white rounded-xl shadow-lg p-6 mb-6 border-2 border-purple-100">
                 <h2 class="text-2xl font-bold mb-4 primary-color">
-                    <i class="fas fa-cog mr-2"></i>월별 작업량 설정
+                    <i class="fas fa-tags mr-2"></i>일정 유형 관리
                 </h2>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                    <select id="task-hospital" onchange="loadExistingTaskData()" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none">
-                        <option value="">병원 선택</option>
-                    </select>
-                    <select id="task-year" onchange="loadExistingTaskData()" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none"></select>
-                    <select id="task-month" onchange="loadExistingTaskData()" class="border-2 border-purple-200 rounded-lg px-4 py-3 focus:border-purple-400 focus:outline-none"></select>
+                <p class="text-sm text-gray-600 mb-6">여기서 추가한 유형이 캘린더에서 일정 추가 시 드롭다운에 표시됩니다.</p>
+
+                <div class="flex gap-3 mb-6 items-end">
+                    <div class="flex-1">
+                        <label class="block text-xs font-semibold mb-1 text-gray-600">유형 이름</label>
+                        <input type="text" id="new-type-name" placeholder="예: 브랜드" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2.5 focus:border-purple-400 focus:outline-none">
+                    </div>
+                    <div class="w-28">
+                        <label class="block text-xs font-semibold mb-1 text-gray-600">소요 시간</label>
+                        <input type="number" id="new-type-duration" value="1" min="0.5" step="0.5" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2.5 focus:border-purple-400 focus:outline-none">
+                    </div>
+                    <div class="w-16">
+                        <label class="block text-xs font-semibold mb-1 text-gray-600">색상</label>
+                        <input type="color" id="new-type-color" value="#787FFF" class="w-full h-10 border-2 border-purple-200 rounded-lg cursor-pointer">
+                    </div>
+                    <button onclick="addTaskType()" class="btn-primary text-white rounded-lg px-5 py-2.5 font-semibold shadow-md hover:shadow-lg transition-all whitespace-nowrap">
+                        <i class="fas fa-plus mr-1"></i>추가
+                    </button>
                 </div>
 
-                <div class="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 mb-4" id="existing-data-notice" style="display: none;">
-                    <p class="text-sm text-blue-800">
-                        <i class="fas fa-info-circle mr-2"></i>
-                        <strong>기존 데이터가 있습니다.</strong> 수정 후 "저장" 버튼을 클릭하면 업데이트됩니다.
-                    </p>
-                </div>
-
-                <!-- 동적 작업 목록 -->
-                <div id="custom-tasks-list" class="space-y-3 mb-4"></div>
-
-                <button onclick="addCustomTaskRow()" class="mb-6 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg px-5 py-2.5 font-semibold transition-all border-2 border-purple-300">
-                    <i class="fas fa-plus mr-2"></i>작업 추가
-                </button>
-
-                <div class="bg-purple-50 border-2 border-purple-200 rounded-lg p-4 mb-6">
-                    <p class="text-sm text-purple-800">
-                        <i class="fas fa-info-circle mr-2"></i>
-                        <strong>사용 방법:</strong>
-                        1) 병원, 년월 선택 → 2) 작업 추가 → 3) 이름/개수/시간 입력 → 4) <strong class="text-purple-600">"저장"</strong> 클릭
-                        <br>일정은 캘린더 탭에서 날짜를 클릭하여 직접 추가합니다.
-                    </p>
-                </div>
-
-                <button onclick="saveMonthlyTask()" class="btn-primary text-white rounded-lg px-8 py-3 font-semibold shadow-md hover:shadow-lg transition-all">
-                    <i class="fas fa-save mr-2"></i>저장
-                </button>
+                <div id="task-types-list" class="space-y-2"></div>
             </div>
-
-            <div id="schedule-error" class="hidden bg-red-50 border-2 border-red-300 text-red-700 px-6 py-4 rounded-xl mb-4 shadow-md"></div>
-            <div id="schedule-success" class="hidden bg-green-50 border-2 border-green-300 text-green-700 px-6 py-4 rounded-xl mb-4 shadow-md"></div>
         </div>
 
         <!-- 캘린더 탭 -->
@@ -896,20 +913,61 @@ app.get('/', (c) => {
         }
 
         // 커스텀 작업 행 추가
-        window.addCustomTaskRow = function(name, count, duration) {
-            const list = document.getElementById('custom-tasks-list');
-            const row = document.createElement('div');
-            row.className = 'flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200';
-            row.innerHTML = \`
-                <input type="text" placeholder="작업 이름 (예: 브랜드)" value="\${name || ''}" class="custom-task-name flex-1 border-2 border-purple-200 rounded-lg px-3 py-2 focus:border-purple-400 focus:outline-none text-sm">
-                <input type="number" placeholder="개수" min="0" value="\${count || 0}" class="custom-task-count w-20 border-2 border-purple-200 rounded-lg px-3 py-2 focus:border-purple-400 focus:outline-none text-sm text-center">
-                <input type="number" placeholder="시간" min="0" step="0.5" value="\${duration || 1}" class="custom-task-duration w-20 border-2 border-purple-200 rounded-lg px-3 py-2 focus:border-purple-400 focus:outline-none text-sm text-center">
-                <span class="text-xs text-gray-500">시간</span>
-                <button onclick="this.parentElement.remove()" class="text-red-400 hover:text-red-600 p-1 transition-all">
-                    <i class="fas fa-times-circle text-lg"></i>
-                </button>
-            \`;
-            list.appendChild(row);
+        // 일정 유형 추가
+        window.addTaskType = async function() {
+            const name = document.getElementById('new-type-name').value.trim();
+            const duration = parseFloat(document.getElementById('new-type-duration').value) || 1;
+            const color = document.getElementById('new-type-color').value;
+
+            if (!name) { alert('유형 이름을 입력해주세요'); return; }
+
+            try {
+                await axios.post('/api/task-types', { name, duration, color });
+                document.getElementById('new-type-name').value = '';
+                document.getElementById('new-type-duration').value = '1';
+                loadTaskTypes();
+            } catch (error) {
+                alert('추가 실패: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        // 일정 유형 삭제
+        window.deleteTaskType = async function(id) {
+            if (!confirm('이 유형을 삭제하시겠습니까?')) return;
+            try {
+                await axios.delete(\`/api/task-types/\${id}\`);
+                loadTaskTypes();
+            } catch (error) {
+                alert('삭제 실패');
+            }
+        }
+
+        // 일정 유형 목록 로드
+        async function loadTaskTypes() {
+            try {
+                const res = await axios.get('/api/task-types');
+                const list = document.getElementById('task-types-list');
+
+                if (res.data.length === 0) {
+                    list.innerHTML = '<p class="text-gray-400 text-center py-6">등록된 일정 유형이 없습니다. 위에서 추가해주세요.</p>';
+                    return;
+                }
+
+                list.innerHTML = res.data.map(t => \`
+                    <div class="flex items-center justify-between p-3 rounded-lg border-2 border-gray-100 hover:border-purple-200 transition-all">
+                        <div class="flex items-center gap-3">
+                            <div class="w-4 h-4 rounded-full" style="background-color: \${t.color || '#787FFF'}"></div>
+                            <span class="font-semibold text-gray-800">\${t.name}</span>
+                            <span class="text-sm text-gray-500">\${t.duration}시간</span>
+                        </div>
+                        <button onclick="deleteTaskType(\${t.id})" class="text-red-400 hover:text-red-600 p-1">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                \`).join('');
+            } catch (error) {
+                console.error('일정 유형 로드 실패', error);
+            }
         }
 
         // 연차/휴가 목록 로드
@@ -1001,141 +1059,34 @@ app.get('/', (c) => {
             }
         }
 
-        // 월별 작업량 저장
-        window.saveMonthlyTask = async function() {
-            const hospitalId = document.getElementById('task-hospital').value;
-            const year = document.getElementById('task-year').value;
-            const month = document.getElementById('task-month').value;
-
-            if (!hospitalId || !year || !month) {
-                alert('병원과 년월을 선택해주세요');
-                return;
-            }
-
-            // 커스텀 작업 목록 수집
-            const rows = document.querySelectorAll('#custom-tasks-list > div');
-            const customTasks = [];
-            for (const row of rows) {
-                const name = row.querySelector('.custom-task-name').value.trim();
-                const count = parseInt(row.querySelector('.custom-task-count').value) || 0;
-                const duration = parseFloat(row.querySelector('.custom-task-duration').value) || 1;
-                if (name) {
-                    customTasks.push({ name, count, duration });
-                }
-            }
-
-            try {
-                await axios.post('/api/monthly-tasks', {
-                    hospital_id: parseInt(hospitalId),
-                    year: parseInt(year),
-                    month: parseInt(month),
-                    custom_tasks: customTasks
-                });
-
-                const hospitalName = document.getElementById('task-hospital').selectedOptions[0].text;
-                const taskSummary = customTasks.map(t => t.name + ' ' + t.count + '개').join(', ');
-
-                document.getElementById('schedule-success').classList.remove('hidden');
-                document.getElementById('schedule-success').innerHTML = \`
-                    <strong><i class="fas fa-check-circle mr-2"></i>저장 완료!</strong>
-                    <span class="text-sm ml-2">\${hospitalName} / \${year}년 \${month}월 — \${taskSummary || '작업 없음'}</span>
-                \`;
-                setTimeout(() => document.getElementById('schedule-success').classList.add('hidden'), 4000);
-
-                await loadExistingTaskData();
-            } catch (error) {
-                document.getElementById('schedule-error').classList.remove('hidden');
-                document.getElementById('schedule-error').textContent = '저장 실패: ' + (error.response?.data?.error || error.message);
-                setTimeout(() => document.getElementById('schedule-error').classList.add('hidden'), 4000);
-            }
-        }
-
-        // 기존 작업량 데이터 불러오기
-        async function loadExistingTaskData() {
-            const hospitalId = document.getElementById('task-hospital').value;
-            const year = document.getElementById('task-year').value;
-            const month = document.getElementById('task-month').value;
-
-            if (!hospitalId || !year || !month) {
-                document.getElementById('existing-data-notice').style.display = 'none';
-                document.getElementById('custom-tasks-list').innerHTML = '';
-                return;
-            }
-
-            try {
-                const res = await axios.get(\`/api/monthly-tasks/\${hospitalId}/\${year}/\${month}\`);
-                const data = res.data;
-
-                // 기존 행 초기화
-                document.getElementById('custom-tasks-list').innerHTML = '';
-
-                if (data && data.custom_tasks) {
-                    let tasks = [];
-                    try {
-                        tasks = typeof data.custom_tasks === 'string' ? JSON.parse(data.custom_tasks) : data.custom_tasks;
-                    } catch(e) { tasks = []; }
-
-                    for (const t of tasks) {
-                        addCustomTaskRow(t.name, t.count, t.duration);
-                    }
-                    document.getElementById('existing-data-notice').style.display = tasks.length > 0 ? 'block' : 'none';
-                } else {
-                    document.getElementById('existing-data-notice').style.display = 'none';
-                }
-            } catch (error) {
-                document.getElementById('existing-data-notice').style.display = 'none';
-                document.getElementById('custom-tasks-list').innerHTML = '';
-            }
-
-            // 캘린더 모달 드롭다운도 업데이트
-            updateModalTaskTypes();
-        }
-
-        // 캘린더 모달의 일정 유형 드롭다운 업데이트
+        // 캘린더 모달의 일정 유형 드롭다운 업데이트 (task_types 테이블 기반)
         async function updateModalTaskTypes() {
             const select = document.getElementById('report-type');
             if (!select) return;
 
-            // 기본 유형 유지
             select.innerHTML = \`
+                <option value="__custom__">✏️ 직접 입력</option>
                 <option value="report" data-duration="1">📄 보고서 (1시간)</option>
                 <option value="meeting" data-duration="1">🤝 회의 (1시간)</option>
             \`;
 
-            // 모든 병원의 커스텀 작업 유형 수집
             try {
-                const year = document.getElementById('calendar-year')?.value || document.getElementById('task-year')?.value || new Date().getFullYear();
-                const month = document.getElementById('calendar-month')?.value || document.getElementById('task-month')?.value || (new Date().getMonth() + 1);
-                const res = await axios.get(\`/api/monthly-tasks/\${year}/\${month}\`);
-                const allTasks = res.data || [];
-
-                const addedTypes = new Set();
-                for (const mt of allTasks) {
-                    let customs = [];
-                    try {
-                        customs = typeof mt.custom_tasks === 'string' ? JSON.parse(mt.custom_tasks || '[]') : (mt.custom_tasks || []);
-                    } catch(e) { continue; }
-
-                    for (const ct of customs) {
-                        const key = ct.name;
-                        if (!addedTypes.has(key)) {
-                            addedTypes.add(key);
-                            const opt = document.createElement('option');
-                            opt.value = 'custom_' + key;
-                            opt.dataset.duration = ct.duration;
-                            opt.textContent = key + ' (' + ct.duration + '시간)';
-                            select.insertBefore(opt, select.firstChild);
-                        }
-                    }
+                const res = await axios.get('/api/task-types');
+                for (const t of res.data) {
+                    const opt = document.createElement('option');
+                    opt.value = 'custom_' + t.name;
+                    opt.dataset.duration = t.duration;
+                    opt.textContent = t.name + ' (' + t.duration + '시간)';
+                    // 직접 입력 다음에 삽입
+                    select.insertBefore(opt, select.options[1]);
                 }
-
-                // 첫 번째 옵션 선택
-                if (select.options.length > 0) {
-                    select.selectedIndex = 0;
-                }
+                select.selectedIndex = 0;
             } catch(e) {
-                console.log('커스텀 작업 유형 로드 실패', e);
+                console.log('일정 유형 로드 실패', e);
             }
+
+            // 직접 입력 토글
+            onTaskTypeChange();
         }
 
         // 캘린더 초기화
@@ -2055,6 +2006,7 @@ app.get('/', (c) => {
         document.addEventListener('DOMContentLoaded', () => {
             showTab('hospitals');
             loadHospitals();
+            loadTaskTypes();
             initDateSelectors();
         });
     </script>
