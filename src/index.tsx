@@ -667,10 +667,22 @@ app.get('/', (c) => {
             <div class="mb-4">
                 <label class="block text-sm font-medium text-gray-700 mb-1">일정 유형</label>
                 <select id="report-type" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2 focus:border-purple-400 focus:outline-none" onchange="onTaskTypeChange()">
+                    <option value="__custom__">✏️ 직접 입력</option>
                     <option value="report">📄 보고서 (1시간)</option>
                     <option value="meeting">🤝 회의 (1시간)</option>
                 </select>
-                <p class="text-xs text-gray-500 mt-1">작업량 입력 탭에서 추가한 작업 유형도 여기에 표시됩니다.</p>
+            </div>
+            <div id="custom-task-inputs" class="mb-4">
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">작업 이름</label>
+                        <input type="text" id="custom-task-name-input" placeholder="예: 브랜드" class="w-full border-2 border-purple-200 rounded-lg px-3 py-2 focus:border-purple-400 focus:outline-none text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">소요 시간</label>
+                        <input type="number" id="custom-task-duration-input" value="1" min="0.5" step="0.5" class="w-full border-2 border-purple-200 rounded-lg px-3 py-2 focus:border-purple-400 focus:outline-none text-sm">
+                    </div>
+                </div>
             </div>
             <div class="mb-4">
                 <label class="block text-sm font-medium text-gray-700 mb-1">병원 선택 (선택사항)</label>
@@ -1564,8 +1576,12 @@ app.get('/', (c) => {
             return null;
         }
 
-        // 일정 유형 변경 시 (현재 추가 동작 없음)
-        window.onTaskTypeChange = function() {}
+        // 일정 유형 변경 시 - 직접 입력 토글
+        window.onTaskTypeChange = function() {
+            const taskType = document.getElementById('report-type').value;
+            const customInputs = document.getElementById('custom-task-inputs');
+            customInputs.style.display = taskType === '__custom__' ? 'block' : 'none';
+        }
 
         // 일정 추가
         window.addScheduleItem = async function() {
@@ -1574,12 +1590,28 @@ app.get('/', (c) => {
             const startTime = document.getElementById('report-start-time').value;
             const taskType = document.getElementById('report-type').value;
 
-            // 병원 선택은 선택사항
+            let taskName, duration, isReport, actualType;
 
-            const config = getTaskConfig(taskType);
-            if (!config) {
-                alert('유효하지 않은 일정 유형입니다');
-                return;
+            if (taskType === '__custom__') {
+                // 직접 입력
+                taskName = document.getElementById('custom-task-name-input').value.trim();
+                duration = parseFloat(document.getElementById('custom-task-duration-input').value) || 1;
+                if (!taskName) {
+                    alert('작업 이름을 입력해주세요');
+                    return;
+                }
+                isReport = false;
+                actualType = taskName;
+            } else {
+                const config = getTaskConfig(taskType);
+                if (!config) {
+                    alert('유효하지 않은 일정 유형입니다');
+                    return;
+                }
+                taskName = config.label;
+                duration = config.duration;
+                isReport = config.isReport;
+                actualType = taskType.startsWith('custom_') ? taskType.substring(7) : taskType;
             }
 
             const dateParts = dateStr.split('-');
@@ -1587,16 +1619,12 @@ app.get('/', (c) => {
             const month = parseInt(dateParts[1]);
 
             const startHour = parseInt(startTime.split(':')[0]);
-            const endTotalMin = startHour * 60 + config.duration * 60;
+            const endTotalMin = startHour * 60 + duration * 60;
             const endHour = Math.floor(endTotalMin / 60);
             const endMin = Math.floor(endTotalMin % 60);
             const endTime = String(endHour).padStart(2, '0') + ':' + String(endMin).padStart(2, '0');
 
             try {
-                const taskName = taskType === 'meeting' ? '회의' : config.label;
-                // 커스텀 타입은 task_type을 원래 이름으로 저장
-                const actualType = taskType.startsWith('custom_') ? taskType.substring(7) : taskType;
-
                 await axios.post('/api/schedules/add-item', {
                     hospital_id: hospitalId ? parseInt(hospitalId) : null,
                     year: year,
@@ -1606,8 +1634,8 @@ app.get('/', (c) => {
                     task_name: taskName,
                     start_time: startTime,
                     end_time: endTime,
-                    duration_hours: config.duration,
-                    is_report: config.isReport
+                    duration_hours: duration,
+                    is_report: isReport
                 });
 
                 alert(taskName + ' 추가 완료!');
