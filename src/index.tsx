@@ -1229,8 +1229,9 @@ app.get('/', (c) => {
                     }
                     
                     const memoIcon = s.memo ? '📝 ' : '';
-                    // 병원명이 있으면 "병원 - 작업", 없으면 작업만 표시
-                    const displayTitle = s.hospital_name
+                    // 병원명 표시 (기타/회의/기타는 숨김)
+                    const hiddenHospitals = ['기타', '회의/기타'];
+                    const displayTitle = (s.hospital_name && !hiddenHospitals.includes(s.hospital_name))
                         ? \`\${s.hospital_name} - \${s.task_name}\`
                         : s.task_name;
                     return {
