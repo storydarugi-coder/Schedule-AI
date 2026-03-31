@@ -153,32 +153,28 @@ app.post('/api/schedules/add-item', async (c) => {
   let finalHospitalId = hospital_id
   let hospitalName = ''
 
-  // 회의는 병원 없이 추가 가능 - 자동으로 "회의/기타" 병원 사용
-  if (!hospital_id && task_type === 'meeting') {
-    // 회의/기타 병원 찾기 또는 생성
-    let meetingHospital = await db.prepare('SELECT id, name FROM hospitals WHERE name = ?')
-      .bind('회의/기타').first()
+  if (!hospital_id) {
+    // 병원 없이 추가 — "기타" 병원 자동 사용
+    let etcHospital = await db.prepare('SELECT id, name FROM hospitals WHERE name = ?')
+      .bind('기타').first()
 
-    if (!meetingHospital) {
-      // 없으면 생성
+    if (!etcHospital) {
       await db.prepare('INSERT INTO hospitals (name, base_due_day) VALUES (?, ?)')
-        .bind('회의/기타', 1).run()
-      meetingHospital = await db.prepare('SELECT id, name FROM hospitals WHERE name = ?')
-        .bind('회의/기타').first()
+        .bind('기타', 1).run()
+      etcHospital = await db.prepare('SELECT id, name FROM hospitals WHERE name = ?')
+        .bind('기타').first()
     }
 
-    finalHospitalId = meetingHospital.id
-    hospitalName = '회의'
-  } else if (hospital_id) {
+    finalHospitalId = etcHospital!.id
+    hospitalName = task_name || task_type
+  } else {
     const hospital = await db.prepare('SELECT name FROM hospitals WHERE id = ?')
       .bind(hospital_id).first()
 
     if (!hospital) {
       return c.json({ error: 'Hospital not found' }, 404)
     }
-    hospitalName = hospital.name
-  } else {
-    return c.json({ error: 'Hospital is required' }, 400)
+    hospitalName = hospital.name as string
   }
 
   // 해당 날짜의 마지막 order_index 가져오기
@@ -677,7 +673,7 @@ app.get('/', (c) => {
                 <p class="text-xs text-gray-500 mt-1">작업량 입력 탭에서 추가한 작업 유형도 여기에 표시됩니다.</p>
             </div>
             <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-700 mb-1">병원 선택</label>
+                <label class="block text-sm font-medium text-gray-700 mb-1">병원 선택 (선택사항)</label>
                 <select id="report-hospital" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2 focus:border-purple-400 focus:outline-none">
                     <option value="">병원을 선택하세요</option>
                 </select>
@@ -1568,16 +1564,8 @@ app.get('/', (c) => {
             return null;
         }
 
-        // 일정 유형 변경 시 - 회의는 병원 선택 숨김
-        window.onTaskTypeChange = function() {
-            const taskType = document.getElementById('report-type').value;
-            const hospitalContainer = document.getElementById('report-hospital').parentElement;
-            if (taskType === 'meeting') {
-                hospitalContainer.style.display = 'none';
-            } else {
-                hospitalContainer.style.display = 'block';
-            }
-        }
+        // 일정 유형 변경 시 (현재 추가 동작 없음)
+        window.onTaskTypeChange = function() {}
 
         // 일정 추가
         window.addScheduleItem = async function() {
@@ -1586,10 +1574,7 @@ app.get('/', (c) => {
             const startTime = document.getElementById('report-start-time').value;
             const taskType = document.getElementById('report-type').value;
 
-            if (taskType !== 'meeting' && !hospitalId) {
-                alert('병원을 선택해주세요');
-                return;
-            }
+            // 병원 선택은 선택사항
 
             const config = getTaskConfig(taskType);
             if (!config) {
@@ -1613,7 +1598,7 @@ app.get('/', (c) => {
                 const actualType = taskType.startsWith('custom_') ? taskType.substring(7) : taskType;
 
                 await axios.post('/api/schedules/add-item', {
-                    hospital_id: taskType === 'meeting' ? null : parseInt(hospitalId),
+                    hospital_id: hospitalId ? parseInt(hospitalId) : null,
                     year: year,
                     month: month,
                     task_date: dateStr,
