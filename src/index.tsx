@@ -330,12 +330,23 @@ app.put('/api/schedules/reorder', async (c) => {
 app.put('/api/schedules/:id', async (c) => {
   const db = c.env.DB
   const scheduleId = parseInt(c.req.param('id'))
-  const { task_date } = await c.req.json()
+  const data = await c.req.json()
 
-  await db.prepare(
-    'UPDATE schedules SET task_date = ? WHERE id = ?'
-  ).bind(task_date, scheduleId).run()
+  const fields: string[] = []
+  const values: any[] = []
 
+  if (data.task_date !== undefined) { fields.push('task_date = ?'); values.push(data.task_date) }
+  if (data.task_name !== undefined) { fields.push('task_name = ?'); values.push(data.task_name) }
+  if (data.task_type !== undefined) { fields.push('task_type = ?'); values.push(data.task_type) }
+  if (data.duration_hours !== undefined) { fields.push('duration_hours = ?'); values.push(data.duration_hours) }
+  if (data.start_time !== undefined) { fields.push('start_time = ?'); values.push(data.start_time) }
+  if (data.end_time !== undefined) { fields.push('end_time = ?'); values.push(data.end_time) }
+  if (data.color !== undefined) { fields.push('color = ?'); values.push(data.color) }
+
+  if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400)
+
+  values.push(scheduleId)
+  await db.prepare(`UPDATE schedules SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run()
   return c.json({ success: true })
 })
 
@@ -454,67 +465,31 @@ app.get('/', (c) => {
     <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
     
     <style>
-      /* 완료된 작업 스타일 */
       .completed-task .fc-event-title {
         text-decoration: line-through !important;
         opacity: 0.6;
       }
-      
-      /* 이벤트 클릭 커서 */
-      .fc-event {
-        cursor: pointer !important;
-      }
-      
-      /* 드래그 가능 표시 */
-      .fc-event:hover {
-        opacity: 0.8;
-        transform: scale(1.02);
-        transition: all 0.2s;
-      }
-      
-      /* 동그라미 점 제거 */
-      .fc-daygrid-event-dot {
-        display: none !important;
-      }
-      
-      /* 이벤트를 박스 형태로 표시 - 예쁜 정렬 */
+      .fc-event { cursor: pointer !important; }
+      .fc-event:hover { opacity: 0.85; transition: opacity 0.15s; }
+      .fc-daygrid-event-dot { display: none !important; }
       .fc-daygrid-event {
-        padding: 4px 6px !important;
-        margin: 2px 0 !important;
-        border-radius: 4px !important;
-        min-height: 22px !important;
-        height: auto !important;
-      }
-      
-      /* 이벤트 제목 텍스트 - 예쁜 줄바꿈 */
-      .fc-event-title {
-        white-space: normal !important;
-        overflow: visible !important;
-        text-overflow: clip !important;
-        word-wrap: break-word !important;
+        padding: 3px 6px !important;
+        margin: 1px 2px !important;
+        border-radius: 6px !important;
+        border: none !important;
         font-size: 12px !important;
-        line-height: 1.4 !important;
+        line-height: 1.3 !important;
+      }
+      .fc-event-title {
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        font-size: 11.5px !important;
         font-weight: 500 !important;
-        display: block !important;
       }
-      
-      /* 이벤트 시간 표시 */
-      .fc-event-time {
-        font-size: 10px !important;
-        opacity: 0.9 !important;
-        font-weight: normal !important;
-      }
-      
-      /* 일찍 출근 강조 스타일 */
-      .early-start-event {
-        font-weight: 600 !important;
-        border: 2px solid #7e22ce !important;
-        box-shadow: 0 2px 4px rgba(126, 34, 206, 0.2) !important;
-      }
-      
-      .early-start-event .fc-event-title {
-        font-weight: 600 !important;
-      }
+      .fc-event-time { display: none !important; }
+      .fc-daygrid-day-events { padding: 0 2px !important; }
+      .fc-daygrid-event-harness { margin-bottom: 1px !important; }
     </style>
     <link href='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.css' rel='stylesheet' />
 </head>
@@ -749,6 +724,56 @@ app.get('/', (c) => {
                 <button onclick="saveMemo()" class="bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-lg px-6 py-2 font-semibold shadow-md hover:shadow-lg transition-all">
                     <i class="fas fa-save mr-2"></i>저장
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 일정 수정 모달 -->
+    <div id="edit-schedule-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-2xl p-6 w-96 max-w-full mx-4">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">
+                <i class="fas fa-edit text-purple-500 mr-2"></i>일정 수정
+            </h3>
+            <input type="hidden" id="edit-schedule-id">
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">작업 이름</label>
+                <input type="text" id="edit-task-name" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2 focus:border-purple-400 focus:outline-none">
+            </div>
+            <div class="grid grid-cols-2 gap-3 mb-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">소요 시간</label>
+                    <input type="number" id="edit-duration" min="0.5" step="0.5" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2 focus:border-purple-400 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">블록 색상</label>
+                    <input type="color" id="edit-color" class="w-full h-10 border-2 border-purple-200 rounded-lg cursor-pointer">
+                </div>
+            </div>
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">시작 시간</label>
+                <select id="edit-start-time" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2 focus:border-purple-400 focus:outline-none">
+                    <option value="08:00">08:00</option>
+                    <option value="09:00">09:00</option>
+                    <option value="10:00">10:00</option>
+                    <option value="11:00">11:00</option>
+                    <option value="12:00">12:00</option>
+                    <option value="13:00">13:00</option>
+                    <option value="14:00">14:00</option>
+                    <option value="15:00">15:00</option>
+                    <option value="16:00">16:00</option>
+                    <option value="17:00">17:00</option>
+                </select>
+            </div>
+            <div class="flex justify-between">
+                <button onclick="deleteFromEditModal()" class="text-red-500 hover:text-red-700 font-medium px-3 py-2">
+                    <i class="fas fa-trash mr-1"></i>삭제
+                </button>
+                <div class="flex gap-2">
+                    <button onclick="closeEditModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">취소</button>
+                    <button onclick="saveEditSchedule()" class="bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg px-6 py-2 font-semibold shadow-md hover:shadow-lg transition-all">
+                        <i class="fas fa-save mr-2"></i>저장
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -1197,24 +1222,9 @@ app.get('/', (c) => {
                 // 스케줄 가져오기
                 const scheduleRes = await axios.get(\`/api/schedules/\${year}/\${month}\`);
                 const events = scheduleRes.data.map(s => {
-                    // 병원 색상 사용 (없으면 기본 파란색)
-                    const hospitalColor = s.hospital_color || '#3b82f6';
-                    
-                    // 색상 설정: 일찍 출근 > 보고서 > 일반 작업
-                    let color, textColor;
-                    if (s.task_type === 'early_start') {
-                        // 일찍 출근: 보라색
-                        color = '#9333ea'; // 진한 보라색
-                        textColor = '#ffffff';
-                    } else if (s.is_report) {
-                        // 보고서: 파스텔 핑크
-                        color = '#fda4af';
-                        textColor = '#be123c';
-                    } else {
-                        // 일반 작업: 병원 색상
-                        color = hospitalColor;
-                        textColor = '#ffffff';
-                    }
+                    // 색상 우선순위: 개별 색상 > 병원 색상 > 기본
+                    const color = s.color || s.hospital_color || '#3b82f6';
+                    const textColor = '#ffffff';
                     
                     // 완료 상태면 취소선 추가
                     const titlePrefix = s.is_completed ? '✅ ' : '';
@@ -1254,8 +1264,9 @@ app.get('/', (c) => {
                             durationHours: s.duration_hours,
                             isReport: s.is_report,
                             isCompleted: s.is_completed || 0,
-                            order_index: s.order_index || 0, // 순서 인덱스
-                            memo: s.memo || '' // 메모
+                            order_index: s.order_index || 0,
+                            memo: s.memo || '',
+                            customColor: s.color || ''
                         }
                     };
                 });
@@ -1425,26 +1436,72 @@ app.get('/', (c) => {
         async function handleEventClick(info) {
             const event = info.event;
             const scheduleId = event.extendedProps.scheduleId;
-            
-            if (!scheduleId) {
-                // 연차/휴가는 완료 체크 불가
-                return;
-            }
 
-            const currentCompleted = event.extendedProps.isCompleted;
-            const newCompleted = currentCompleted ? 0 : 1;
+            if (!scheduleId) return; // 연차/휴가
+
+            // 수정 모달 열기
+            document.getElementById('edit-schedule-id').value = scheduleId;
+            document.getElementById('edit-task-name').value = event.extendedProps.taskName || '';
+            document.getElementById('edit-duration').value = event.extendedProps.durationHours || 1;
+            document.getElementById('edit-start-time').value = event.extendedProps.startTime || '09:00';
+            document.getElementById('edit-color').value = event.extendedProps.customColor || event.backgroundColor || '#3b82f6';
+            document.getElementById('edit-schedule-modal').classList.remove('hidden');
+        }
+
+        window.closeEditModal = function() {
+            document.getElementById('edit-schedule-modal').classList.add('hidden');
+        }
+
+        window.saveEditSchedule = async function() {
+            const id = document.getElementById('edit-schedule-id').value;
+            const taskName = document.getElementById('edit-task-name').value.trim();
+            const duration = parseFloat(document.getElementById('edit-duration').value) || 1;
+            const startTime = document.getElementById('edit-start-time').value;
+            const color = document.getElementById('edit-color').value;
+
+            if (!taskName) { alert('작업 이름을 입력해주세요'); return; }
+
+            const startHour = parseInt(startTime.split(':')[0]);
+            const endTotalMin = startHour * 60 + duration * 60;
+            const endTime = String(Math.floor(endTotalMin / 60)).padStart(2, '0') + ':' + String(Math.floor(endTotalMin % 60)).padStart(2, '0');
 
             try {
-                // DB 업데이트 API 호출
-                await axios.put(\`/api/schedules/\${scheduleId}/complete\`, {
-                    is_completed: newCompleted
+                await axios.put(\`/api/schedules/\${id}\`, {
+                    task_name: taskName,
+                    task_type: taskName,
+                    duration_hours: duration,
+                    start_time: startTime,
+                    end_time: endTime,
+                    color: color
                 });
+                closeEditModal();
+                loadCalendar();
+            } catch (error) {
+                alert('수정 실패: ' + (error.response?.data?.error || error.message));
+            }
+        }
 
-                // 캘린더 새로고침
+        window.deleteFromEditModal = async function() {
+            const id = document.getElementById('edit-schedule-id').value;
+            if (!confirm('이 일정을 삭제하시겠습니까?')) return;
+            try {
+                await axios.delete(\`/api/schedules/item/\${id}\`);
+                closeEditModal();
+                loadCalendar();
+            } catch (error) {
+                alert('삭제 실패');
+            }
+        }
+
+        // 완료 토글 (우클릭 메뉴에서 사용)
+        window.toggleComplete = async function(scheduleId, currentState) {
+            try {
+                await axios.put(\`/api/schedules/\${scheduleId}/complete\`, {
+                    is_completed: currentState ? 0 : 1
+                });
                 loadCalendar();
             } catch (error) {
                 console.error('완료 상태 변경 실패', error);
-                alert('❌ 완료 상태 변경에 실패했습니다.');
             }
         }
 
