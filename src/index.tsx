@@ -332,6 +332,14 @@ app.put('/api/schedules/:id', async (c) => {
   const scheduleId = parseInt(c.req.param('id'))
   const data = await c.req.json()
 
+  // color 컬럼 존재 여부 확인
+  let hasColorColumn = true
+  try {
+    await db.prepare('SELECT color FROM schedules LIMIT 1').all()
+  } catch (e) {
+    hasColorColumn = false
+  }
+
   const fields: string[] = []
   const values: any[] = []
 
@@ -341,7 +349,7 @@ app.put('/api/schedules/:id', async (c) => {
   if (data.duration_hours !== undefined) { fields.push('duration_hours = ?'); values.push(data.duration_hours) }
   if (data.start_time !== undefined) { fields.push('start_time = ?'); values.push(data.start_time) }
   if (data.end_time !== undefined) { fields.push('end_time = ?'); values.push(data.end_time) }
-  if (data.color !== undefined) { fields.push('color = ?'); values.push(data.color) }
+  if (data.color !== undefined && hasColorColumn) { fields.push('color = ?'); values.push(data.color) }
 
   if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400)
 
