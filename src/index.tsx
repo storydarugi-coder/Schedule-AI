@@ -773,9 +773,14 @@ app.get('/', (c) => {
                 </select>
             </div>
             <div class="flex justify-between">
-                <button onclick="deleteFromEditModal()" class="text-red-500 hover:text-red-700 font-medium px-3 py-2">
-                    <i class="fas fa-trash mr-1"></i>삭제
-                </button>
+                <div class="flex gap-2">
+                    <button onclick="deleteFromEditModal()" class="text-red-500 hover:text-red-700 font-medium px-3 py-2">
+                        <i class="fas fa-trash mr-1"></i>삭제
+                    </button>
+                    <button id="edit-complete-btn" onclick="toggleCompleteFromModal()" class="font-medium px-3 py-2">
+                        <i class="fas fa-check-circle mr-1"></i><span id="edit-complete-text">완료</span>
+                    </button>
+                </div>
                 <div class="flex gap-2">
                     <button onclick="closeEditModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">취소</button>
                     <button onclick="saveEditSchedule()" class="bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg px-6 py-2 font-semibold shadow-md hover:shadow-lg transition-all">
@@ -1448,11 +1453,25 @@ app.get('/', (c) => {
             if (!scheduleId) return; // 연차/휴가
 
             // 수정 모달 열기
+            const isCompleted = event.extendedProps.isCompleted;
             document.getElementById('edit-schedule-id').value = scheduleId;
+            document.getElementById('edit-schedule-id').dataset.completed = isCompleted ? '1' : '0';
             document.getElementById('edit-task-name').value = event.extendedProps.taskName || '';
             document.getElementById('edit-duration').value = event.extendedProps.durationHours || 1;
             document.getElementById('edit-start-time').value = event.extendedProps.startTime || '09:00';
             document.getElementById('edit-color').value = event.extendedProps.customColor || event.backgroundColor || '#3b82f6';
+
+            // 완료 버튼 상태
+            const btn = document.getElementById('edit-complete-btn');
+            const txt = document.getElementById('edit-complete-text');
+            if (isCompleted) {
+                btn.className = 'text-orange-500 hover:text-orange-700 font-medium px-3 py-2';
+                txt.textContent = '완료 취소';
+            } else {
+                btn.className = 'text-green-500 hover:text-green-700 font-medium px-3 py-2';
+                txt.textContent = '완료';
+            }
+
             document.getElementById('edit-schedule-modal').classList.remove('hidden');
         }
 
@@ -1498,6 +1517,21 @@ app.get('/', (c) => {
                 loadCalendar();
             } catch (error) {
                 alert('삭제 실패');
+            }
+        }
+
+        // 수정 모달에서 완료 토글
+        window.toggleCompleteFromModal = async function() {
+            const id = document.getElementById('edit-schedule-id').value;
+            const current = document.getElementById('edit-schedule-id').dataset.completed === '1';
+            try {
+                await axios.put(\`/api/schedules/\${id}/complete\`, {
+                    is_completed: current ? 0 : 1
+                });
+                closeEditModal();
+                loadCalendar();
+            } catch (error) {
+                alert('상태 변경 실패');
             }
         }
 
