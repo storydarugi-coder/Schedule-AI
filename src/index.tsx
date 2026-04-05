@@ -797,11 +797,11 @@ app.get('/', (c) => {
                 </div>
                 <div class="grid grid-cols-3 gap-3">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">노출수</label>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">조회수</label>
                         <input type="number" id="ig-impressions" min="0" value="0" class="w-full border-2 border-pink-200 rounded-lg px-4 py-2 focus:border-pink-400 focus:outline-none">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">조회수</label>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">좋아요수</label>
                         <input type="number" id="ig-views" min="0" value="0" class="w-full border-2 border-pink-200 rounded-lg px-4 py-2 focus:border-pink-400 focus:outline-none">
                     </div>
                     <div>
@@ -1268,11 +1268,11 @@ app.get('/', (c) => {
                         <input type="hidden" class="ig-edit-title" value="\${e.title || ''}">
                         <div class="grid grid-cols-3 gap-3">
                             <div class="bg-white rounded-lg p-3 border border-pink-100 text-center">
-                                <div class="text-xs text-gray-500 mb-1">노출수</div>
+                                <div class="text-xs text-gray-500 mb-1">조회수</div>
                                 <input type="number" class="ig-edit-impressions w-full text-center text-lg font-bold text-pink-600 border-0 bg-transparent focus:outline-none" value="\${e.impressions || 0}">
                             </div>
                             <div class="bg-white rounded-lg p-3 border border-pink-100 text-center">
-                                <div class="text-xs text-gray-500 mb-1">조회수</div>
+                                <div class="text-xs text-gray-500 mb-1">좋아요수</div>
                                 <input type="number" class="ig-edit-views w-full text-center text-lg font-bold text-pink-600 border-0 bg-transparent focus:outline-none" value="\${e.views || 0}">
                             </div>
                             <div class="bg-white rounded-lg p-3 border border-pink-100 text-center">
