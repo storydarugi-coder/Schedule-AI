@@ -116,6 +116,18 @@ app.post('/api/youtube', async (c) => {
   const { url, title, impressions, views, subscribers, memo } = await c.req.json()
   if (!url) return c.json({ error: 'URL을 입력해주세요' }, 400)
   try {
+    // 테이블 없으면 자동 생성
+    await db.prepare(`CREATE TABLE IF NOT EXISTS youtube_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      url TEXT NOT NULL,
+      title TEXT DEFAULT '',
+      impressions INTEGER DEFAULT 0,
+      views INTEGER DEFAULT 0,
+      subscribers INTEGER DEFAULT 0,
+      memo TEXT DEFAULT '',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`).run()
+
     const result = await db.prepare(
       'INSERT INTO youtube_entries (url, title, impressions, views, subscribers, memo) VALUES (?, ?, ?, ?, ?, ?)'
     ).bind(url, title || '', impressions || 0, views || 0, subscribers || 0, memo || '').run()
