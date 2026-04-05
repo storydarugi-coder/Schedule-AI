@@ -98,36 +98,46 @@ app.get('/api/monthly-tasks/:hospital_id/:year/:month', async (c) => {
 })
 
 // =========================
-// 일정 유형 관리 API
+// 유튜브 관리 API
 // =========================
 
-app.get('/api/task-types', async (c) => {
+app.get('/api/youtube', async (c) => {
   const db = c.env.DB
   try {
-    const result = await db.prepare('SELECT * FROM task_types ORDER BY name').all()
+    const result = await db.prepare('SELECT * FROM youtube_entries ORDER BY created_at DESC').all()
     return c.json(result.results)
   } catch (e) {
-    // 테이블이 없으면 빈 배열 반환
     return c.json([])
   }
 })
 
-app.post('/api/task-types', async (c) => {
+app.post('/api/youtube', async (c) => {
   const db = c.env.DB
-  const { name, duration, color } = await c.req.json()
-  if (!name) return c.json({ error: '이름을 입력해주세요' }, 400)
+  const { url, title, impressions, views, subscribers, memo } = await c.req.json()
+  if (!url) return c.json({ error: 'URL을 입력해주세요' }, 400)
   try {
-    const result = await db.prepare('INSERT INTO task_types (name, duration, color) VALUES (?, ?, ?)')
-      .bind(name, duration || 1, color || '#787FFF').run()
-    return c.json({ id: result.meta.last_row_id, name, duration, color })
+    const result = await db.prepare(
+      'INSERT INTO youtube_entries (url, title, impressions, views, subscribers, memo) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(url, title || '', impressions || 0, views || 0, subscribers || 0, memo || '').run()
+    return c.json({ id: result.meta.last_row_id })
   } catch (e) {
-    return c.json({ error: '이미 존재하는 유형입니다' }, 400)
+    return c.json({ error: '추가 실패' }, 400)
   }
 })
 
-app.delete('/api/task-types/:id', async (c) => {
+app.put('/api/youtube/:id', async (c) => {
   const db = c.env.DB
-  await db.prepare('DELETE FROM task_types WHERE id = ?').bind(c.req.param('id')).run()
+  const id = c.req.param('id')
+  const { url, title, impressions, views, subscribers, memo } = await c.req.json()
+  await db.prepare(
+    'UPDATE youtube_entries SET url = ?, title = ?, impressions = ?, views = ?, subscribers = ?, memo = ? WHERE id = ?'
+  ).bind(url || '', title || '', impressions || 0, views || 0, subscribers || 0, memo || '', id).run()
+  return c.json({ success: true })
+})
+
+app.delete('/api/youtube/:id', async (c) => {
+  const db = c.env.DB
+  await db.prepare('DELETE FROM youtube_entries WHERE id = ?').bind(c.req.param('id')).run()
   return c.json({ success: true })
 })
 
@@ -523,11 +533,11 @@ app.get('/', (c) => {
                 <button onclick="showTab('vacations')" id="tab-vacations" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
                     <i class="fas fa-umbrella-beach mr-2"></i>연차/휴가
                 </button>
-                <button onclick="showTab('tasks')" id="tab-tasks" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
-                    <i class="fas fa-tags mr-2"></i>일정 유형
-                </button>
                 <button onclick="showTab('calendar')" id="tab-calendar" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
                     <i class="fas fa-calendar mr-2"></i>캘린더
+                </button>
+                <button onclick="showTab('youtube')" id="tab-youtube" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
+                    <i class="fab fa-youtube mr-2"></i>유튜브
                 </button>
             </nav>
         </div>
@@ -596,36 +606,6 @@ app.get('/', (c) => {
             </div>
         </div>
 
-        <!-- 작업량 입력 탭 -->
-        <div id="content-tasks" class="tab-content hidden">
-            <div class="bg-white rounded-xl shadow-lg p-6 mb-6 border-2 border-purple-100">
-                <h2 class="text-2xl font-bold mb-4 primary-color">
-                    <i class="fas fa-tags mr-2"></i>일정 유형 관리
-                </h2>
-                <p class="text-sm text-gray-600 mb-6">여기서 추가한 유형이 캘린더에서 일정 추가 시 드롭다운에 표시됩니다.</p>
-
-                <div class="flex gap-3 mb-6 items-end">
-                    <div class="flex-1">
-                        <label class="block text-xs font-semibold mb-1 text-gray-600">유형 이름</label>
-                        <input type="text" id="new-type-name" placeholder="예: 브랜드" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2.5 focus:border-purple-400 focus:outline-none">
-                    </div>
-                    <div class="w-28">
-                        <label class="block text-xs font-semibold mb-1 text-gray-600">소요 시간</label>
-                        <input type="number" id="new-type-duration" value="1" min="0.5" step="0.5" class="w-full border-2 border-purple-200 rounded-lg px-4 py-2.5 focus:border-purple-400 focus:outline-none">
-                    </div>
-                    <div class="w-16">
-                        <label class="block text-xs font-semibold mb-1 text-gray-600">색상</label>
-                        <input type="color" id="new-type-color" value="#787FFF" class="w-full h-10 border-2 border-purple-200 rounded-lg cursor-pointer">
-                    </div>
-                    <button onclick="addTaskType()" class="btn-primary text-white rounded-lg px-5 py-2.5 font-semibold shadow-md hover:shadow-lg transition-all whitespace-nowrap">
-                        <i class="fas fa-plus mr-1"></i>추가
-                    </button>
-                </div>
-
-                <div id="task-types-list" class="space-y-2"></div>
-            </div>
-        </div>
-
         <!-- 캘린더 탭 -->
         <div id="content-calendar" class="tab-content hidden">
             <!-- 작업 개수 현황표 -->
@@ -659,6 +639,54 @@ app.get('/', (c) => {
                     </div>
                 </div>
                 <div id="calendar"></div>
+            </div>
+        </div>
+
+        <!-- 유튜브 탭 -->
+        <div id="content-youtube" class="tab-content hidden">
+            <div class="bg-white rounded-xl shadow-lg p-6 mb-6 border-2 border-red-100">
+                <h2 class="text-2xl font-bold mb-4 text-red-500">
+                    <i class="fab fa-youtube mr-2"></i>유튜브 관리
+                </h2>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div class="md:col-span-2">
+                        <label class="block text-xs font-semibold mb-1 text-gray-600">URL</label>
+                        <input type="text" id="yt-url" placeholder="https://youtube.com/watch?v=..." class="w-full border-2 border-red-200 rounded-lg px-4 py-2.5 focus:border-red-400 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold mb-1 text-gray-600">제목 (선택)</label>
+                        <input type="text" id="yt-title" placeholder="영상 제목" class="w-full border-2 border-red-200 rounded-lg px-4 py-2.5 focus:border-red-400 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold mb-1 text-gray-600">메모 (선택)</label>
+                        <input type="text" id="yt-memo" placeholder="메모" class="w-full border-2 border-red-200 rounded-lg px-4 py-2.5 focus:border-red-400 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold mb-1 text-gray-600">노출수</label>
+                        <input type="number" id="yt-impressions" min="0" value="0" class="w-full border-2 border-red-200 rounded-lg px-4 py-2.5 focus:border-red-400 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold mb-1 text-gray-600">조회수</label>
+                        <input type="number" id="yt-views" min="0" value="0" class="w-full border-2 border-red-200 rounded-lg px-4 py-2.5 focus:border-red-400 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold mb-1 text-gray-600">구독자수</label>
+                        <input type="number" id="yt-subscribers" min="0" value="0" class="w-full border-2 border-red-200 rounded-lg px-4 py-2.5 focus:border-red-400 focus:outline-none">
+                    </div>
+                    <div class="flex items-end">
+                        <button onclick="addYoutubeEntry()" class="w-full bg-red-500 hover:bg-red-600 text-white rounded-lg px-5 py-2.5 font-semibold shadow-md hover:shadow-lg transition-all">
+                            <i class="fas fa-plus mr-2"></i>추가
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-lg p-6 border-2 border-red-100">
+                <h3 class="text-lg font-bold mb-4 text-red-500">
+                    <i class="fas fa-list mr-2"></i>등록 목록
+                </h3>
+                <div id="youtube-list"></div>
             </div>
         </div>
     </div>
@@ -838,6 +866,9 @@ app.get('/', (c) => {
             if (tab === 'vacations') {
                 loadVacations();
             }
+            if (tab === 'youtube') {
+                loadYoutubeEntries();
+            }
         }
 
         // 병원 목록 로드
@@ -943,61 +974,115 @@ app.get('/', (c) => {
             }
         }
 
-        // 커스텀 작업 행 추가
-        // 일정 유형 추가
-        window.addTaskType = async function() {
-            const name = document.getElementById('new-type-name').value.trim();
-            const duration = parseFloat(document.getElementById('new-type-duration').value) || 1;
-            const color = document.getElementById('new-type-color').value;
-
-            if (!name) { alert('유형 이름을 입력해주세요'); return; }
+        // 유튜브 추가
+        window.addYoutubeEntry = async function() {
+            const url = document.getElementById('yt-url').value.trim();
+            if (!url) { alert('URL을 입력해주세요'); return; }
 
             try {
-                await axios.post('/api/task-types', { name, duration, color });
-                document.getElementById('new-type-name').value = '';
-                document.getElementById('new-type-duration').value = '1';
-                loadTaskTypes();
+                await axios.post('/api/youtube', {
+                    url,
+                    title: document.getElementById('yt-title').value.trim(),
+                    impressions: parseInt(document.getElementById('yt-impressions').value) || 0,
+                    views: parseInt(document.getElementById('yt-views').value) || 0,
+                    subscribers: parseInt(document.getElementById('yt-subscribers').value) || 0,
+                    memo: document.getElementById('yt-memo').value.trim()
+                });
+                document.getElementById('yt-url').value = '';
+                document.getElementById('yt-title').value = '';
+                document.getElementById('yt-memo').value = '';
+                document.getElementById('yt-impressions').value = '0';
+                document.getElementById('yt-views').value = '0';
+                document.getElementById('yt-subscribers').value = '0';
+                loadYoutubeEntries();
             } catch (error) {
                 alert('추가 실패: ' + (error.response?.data?.error || error.message));
             }
         }
 
-        // 일정 유형 삭제
-        window.deleteTaskType = async function(id) {
-            if (!confirm('이 유형을 삭제하시겠습니까?')) return;
+        // 유튜브 삭제
+        window.deleteYoutubeEntry = async function(id) {
+            if (!confirm('삭제하시겠습니까?')) return;
             try {
-                await axios.delete(\`/api/task-types/\${id}\`);
-                loadTaskTypes();
+                await axios.delete(\`/api/youtube/\${id}\`);
+                loadYoutubeEntries();
             } catch (error) {
                 alert('삭제 실패');
             }
         }
 
-        // 일정 유형 목록 로드
-        async function loadTaskTypes() {
+        // 유튜브 수정
+        window.saveYoutubeEdit = async function(id) {
+            const row = document.querySelector(\`[data-yt-id="\${id}"]\`);
+            if (!row) return;
             try {
-                const res = await axios.get('/api/task-types');
-                const list = document.getElementById('task-types-list');
+                await axios.put(\`/api/youtube/\${id}\`, {
+                    url: row.querySelector('.yt-edit-url').value,
+                    title: row.querySelector('.yt-edit-title').value,
+                    impressions: parseInt(row.querySelector('.yt-edit-impressions').value) || 0,
+                    views: parseInt(row.querySelector('.yt-edit-views').value) || 0,
+                    subscribers: parseInt(row.querySelector('.yt-edit-subscribers').value) || 0,
+                    memo: row.querySelector('.yt-edit-memo').value
+                });
+                loadYoutubeEntries();
+            } catch (error) {
+                alert('수정 실패');
+            }
+        }
 
-                if (res.data.length === 0) {
-                    list.innerHTML = '<p class="text-gray-400 text-center py-6">등록된 일정 유형이 없습니다. 위에서 추가해주세요.</p>';
+        // 유튜브 목록 로드
+        async function loadYoutubeEntries() {
+            try {
+                const res = await axios.get('/api/youtube');
+                const list = document.getElementById('youtube-list');
+
+                if (!res.data || res.data.length === 0) {
+                    list.innerHTML = '<p class="text-gray-400 text-center py-6">등록된 항목이 없습니다.</p>';
                     return;
                 }
 
-                list.innerHTML = res.data.map(t => \`
-                    <div class="flex items-center justify-between p-3 rounded-lg border-2 border-gray-100 hover:border-purple-200 transition-all">
-                        <div class="flex items-center gap-3">
-                            <div class="w-4 h-4 rounded-full" style="background-color: \${t.color || '#787FFF'}"></div>
-                            <span class="font-semibold text-gray-800">\${t.name}</span>
-                            <span class="text-sm text-gray-500">\${t.duration}시간</span>
+                list.innerHTML = res.data.map(e => \`
+                    <div class="border-2 border-gray-100 rounded-xl p-4 mb-3 hover:border-red-200 transition-all" data-yt-id="\${e.id}">
+                        <div class="flex justify-between items-start mb-3">
+                            <a href="\${e.url}" target="_blank" class="text-red-500 hover:text-red-700 text-sm font-medium truncate flex-1 mr-2">
+                                <i class="fab fa-youtube mr-1"></i>\${e.title || e.url}
+                            </a>
+                            <div class="flex gap-1">
+                                <button onclick="saveYoutubeEdit(\${e.id})" class="text-blue-400 hover:text-blue-600 p-1" title="저장">
+                                    <i class="fas fa-save"></i>
+                                </button>
+                                <button onclick="deleteYoutubeEntry(\${e.id})" class="text-red-400 hover:text-red-600 p-1" title="삭제">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
                         </div>
-                        <button onclick="deleteTaskType(\${t.id})" class="text-red-400 hover:text-red-600 p-1">
-                            <i class="fas fa-trash"></i>
-                        </button>
+                        <input type="hidden" class="yt-edit-url" value="\${e.url}">
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
+                            <div>
+                                <label class="block text-xs text-gray-500">제목</label>
+                                <input type="text" class="yt-edit-title w-full border border-gray-200 rounded px-2 py-1 text-sm" value="\${e.title || ''}">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500">노출수</label>
+                                <input type="number" class="yt-edit-impressions w-full border border-gray-200 rounded px-2 py-1 text-sm" value="\${e.impressions || 0}">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500">조회수</label>
+                                <input type="number" class="yt-edit-views w-full border border-gray-200 rounded px-2 py-1 text-sm" value="\${e.views || 0}">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500">구독자수</label>
+                                <input type="number" class="yt-edit-subscribers w-full border border-gray-200 rounded px-2 py-1 text-sm" value="\${e.subscribers || 0}">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500">메모</label>
+                            <input type="text" class="yt-edit-memo w-full border border-gray-200 rounded px-2 py-1 text-sm" value="\${e.memo || ''}" placeholder="메모...">
+                        </div>
                     </div>
                 \`).join('');
             } catch (error) {
-                console.error('일정 유형 로드 실패', error);
+                console.error('유튜브 로드 실패', error);
             }
         }
 
@@ -2013,7 +2098,7 @@ app.get('/', (c) => {
         document.addEventListener('DOMContentLoaded', () => {
             showTab('hospitals');
             loadHospitals();
-            loadTaskTypes();
+            loadYoutubeEntries();
             initDateSelectors();
         });
     </script>

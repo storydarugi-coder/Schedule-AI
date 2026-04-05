@@ -1,0 +1,11 @@
+-- 유튜브 데이터 테이블
+CREATE TABLE IF NOT EXISTS youtube_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  url TEXT NOT NULL,
+  title TEXT DEFAULT '',
+  impressions INTEGER DEFAULT 0,
+  views INTEGER DEFAULT 0,
+  subscribers INTEGER DEFAULT 0,
+  memo TEXT DEFAULT '',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
