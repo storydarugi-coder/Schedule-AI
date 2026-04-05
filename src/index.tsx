@@ -143,6 +143,7 @@ app.put('/api/youtube/:id', async (c) => {
   const db = c.env.DB
   const id = c.req.param('id')
   const { url, title, impressions, views, subscribers, upload_date } = await c.req.json()
+  try { await db.prepare('ALTER TABLE youtube_entries ADD COLUMN upload_date TEXT DEFAULT ""').run() } catch(e) {}
   await db.prepare(
     'UPDATE youtube_entries SET url = ?, title = ?, impressions = ?, views = ?, subscribers = ?, upload_date = ? WHERE id = ?'
   ).bind(url || '', title || '', impressions || 0, views || 0, subscribers || 0, upload_date || '', id).run()
@@ -198,6 +199,7 @@ app.put('/api/instagram/:id', async (c) => {
   const db = c.env.DB
   const id = c.req.param('id')
   const { url, title, impressions, views, followers, upload_date } = await c.req.json()
+  try { await db.prepare('ALTER TABLE instagram_entries ADD COLUMN upload_date TEXT DEFAULT ""').run() } catch(e) {}
   await db.prepare(
     'UPDATE instagram_entries SET url = ?, title = ?, impressions = ?, views = ?, followers = ?, upload_date = ? WHERE id = ?'
   ).bind(url || '', title || '', impressions || 0, views || 0, followers || 0, upload_date || '', id).run()
