@@ -671,10 +671,6 @@ app.get('/', (c) => {
                         <input type="text" id="yt-title" placeholder="영상 제목" class="w-full border-2 border-red-200 rounded-lg px-4 py-2.5 focus:border-red-400 focus:outline-none">
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold mb-1 text-gray-600">메모 (선택)</label>
-                        <input type="text" id="yt-memo" placeholder="메모" class="w-full border-2 border-red-200 rounded-lg px-4 py-2.5 focus:border-red-400 focus:outline-none">
-                    </div>
-                    <div>
                         <label class="block text-xs font-semibold mb-1 text-gray-600">노출수</label>
                         <input type="number" id="yt-impressions" min="0" value="0" class="w-full border-2 border-red-200 rounded-lg px-4 py-2.5 focus:border-red-400 focus:outline-none">
                     </div>
@@ -998,11 +994,9 @@ app.get('/', (c) => {
                     impressions: parseInt(document.getElementById('yt-impressions').value) || 0,
                     views: parseInt(document.getElementById('yt-views').value) || 0,
                     subscribers: parseInt(document.getElementById('yt-subscribers').value) || 0,
-                    memo: document.getElementById('yt-memo').value.trim()
                 });
                 document.getElementById('yt-url').value = '';
                 document.getElementById('yt-title').value = '';
-                document.getElementById('yt-memo').value = '';
                 document.getElementById('yt-impressions').value = '0';
                 document.getElementById('yt-views').value = '0';
                 document.getElementById('yt-subscribers').value = '0';
@@ -1034,7 +1028,6 @@ app.get('/', (c) => {
                     impressions: parseInt(row.querySelector('.yt-edit-impressions').value) || 0,
                     views: parseInt(row.querySelector('.yt-edit-views').value) || 0,
                     subscribers: parseInt(row.querySelector('.yt-edit-subscribers').value) || 0,
-                    memo: row.querySelector('.yt-edit-memo').value
                 });
                 loadYoutubeEntries();
             } catch (error) {
@@ -1086,10 +1079,6 @@ app.get('/', (c) => {
                                 <label class="block text-xs text-gray-500">구독자수</label>
                                 <input type="number" class="yt-edit-subscribers w-full border border-gray-200 rounded px-2 py-1 text-sm" value="\${e.subscribers || 0}">
                             </div>
-                        </div>
-                        <div>
-                            <label class="block text-xs text-gray-500">메모</label>
-                            <input type="text" class="yt-edit-memo w-full border border-gray-200 rounded px-2 py-1 text-sm" value="\${e.memo || ''}" placeholder="메모...">
                         </div>
                     </div>
                 \`).join('');
