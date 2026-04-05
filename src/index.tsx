@@ -154,6 +154,59 @@ app.delete('/api/youtube/:id', async (c) => {
 })
 
 // =========================
+// 인스타그램 관리 API
+// =========================
+
+app.get('/api/instagram', async (c) => {
+  const db = c.env.DB
+  try {
+    const result = await db.prepare('SELECT * FROM instagram_entries ORDER BY created_at DESC').all()
+    return c.json(result.results)
+  } catch (e) {
+    return c.json([])
+  }
+})
+
+app.post('/api/instagram', async (c) => {
+  const db = c.env.DB
+  const { url, title, impressions, views, followers } = await c.req.json()
+  if (!url) return c.json({ error: 'URL을 입력해주세요' }, 400)
+  try {
+    await db.prepare(`CREATE TABLE IF NOT EXISTS instagram_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      url TEXT NOT NULL,
+      title TEXT DEFAULT '',
+      impressions INTEGER DEFAULT 0,
+      views INTEGER DEFAULT 0,
+      followers INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`).run()
+    const result = await db.prepare(
+      'INSERT INTO instagram_entries (url, title, impressions, views, followers) VALUES (?, ?, ?, ?, ?)'
+    ).bind(url, title || '', impressions || 0, views || 0, followers || 0).run()
+    return c.json({ id: result.meta.last_row_id })
+  } catch (e) {
+    return c.json({ error: '추가 실패' }, 400)
+  }
+})
+
+app.put('/api/instagram/:id', async (c) => {
+  const db = c.env.DB
+  const id = c.req.param('id')
+  const { url, title, impressions, views, followers } = await c.req.json()
+  await db.prepare(
+    'UPDATE instagram_entries SET url = ?, title = ?, impressions = ?, views = ?, followers = ? WHERE id = ?'
+  ).bind(url || '', title || '', impressions || 0, views || 0, followers || 0, id).run()
+  return c.json({ success: true })
+})
+
+app.delete('/api/instagram/:id', async (c) => {
+  const db = c.env.DB
+  await db.prepare('DELETE FROM instagram_entries WHERE id = ?').bind(c.req.param('id')).run()
+  return c.json({ success: true })
+})
+
+// =========================
 // 월별 작업량
 // =========================
 
@@ -551,6 +604,9 @@ app.get('/', (c) => {
                 <button onclick="showTab('youtube')" id="tab-youtube" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
                     <i class="fab fa-youtube mr-2"></i>유튜브
                 </button>
+                <button onclick="showTab('instagram')" id="tab-instagram" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
+                    <i class="fab fa-instagram mr-2"></i>인스타그램
+                </button>
             </nav>
         </div>
 
@@ -656,45 +712,109 @@ app.get('/', (c) => {
 
         <!-- 유튜브 탭 -->
         <div id="content-youtube" class="tab-content hidden">
-            <div class="bg-white rounded-xl shadow-lg p-6 mb-6 border-2 border-red-100">
-                <h2 class="text-2xl font-bold mb-4 text-red-500">
-                    <i class="fab fa-youtube mr-2"></i>유튜브 관리
-                </h2>
+            <div class="bg-white rounded-xl shadow-lg p-6 border-2 border-red-100">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold text-red-500">
+                        <i class="fab fa-youtube mr-2"></i>유튜브
+                    </h2>
+                    <button onclick="openYoutubeModal()" class="bg-red-500 hover:bg-red-600 text-white rounded-lg px-5 py-2.5 font-semibold shadow-md hover:shadow-lg transition-all">
+                        <i class="fas fa-plus mr-2"></i>추가
+                    </button>
+                </div>
+                <div id="youtube-list"></div>
+            </div>
+        </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                    <div class="md:col-span-2">
-                        <label class="block text-xs font-semibold mb-1 text-gray-600">URL</label>
-                        <input type="text" id="yt-url" placeholder="https://youtube.com/watch?v=..." class="w-full border-2 border-red-200 rounded-lg px-4 py-2.5 focus:border-red-400 focus:outline-none">
+        <!-- 인스타그램 탭 -->
+        <div id="content-instagram" class="tab-content hidden">
+            <div class="bg-white rounded-xl shadow-lg p-6 border-2 border-pink-100">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold text-pink-500">
+                        <i class="fab fa-instagram mr-2"></i>인스타그램
+                    </h2>
+                    <button onclick="openInstagramModal()" class="bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white rounded-lg px-5 py-2.5 font-semibold shadow-md hover:shadow-lg transition-all">
+                        <i class="fas fa-plus mr-2"></i>추가
+                    </button>
+                </div>
+                <div id="instagram-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 유튜브 추가 모달 -->
+    <div id="youtube-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-2xl p-6 w-[28rem] max-w-full mx-4">
+            <h3 class="text-xl font-bold text-red-500 mb-4">
+                <i class="fab fa-youtube mr-2"></i>유튜브 추가
+            </h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">URL</label>
+                    <input type="text" id="yt-url" placeholder="https://youtube.com/watch?v=..." class="w-full border-2 border-red-200 rounded-lg px-4 py-2 focus:border-red-400 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">제목</label>
+                    <input type="text" id="yt-title" placeholder="영상 제목" class="w-full border-2 border-red-200 rounded-lg px-4 py-2 focus:border-red-400 focus:outline-none">
+                </div>
+                <div class="grid grid-cols-3 gap-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">노출수</label>
+                        <input type="number" id="yt-impressions" min="0" value="0" class="w-full border-2 border-red-200 rounded-lg px-4 py-2 focus:border-red-400 focus:outline-none">
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold mb-1 text-gray-600">제목 (선택)</label>
-                        <input type="text" id="yt-title" placeholder="영상 제목" class="w-full border-2 border-red-200 rounded-lg px-4 py-2.5 focus:border-red-400 focus:outline-none">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">조회수</label>
+                        <input type="number" id="yt-views" min="0" value="0" class="w-full border-2 border-red-200 rounded-lg px-4 py-2 focus:border-red-400 focus:outline-none">
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold mb-1 text-gray-600">노출수</label>
-                        <input type="number" id="yt-impressions" min="0" value="0" class="w-full border-2 border-red-200 rounded-lg px-4 py-2.5 focus:border-red-400 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold mb-1 text-gray-600">조회수</label>
-                        <input type="number" id="yt-views" min="0" value="0" class="w-full border-2 border-red-200 rounded-lg px-4 py-2.5 focus:border-red-400 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold mb-1 text-gray-600">구독자수</label>
-                        <input type="number" id="yt-subscribers" min="0" value="0" class="w-full border-2 border-red-200 rounded-lg px-4 py-2.5 focus:border-red-400 focus:outline-none">
-                    </div>
-                    <div class="flex items-end">
-                        <button onclick="addYoutubeEntry()" class="w-full bg-red-500 hover:bg-red-600 text-white rounded-lg px-5 py-2.5 font-semibold shadow-md hover:shadow-lg transition-all">
-                            <i class="fas fa-plus mr-2"></i>추가
-                        </button>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">구독자수</label>
+                        <input type="number" id="yt-subscribers" min="0" value="0" class="w-full border-2 border-red-200 rounded-lg px-4 py-2 focus:border-red-400 focus:outline-none">
                     </div>
                 </div>
             </div>
+            <div class="flex justify-end gap-2 mt-5">
+                <button onclick="closeYoutubeModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">취소</button>
+                <button onclick="addYoutubeEntry()" class="bg-red-500 hover:bg-red-600 text-white rounded-lg px-6 py-2 font-semibold shadow-md">
+                    <i class="fas fa-plus mr-2"></i>추가
+                </button>
+            </div>
+        </div>
+    </div>
 
-            <div class="bg-white rounded-xl shadow-lg p-6 border-2 border-red-100">
-                <h3 class="text-lg font-bold mb-4 text-red-500">
-                    <i class="fas fa-list mr-2"></i>등록 목록
-                </h3>
-                <div id="youtube-list"></div>
+    <!-- 인스타그램 추가 모달 -->
+    <div id="instagram-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-2xl p-6 w-[28rem] max-w-full mx-4">
+            <h3 class="text-xl font-bold text-pink-500 mb-4">
+                <i class="fab fa-instagram mr-2"></i>인스타그램 추가
+            </h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">URL</label>
+                    <input type="text" id="ig-url" placeholder="https://instagram.com/p/..." class="w-full border-2 border-pink-200 rounded-lg px-4 py-2 focus:border-pink-400 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">제목</label>
+                    <input type="text" id="ig-title" placeholder="게시물 제목" class="w-full border-2 border-pink-200 rounded-lg px-4 py-2 focus:border-pink-400 focus:outline-none">
+                </div>
+                <div class="grid grid-cols-3 gap-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">노출수</label>
+                        <input type="number" id="ig-impressions" min="0" value="0" class="w-full border-2 border-pink-200 rounded-lg px-4 py-2 focus:border-pink-400 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">조회수</label>
+                        <input type="number" id="ig-views" min="0" value="0" class="w-full border-2 border-pink-200 rounded-lg px-4 py-2 focus:border-pink-400 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">팔로워수</label>
+                        <input type="number" id="ig-followers" min="0" value="0" class="w-full border-2 border-pink-200 rounded-lg px-4 py-2 focus:border-pink-400 focus:outline-none">
+                    </div>
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 mt-5">
+                <button onclick="closeInstagramModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">취소</button>
+                <button onclick="addInstagramEntry()" class="bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-lg px-6 py-2 font-semibold shadow-md">
+                    <i class="fas fa-plus mr-2"></i>추가
+                </button>
             </div>
         </div>
     </div>
@@ -877,6 +997,9 @@ app.get('/', (c) => {
             if (tab === 'youtube') {
                 loadYoutubeEntries();
             }
+            if (tab === 'instagram') {
+                loadInstagramEntries();
+            }
         }
 
         // 병원 목록 로드
@@ -982,11 +1105,20 @@ app.get('/', (c) => {
             }
         }
 
-        // 유튜브 추가
+        // ========== 유튜브 ==========
+        window.openYoutubeModal = function() {
+            document.getElementById('yt-url').value = '';
+            document.getElementById('yt-title').value = '';
+            document.getElementById('yt-impressions').value = '0';
+            document.getElementById('yt-views').value = '0';
+            document.getElementById('yt-subscribers').value = '0';
+            document.getElementById('youtube-modal').classList.remove('hidden');
+        }
+        window.closeYoutubeModal = function() { document.getElementById('youtube-modal').classList.add('hidden'); }
+
         window.addYoutubeEntry = async function() {
             const url = document.getElementById('yt-url').value.trim();
             if (!url) { alert('URL을 입력해주세요'); return; }
-
             try {
                 await axios.post('/api/youtube', {
                     url,
@@ -995,29 +1127,18 @@ app.get('/', (c) => {
                     views: parseInt(document.getElementById('yt-views').value) || 0,
                     subscribers: parseInt(document.getElementById('yt-subscribers').value) || 0,
                 });
-                document.getElementById('yt-url').value = '';
-                document.getElementById('yt-title').value = '';
-                document.getElementById('yt-impressions').value = '0';
-                document.getElementById('yt-views').value = '0';
-                document.getElementById('yt-subscribers').value = '0';
+                closeYoutubeModal();
                 loadYoutubeEntries();
             } catch (error) {
                 alert('추가 실패: ' + (error.response?.data?.error || error.message));
             }
         }
 
-        // 유튜브 삭제
         window.deleteYoutubeEntry = async function(id) {
             if (!confirm('삭제하시겠습니까?')) return;
-            try {
-                await axios.delete(\`/api/youtube/\${id}\`);
-                loadYoutubeEntries();
-            } catch (error) {
-                alert('삭제 실패');
-            }
+            try { await axios.delete(\`/api/youtube/\${id}\`); loadYoutubeEntries(); } catch(e) { alert('삭제 실패'); }
         }
 
-        // 유튜브 수정
         window.saveYoutubeEdit = async function(id) {
             const row = document.querySelector(\`[data-yt-id="\${id}"]\`);
             if (!row) return;
@@ -1030,61 +1151,138 @@ app.get('/', (c) => {
                     subscribers: parseInt(row.querySelector('.yt-edit-subscribers').value) || 0,
                 });
                 loadYoutubeEntries();
-            } catch (error) {
-                alert('수정 실패');
-            }
+            } catch(e) { alert('수정 실패'); }
         }
 
-        // 유튜브 목록 로드
+        function formatNumber(n) { return (n || 0).toLocaleString(); }
+
         async function loadYoutubeEntries() {
             try {
                 const res = await axios.get('/api/youtube');
                 const list = document.getElementById('youtube-list');
-
                 if (!res.data || res.data.length === 0) {
-                    list.innerHTML = '<p class="text-gray-400 text-center py-6">등록된 항목이 없습니다.</p>';
+                    list.innerHTML = '<p class="text-gray-400 text-center py-8">등록된 항목이 없습니다.</p>';
                     return;
                 }
-
                 list.innerHTML = res.data.map(e => \`
-                    <div class="border-2 border-gray-100 rounded-xl p-4 mb-3 hover:border-red-200 transition-all" data-yt-id="\${e.id}">
-                        <div class="flex justify-between items-start mb-3">
-                            <a href="\${e.url}" target="_blank" class="text-red-500 hover:text-red-700 text-sm font-medium truncate flex-1 mr-2">
-                                <i class="fab fa-youtube mr-1"></i>\${e.title || e.url}
+                    <div class="bg-gradient-to-r from-red-50 to-white border-2 border-red-100 rounded-xl p-4 mb-3 hover:shadow-md transition-all" data-yt-id="\${e.id}">
+                        <div class="flex justify-between items-center mb-3">
+                            <a href="\${e.url}" target="_blank" class="text-red-600 hover:text-red-800 font-semibold truncate flex-1 mr-3">
+                                <i class="fab fa-youtube mr-2"></i>\${e.title || '제목 없음'}
                             </a>
-                            <div class="flex gap-1">
-                                <button onclick="saveYoutubeEdit(\${e.id})" class="text-blue-400 hover:text-blue-600 p-1" title="저장">
-                                    <i class="fas fa-save"></i>
-                                </button>
-                                <button onclick="deleteYoutubeEntry(\${e.id})" class="text-red-400 hover:text-red-600 p-1" title="삭제">
-                                    <i class="fas fa-trash"></i>
-                                </button>
+                            <div class="flex gap-1 shrink-0">
+                                <button onclick="saveYoutubeEdit(\${e.id})" class="text-blue-500 hover:text-blue-700 p-1.5 rounded hover:bg-blue-50" title="저장"><i class="fas fa-save"></i></button>
+                                <button onclick="deleteYoutubeEntry(\${e.id})" class="text-red-400 hover:text-red-600 p-1.5 rounded hover:bg-red-50" title="삭제"><i class="fas fa-trash"></i></button>
                             </div>
                         </div>
                         <input type="hidden" class="yt-edit-url" value="\${e.url}">
-                        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
-                            <div>
-                                <label class="block text-xs text-gray-500">제목</label>
-                                <input type="text" class="yt-edit-title w-full border border-gray-200 rounded px-2 py-1 text-sm" value="\${e.title || ''}">
+                        <input type="hidden" class="yt-edit-title" value="\${e.title || ''}">
+                        <div class="grid grid-cols-3 gap-3">
+                            <div class="bg-white rounded-lg p-3 border border-red-100 text-center">
+                                <div class="text-xs text-gray-500 mb-1">노출수</div>
+                                <input type="number" class="yt-edit-impressions w-full text-center text-lg font-bold text-red-600 border-0 bg-transparent focus:outline-none" value="\${e.impressions || 0}">
                             </div>
-                            <div>
-                                <label class="block text-xs text-gray-500">노출수</label>
-                                <input type="number" class="yt-edit-impressions w-full border border-gray-200 rounded px-2 py-1 text-sm" value="\${e.impressions || 0}">
+                            <div class="bg-white rounded-lg p-3 border border-red-100 text-center">
+                                <div class="text-xs text-gray-500 mb-1">조회수</div>
+                                <input type="number" class="yt-edit-views w-full text-center text-lg font-bold text-red-600 border-0 bg-transparent focus:outline-none" value="\${e.views || 0}">
                             </div>
-                            <div>
-                                <label class="block text-xs text-gray-500">조회수</label>
-                                <input type="number" class="yt-edit-views w-full border border-gray-200 rounded px-2 py-1 text-sm" value="\${e.views || 0}">
-                            </div>
-                            <div>
-                                <label class="block text-xs text-gray-500">구독자수</label>
-                                <input type="number" class="yt-edit-subscribers w-full border border-gray-200 rounded px-2 py-1 text-sm" value="\${e.subscribers || 0}">
+                            <div class="bg-white rounded-lg p-3 border border-red-100 text-center">
+                                <div class="text-xs text-gray-500 mb-1">구독자수</div>
+                                <input type="number" class="yt-edit-subscribers w-full text-center text-lg font-bold text-red-600 border-0 bg-transparent focus:outline-none" value="\${e.subscribers || 0}">
                             </div>
                         </div>
                     </div>
                 \`).join('');
+            } catch(e) { console.error('유튜브 로드 실패', e); }
+        }
+
+        // ========== 인스타그램 ==========
+        window.openInstagramModal = function() {
+            document.getElementById('ig-url').value = '';
+            document.getElementById('ig-title').value = '';
+            document.getElementById('ig-impressions').value = '0';
+            document.getElementById('ig-views').value = '0';
+            document.getElementById('ig-followers').value = '0';
+            document.getElementById('instagram-modal').classList.remove('hidden');
+        }
+        window.closeInstagramModal = function() { document.getElementById('instagram-modal').classList.add('hidden'); }
+
+        window.addInstagramEntry = async function() {
+            const url = document.getElementById('ig-url').value.trim();
+            if (!url) { alert('URL을 입력해주세요'); return; }
+            try {
+                await axios.post('/api/instagram', {
+                    url,
+                    title: document.getElementById('ig-title').value.trim(),
+                    impressions: parseInt(document.getElementById('ig-impressions').value) || 0,
+                    views: parseInt(document.getElementById('ig-views').value) || 0,
+                    followers: parseInt(document.getElementById('ig-followers').value) || 0,
+                });
+                closeInstagramModal();
+                loadInstagramEntries();
             } catch (error) {
-                console.error('유튜브 로드 실패', error);
+                alert('추가 실패: ' + (error.response?.data?.error || error.message));
             }
+        }
+
+        window.deleteInstagramEntry = async function(id) {
+            if (!confirm('삭제하시겠습니까?')) return;
+            try { await axios.delete(\`/api/instagram/\${id}\`); loadInstagramEntries(); } catch(e) { alert('삭제 실패'); }
+        }
+
+        window.saveInstagramEdit = async function(id) {
+            const row = document.querySelector(\`[data-ig-id="\${id}"]\`);
+            if (!row) return;
+            try {
+                await axios.put(\`/api/instagram/\${id}\`, {
+                    url: row.querySelector('.ig-edit-url').value,
+                    title: row.querySelector('.ig-edit-title').value,
+                    impressions: parseInt(row.querySelector('.ig-edit-impressions').value) || 0,
+                    views: parseInt(row.querySelector('.ig-edit-views').value) || 0,
+                    followers: parseInt(row.querySelector('.ig-edit-followers').value) || 0,
+                });
+                loadInstagramEntries();
+            } catch(e) { alert('수정 실패'); }
+        }
+
+        async function loadInstagramEntries() {
+            try {
+                const res = await axios.get('/api/instagram');
+                const list = document.getElementById('instagram-list');
+                if (!res.data || res.data.length === 0) {
+                    list.innerHTML = '<p class="text-gray-400 text-center py-8">등록된 항목이 없습니다.</p>';
+                    return;
+                }
+                list.innerHTML = res.data.map(e => \`
+                    <div class="bg-gradient-to-r from-pink-50 to-white border-2 border-pink-100 rounded-xl p-4 mb-3 hover:shadow-md transition-all" data-ig-id="\${e.id}">
+                        <div class="flex justify-between items-center mb-3">
+                            <a href="\${e.url}" target="_blank" class="text-pink-600 hover:text-pink-800 font-semibold truncate flex-1 mr-3">
+                                <i class="fab fa-instagram mr-2"></i>\${e.title || '제목 없음'}
+                            </a>
+                            <div class="flex gap-1 shrink-0">
+                                <button onclick="saveInstagramEdit(\${e.id})" class="text-blue-500 hover:text-blue-700 p-1.5 rounded hover:bg-blue-50" title="저장"><i class="fas fa-save"></i></button>
+                                <button onclick="deleteInstagramEntry(\${e.id})" class="text-pink-400 hover:text-pink-600 p-1.5 rounded hover:bg-pink-50" title="삭제"><i class="fas fa-trash"></i></button>
+                            </div>
+                        </div>
+                        <input type="hidden" class="ig-edit-url" value="\${e.url}">
+                        <input type="hidden" class="ig-edit-title" value="\${e.title || ''}">
+                        <div class="grid grid-cols-3 gap-3">
+                            <div class="bg-white rounded-lg p-3 border border-pink-100 text-center">
+                                <div class="text-xs text-gray-500 mb-1">노출수</div>
+                                <input type="number" class="ig-edit-impressions w-full text-center text-lg font-bold text-pink-600 border-0 bg-transparent focus:outline-none" value="\${e.impressions || 0}">
+                            </div>
+                            <div class="bg-white rounded-lg p-3 border border-pink-100 text-center">
+                                <div class="text-xs text-gray-500 mb-1">조회수</div>
+                                <input type="number" class="ig-edit-views w-full text-center text-lg font-bold text-pink-600 border-0 bg-transparent focus:outline-none" value="\${e.views || 0}">
+                            </div>
+                            <div class="bg-white rounded-lg p-3 border border-pink-100 text-center">
+                                <div class="text-xs text-gray-500 mb-1">팔로워수</div>
+                                <input type="number" class="ig-edit-followers w-full text-center text-lg font-bold text-pink-600 border-0 bg-transparent focus:outline-none" value="\${e.followers || 0}">
+                            </div>
+                        </div>
+                    </div>
+                \`).join('');
+            } catch(e) { console.error('인스타그램 로드 실패', e); }
         }
 
         // 연차/휴가 목록 로드
