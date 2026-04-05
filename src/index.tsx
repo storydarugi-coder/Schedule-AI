@@ -113,10 +113,9 @@ app.get('/api/youtube', async (c) => {
 
 app.post('/api/youtube', async (c) => {
   const db = c.env.DB
-  const { url, title, impressions, views, subscribers, memo } = await c.req.json()
+  const { url, title, impressions, views, subscribers, upload_date } = await c.req.json()
   if (!url) return c.json({ error: 'URL을 입력해주세요' }, 400)
   try {
-    // 테이블 없으면 자동 생성
     await db.prepare(`CREATE TABLE IF NOT EXISTS youtube_entries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       url TEXT NOT NULL,
@@ -124,13 +123,16 @@ app.post('/api/youtube', async (c) => {
       impressions INTEGER DEFAULT 0,
       views INTEGER DEFAULT 0,
       subscribers INTEGER DEFAULT 0,
+      upload_date TEXT DEFAULT '',
       memo TEXT DEFAULT '',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`).run()
+    // upload_date 컬럼이 없으면 추가
+    try { await db.prepare('ALTER TABLE youtube_entries ADD COLUMN upload_date TEXT DEFAULT ""').run() } catch(e) {}
 
     const result = await db.prepare(
-      'INSERT INTO youtube_entries (url, title, impressions, views, subscribers, memo) VALUES (?, ?, ?, ?, ?, ?)'
-    ).bind(url, title || '', impressions || 0, views || 0, subscribers || 0, memo || '').run()
+      'INSERT INTO youtube_entries (url, title, impressions, views, subscribers, upload_date) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(url, title || '', impressions || 0, views || 0, subscribers || 0, upload_date || '').run()
     return c.json({ id: result.meta.last_row_id })
   } catch (e) {
     return c.json({ error: '추가 실패' }, 400)
@@ -140,10 +142,10 @@ app.post('/api/youtube', async (c) => {
 app.put('/api/youtube/:id', async (c) => {
   const db = c.env.DB
   const id = c.req.param('id')
-  const { url, title, impressions, views, subscribers, memo } = await c.req.json()
+  const { url, title, impressions, views, subscribers, upload_date } = await c.req.json()
   await db.prepare(
-    'UPDATE youtube_entries SET url = ?, title = ?, impressions = ?, views = ?, subscribers = ?, memo = ? WHERE id = ?'
-  ).bind(url || '', title || '', impressions || 0, views || 0, subscribers || 0, memo || '', id).run()
+    'UPDATE youtube_entries SET url = ?, title = ?, impressions = ?, views = ?, subscribers = ?, upload_date = ? WHERE id = ?'
+  ).bind(url || '', title || '', impressions || 0, views || 0, subscribers || 0, upload_date || '', id).run()
   return c.json({ success: true })
 })
 
@@ -169,7 +171,7 @@ app.get('/api/instagram', async (c) => {
 
 app.post('/api/instagram', async (c) => {
   const db = c.env.DB
-  const { url, title, impressions, views, followers } = await c.req.json()
+  const { url, title, impressions, views, followers, upload_date } = await c.req.json()
   if (!url) return c.json({ error: 'URL을 입력해주세요' }, 400)
   try {
     await db.prepare(`CREATE TABLE IF NOT EXISTS instagram_entries (
@@ -179,11 +181,13 @@ app.post('/api/instagram', async (c) => {
       impressions INTEGER DEFAULT 0,
       views INTEGER DEFAULT 0,
       followers INTEGER DEFAULT 0,
+      upload_date TEXT DEFAULT '',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`).run()
+    try { await db.prepare('ALTER TABLE instagram_entries ADD COLUMN upload_date TEXT DEFAULT ""').run() } catch(e) {}
     const result = await db.prepare(
-      'INSERT INTO instagram_entries (url, title, impressions, views, followers) VALUES (?, ?, ?, ?, ?)'
-    ).bind(url, title || '', impressions || 0, views || 0, followers || 0).run()
+      'INSERT INTO instagram_entries (url, title, impressions, views, followers, upload_date) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(url, title || '', impressions || 0, views || 0, followers || 0, upload_date || '').run()
     return c.json({ id: result.meta.last_row_id })
   } catch (e) {
     return c.json({ error: '추가 실패' }, 400)
@@ -193,10 +197,10 @@ app.post('/api/instagram', async (c) => {
 app.put('/api/instagram/:id', async (c) => {
   const db = c.env.DB
   const id = c.req.param('id')
-  const { url, title, impressions, views, followers } = await c.req.json()
+  const { url, title, impressions, views, followers, upload_date } = await c.req.json()
   await db.prepare(
-    'UPDATE instagram_entries SET url = ?, title = ?, impressions = ?, views = ?, followers = ? WHERE id = ?'
-  ).bind(url || '', title || '', impressions || 0, views || 0, followers || 0, id).run()
+    'UPDATE instagram_entries SET url = ?, title = ?, impressions = ?, views = ?, followers = ?, upload_date = ? WHERE id = ?'
+  ).bind(url || '', title || '', impressions || 0, views || 0, followers || 0, upload_date || '', id).run()
   return c.json({ success: true })
 })
 
@@ -598,14 +602,14 @@ app.get('/', (c) => {
                 <button onclick="showTab('vacations')" id="tab-vacations" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
                     <i class="fas fa-umbrella-beach mr-2"></i>연차/휴가
                 </button>
-                <button onclick="showTab('calendar')" id="tab-calendar" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
-                    <i class="fas fa-calendar mr-2"></i>캘린더
-                </button>
                 <button onclick="showTab('youtube')" id="tab-youtube" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
                     <i class="fab fa-youtube mr-2"></i>유튜브
                 </button>
                 <button onclick="showTab('instagram')" id="tab-instagram" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
                     <i class="fab fa-instagram mr-2"></i>인스타그램
+                </button>
+                <button onclick="showTab('calendar')" id="tab-calendar" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
+                    <i class="fas fa-calendar mr-2"></i>캘린더
                 </button>
             </nav>
         </div>
@@ -756,6 +760,10 @@ app.get('/', (c) => {
                     <label class="block text-sm font-medium text-gray-700 mb-1">제목</label>
                     <input type="text" id="yt-title" placeholder="영상 제목" class="w-full border-2 border-red-200 rounded-lg px-4 py-2 focus:border-red-400 focus:outline-none">
                 </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">업로드 날짜</label>
+                    <input type="date" id="yt-upload-date" class="w-full border-2 border-red-200 rounded-lg px-4 py-2 focus:border-red-400 focus:outline-none">
+                </div>
                 <div class="grid grid-cols-3 gap-3">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">노출수</label>
@@ -794,6 +802,10 @@ app.get('/', (c) => {
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">제목</label>
                     <input type="text" id="ig-title" placeholder="게시물 제목" class="w-full border-2 border-pink-200 rounded-lg px-4 py-2 focus:border-pink-400 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">업로드 날짜</label>
+                    <input type="date" id="ig-upload-date" class="w-full border-2 border-pink-200 rounded-lg px-4 py-2 focus:border-pink-400 focus:outline-none">
                 </div>
                 <div class="grid grid-cols-3 gap-3">
                     <div>
@@ -1109,6 +1121,7 @@ app.get('/', (c) => {
         window.openYoutubeModal = function() {
             document.getElementById('yt-url').value = '';
             document.getElementById('yt-title').value = '';
+            document.getElementById('yt-upload-date').value = '';
             document.getElementById('yt-impressions').value = '0';
             document.getElementById('yt-views').value = '0';
             document.getElementById('yt-subscribers').value = '0';
@@ -1123,6 +1136,7 @@ app.get('/', (c) => {
                 await axios.post('/api/youtube', {
                     url,
                     title: document.getElementById('yt-title').value.trim(),
+                    upload_date: document.getElementById('yt-upload-date').value,
                     impressions: parseInt(document.getElementById('yt-impressions').value) || 0,
                     views: parseInt(document.getElementById('yt-views').value) || 0,
                     subscribers: parseInt(document.getElementById('yt-subscribers').value) || 0,
@@ -1146,6 +1160,7 @@ app.get('/', (c) => {
                 await axios.put(\`/api/youtube/\${id}\`, {
                     url: row.querySelector('.yt-edit-url').value,
                     title: row.querySelector('.yt-edit-title').value,
+                    upload_date: row.querySelector('.yt-edit-upload-date').value,
                     impressions: parseInt(row.querySelector('.yt-edit-impressions').value) || 0,
                     views: parseInt(row.querySelector('.yt-edit-views').value) || 0,
                     subscribers: parseInt(row.querySelector('.yt-edit-subscribers').value) || 0,
@@ -1177,6 +1192,10 @@ app.get('/', (c) => {
                         </div>
                         <input type="hidden" class="yt-edit-url" value="\${e.url}">
                         <input type="hidden" class="yt-edit-title" value="\${e.title || ''}">
+                        <div class="flex items-center gap-2 mb-2 text-sm text-gray-500">
+                            <i class="fas fa-calendar-alt"></i>
+                            <input type="date" class="yt-edit-upload-date border border-gray-200 rounded px-2 py-1 text-sm" value="\${e.upload_date || ''}">
+                        </div>
                         <div class="grid grid-cols-3 gap-3">
                             <div class="bg-white rounded-lg p-3 border border-red-100 text-center">
                                 <div class="text-xs text-gray-500 mb-1">노출수</div>
@@ -1200,6 +1219,7 @@ app.get('/', (c) => {
         window.openInstagramModal = function() {
             document.getElementById('ig-url').value = '';
             document.getElementById('ig-title').value = '';
+            document.getElementById('ig-upload-date').value = '';
             document.getElementById('ig-impressions').value = '0';
             document.getElementById('ig-views').value = '0';
             document.getElementById('ig-followers').value = '0';
@@ -1214,6 +1234,7 @@ app.get('/', (c) => {
                 await axios.post('/api/instagram', {
                     url,
                     title: document.getElementById('ig-title').value.trim(),
+                    upload_date: document.getElementById('ig-upload-date').value,
                     impressions: parseInt(document.getElementById('ig-impressions').value) || 0,
                     views: parseInt(document.getElementById('ig-views').value) || 0,
                     followers: parseInt(document.getElementById('ig-followers').value) || 0,
@@ -1237,6 +1258,7 @@ app.get('/', (c) => {
                 await axios.put(\`/api/instagram/\${id}\`, {
                     url: row.querySelector('.ig-edit-url').value,
                     title: row.querySelector('.ig-edit-title').value,
+                    upload_date: row.querySelector('.ig-edit-upload-date').value,
                     impressions: parseInt(row.querySelector('.ig-edit-impressions').value) || 0,
                     views: parseInt(row.querySelector('.ig-edit-views').value) || 0,
                     followers: parseInt(row.querySelector('.ig-edit-followers').value) || 0,
@@ -1266,6 +1288,10 @@ app.get('/', (c) => {
                         </div>
                         <input type="hidden" class="ig-edit-url" value="\${e.url}">
                         <input type="hidden" class="ig-edit-title" value="\${e.title || ''}">
+                        <div class="flex items-center gap-2 mb-2 text-sm text-gray-500">
+                            <i class="fas fa-calendar-alt"></i>
+                            <input type="date" class="ig-edit-upload-date border border-gray-200 rounded px-2 py-1 text-sm" value="\${e.upload_date || ''}">
+                        </div>
                         <div class="grid grid-cols-3 gap-3">
                             <div class="bg-white rounded-lg p-3 border border-pink-100 text-center">
                                 <div class="text-xs text-gray-500 mb-1">조회수</div>
