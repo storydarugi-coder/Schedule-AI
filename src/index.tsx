@@ -1426,6 +1426,13 @@ app.get('/', (c) => {
                 },
                 eventOrderStrict: true, // 엄격한 순서 적용
                 eventDidMount: function(info) {
+                    // 커스텀 색상이 있으면 강제로 적용
+                    const customColor = info.event.extendedProps.customColor;
+                    if (customColor) {
+                        info.el.style.setProperty('background-color', customColor, 'important');
+                        info.el.style.setProperty('border-color', customColor, 'important');
+                    }
+
                     // 일찍 출근 이벤트가 있는 날짜의 배경색 변경
                     if (info.event.extendedProps.taskType === 'early_start') {
                         const dateStr = info.event.startStr;
@@ -1766,7 +1773,17 @@ app.get('/', (c) => {
             document.getElementById('edit-task-name').value = event.extendedProps.taskName || '';
             document.getElementById('edit-duration').value = event.extendedProps.durationHours || 1;
             document.getElementById('edit-start-time').value = event.extendedProps.startTime || '09:00';
-            document.getElementById('edit-color').value = event.extendedProps.customColor || event.backgroundColor || '#3b82f6';
+            // 색상값 정규화 (rgb -> hex 변환)
+            function toHex(c) {
+                if (!c) return '#3b82f6';
+                if (c.startsWith('#')) return c;
+                const m = c.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+                if (m) {
+                    return '#' + [m[1], m[2], m[3]].map(n => parseInt(n).toString(16).padStart(2, '0')).join('');
+                }
+                return '#3b82f6';
+            }
+            document.getElementById('edit-color').value = toHex(event.extendedProps.customColor || event.backgroundColor);
 
             // 완료 버튼 상태
             const btn = document.getElementById('edit-complete-btn');
