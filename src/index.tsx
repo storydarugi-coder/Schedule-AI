@@ -633,6 +633,10 @@ app.delete('/api/vacations/:id', async (c) => {
 // =========================
 
 app.get('/', (c) => {
+  // HTML 캐싱 금지 — 개발 중 브라우저가 옛 스크립트를 쥐고 있는 것을 방지
+  c.header('Cache-Control', 'no-cache, no-store, must-revalidate')
+  c.header('Pragma', 'no-cache')
+  c.header('Expires', '0')
   return c.html(`
 <!DOCTYPE html>
 <html lang="ko">
@@ -1155,7 +1159,7 @@ app.get('/', (c) => {
             if (tab === 'instagram') {
                 loadInstagramEntries();
             }
-        }
+        };
 
         // 병원 목록 로드
         async function loadHospitals() {
@@ -1245,7 +1249,7 @@ app.get('/', (c) => {
             } catch (error) {
                 alert('병원 추가 실패: ' + (error.response?.data?.error || '알 수 없는 오류'));
             }
-        }
+        };
 
         // 병원 삭제
         window.deleteHospital = async function(id) {
@@ -1258,7 +1262,7 @@ app.get('/', (c) => {
             } catch (error) {
                 alert('병원 삭제 실패');
             }
-        }
+        };
 
         // ========== 유튜브 ==========
         window.openYoutubeModal = function() {
@@ -1269,8 +1273,8 @@ app.get('/', (c) => {
             document.getElementById('yt-views').value = '0';
             document.getElementById('yt-subscribers').value = '0';
             document.getElementById('youtube-modal').classList.remove('hidden');
-        }
-        window.closeYoutubeModal = function() { document.getElementById('youtube-modal').classList.add('hidden'); }
+        };
+        window.closeYoutubeModal = function() { document.getElementById('youtube-modal').classList.add('hidden'); };
 
         window.addYoutubeEntry = async function() {
             const url = document.getElementById('yt-url').value.trim();
@@ -1289,12 +1293,12 @@ app.get('/', (c) => {
             } catch (error) {
                 alert('추가 실패: ' + (error.response?.data?.error || error.message));
             }
-        }
+        };
 
         window.deleteYoutubeEntry = async function(id) {
             if (!confirm('삭제하시겠습니까?')) return;
             try { await axios.delete(\`/api/youtube/\${id}\`); loadYoutubeEntries(); } catch(e) { alert('삭제 실패'); }
-        }
+        };
 
         window.saveYoutubeEdit = async function(id) {
             const row = document.querySelector(\`[data-yt-id="\${id}"]\`);
@@ -1310,7 +1314,7 @@ app.get('/', (c) => {
                 });
                 loadYoutubeEntries();
             } catch(e) { alert('수정 실패'); }
-        }
+        };
 
         function formatNumber(n) { return (n || 0).toLocaleString(); }
 
@@ -1367,8 +1371,8 @@ app.get('/', (c) => {
             document.getElementById('ig-views').value = '0';
             document.getElementById('ig-followers').value = '0';
             document.getElementById('instagram-modal').classList.remove('hidden');
-        }
-        window.closeInstagramModal = function() { document.getElementById('instagram-modal').classList.add('hidden'); }
+        };
+        window.closeInstagramModal = function() { document.getElementById('instagram-modal').classList.add('hidden'); };
 
         window.addInstagramEntry = async function() {
             const url = document.getElementById('ig-url').value.trim();
@@ -1387,12 +1391,12 @@ app.get('/', (c) => {
             } catch (error) {
                 alert('추가 실패: ' + (error.response?.data?.error || error.message));
             }
-        }
+        };
 
         window.deleteInstagramEntry = async function(id) {
             if (!confirm('삭제하시겠습니까?')) return;
             try { await axios.delete(\`/api/instagram/\${id}\`); loadInstagramEntries(); } catch(e) { alert('삭제 실패'); }
-        }
+        };
 
         window.saveInstagramEdit = async function(id) {
             const row = document.querySelector(\`[data-ig-id="\${id}"]\`);
@@ -1408,7 +1412,7 @@ app.get('/', (c) => {
                 });
                 loadInstagramEntries();
             } catch(e) { alert('수정 실패'); }
-        }
+        };
 
         async function loadInstagramEntries() {
             try {
@@ -1528,7 +1532,7 @@ app.get('/', (c) => {
             } catch (error) {
                 alert('연차/휴가 추가 실패: ' + (error.response?.data?.error || '알 수 없는 오류'));
             }
-        }
+        };
 
         // 연차/휴가 삭제
         window.deleteVacation = async function(id) {
@@ -1541,7 +1545,7 @@ app.get('/', (c) => {
             } catch (error) {
                 alert('연차/휴가 삭제 실패');
             }
-        }
+        };
 
         // 캘린더 초기화
         function initCalendar() {
@@ -2016,7 +2020,7 @@ app.get('/', (c) => {
             setProgressButton(0);
             document.getElementById('task-modal').classList.remove('hidden');
             setTimeout(() => document.getElementById('task-name-input').focus(), 50);
-        }
+        };
 
         window.openEditTaskModal = function(id) {
             const t = __tasksCache.find(x => x.id === id);
@@ -2027,11 +2031,11 @@ app.get('/', (c) => {
             document.getElementById('task-hospital-input').value = t.hospital_id || '';
             setProgressButton(t.progress || 0);
             document.getElementById('task-modal').classList.remove('hidden');
-        }
+        };
 
         window.closeTaskModal = function() {
             document.getElementById('task-modal').classList.add('hidden');
-        }
+        };
 
         window.saveTask = async function() {
             const id = document.getElementById('task-edit-id').value;
@@ -2116,7 +2120,7 @@ app.get('/', (c) => {
 
         window.closeEditModal = function() {
             document.getElementById('edit-schedule-modal').classList.add('hidden');
-        }
+        };
 
         window.saveEditSchedule = async function() {
             const id = document.getElementById('edit-schedule-id').value;
@@ -2145,7 +2149,7 @@ app.get('/', (c) => {
             } catch (error) {
                 alert('수정 실패: ' + (error.response?.data?.error || error.message));
             }
-        }
+        };
 
         window.deleteFromEditModal = async function() {
             const id = document.getElementById('edit-schedule-id').value;
@@ -2157,7 +2161,7 @@ app.get('/', (c) => {
             } catch (error) {
                 alert('삭제 실패');
             }
-        }
+        };
 
         // 수정 모달에서 완료 토글
         window.toggleCompleteFromModal = async function() {
@@ -2172,7 +2176,7 @@ app.get('/', (c) => {
             } catch (error) {
                 alert('상태 변경 실패');
             }
-        }
+        };
 
         // 완료 토글 (우클릭 메뉴에서 사용)
         window.toggleComplete = async function(scheduleId, currentState) {
@@ -2184,7 +2188,7 @@ app.get('/', (c) => {
             } catch (error) {
                 console.error('완료 상태 변경 실패', error);
             }
-        }
+        };
 
         // 날짜 클릭 핸들러 (보고서 추가 모달)
         function handleDateClick(info) {
@@ -2203,7 +2207,7 @@ app.get('/', (c) => {
         // 보고서 모달 닫기
         window.closeReportModal = function() {
             document.getElementById('add-report-modal').classList.add('hidden');
-        }
+        };
 
         // 기본 일정 유형 설정
         // 일정 추가
@@ -2254,7 +2258,7 @@ app.get('/', (c) => {
                 console.error('일정 추가 실패:', error);
                 alert('일정 추가 실패: ' + (error.response?.data?.error || error.message));
             }
-        }
+        };
 
         // 이벤트 드래그 앤 드롭 핸들러
         async function handleEventDrop(info) {
@@ -2457,7 +2461,7 @@ app.get('/', (c) => {
         // 메모 모달 닫기
         window.closeMemoModal = function() {
             document.getElementById('memo-modal').classList.add('hidden');
-        }
+        };
 
         // 메모 저장
         window.saveMemo = async function() {
@@ -2473,7 +2477,7 @@ app.get('/', (c) => {
                 console.error('메모 저장 실패:', error);
                 alert('❌ 메모 저장에 실패했습니다: ' + (error.response?.data?.error || error.message));
             }
-        }
+        };
 
         // 이벤트 위/아래 이동
         async function moveEvent(event, direction) {
@@ -2610,7 +2614,7 @@ app.get('/', (c) => {
                 alert('스케줄 삭제 실패');
                 console.error(error);
             }
-        }
+        };
 
         // 년도/월 선택 초기화
         function initDateSelectors() {
