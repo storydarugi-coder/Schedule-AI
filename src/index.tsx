@@ -600,11 +600,12 @@ async function ensureTaskLogsTable(db: any) {
   } catch (e) {}
 }
 
-// 특정 작업의 기록 목록
-app.get('/api/tasks/:id/logs', async (c) => {
+// 특정 작업의 기록 목록 (경로를 /api/task-logs/list/:taskId 로 두어
+// /api/tasks/:year/:month 라우트와 충돌하지 않도록 함)
+app.get('/api/task-logs/list/:taskId', async (c) => {
   const db = c.env.DB
   await ensureTaskLogsTable(db)
-  const taskId = parseInt(c.req.param('id'))
+  const taskId = parseInt(c.req.param('taskId'))
   if (!taskId || isNaN(taskId)) return c.json({ error: 'Invalid task id' }, 400)
   const result = await db.prepare(
     'SELECT * FROM task_logs WHERE task_id = ? ORDER BY created_at DESC, id DESC'
@@ -613,10 +614,10 @@ app.get('/api/tasks/:id/logs', async (c) => {
 })
 
 // 작업 기록 추가
-app.post('/api/tasks/:id/logs', async (c) => {
+app.post('/api/task-logs/create/:taskId', async (c) => {
   const db = c.env.DB
   await ensureTaskLogsTable(db)
-  const taskId = parseInt(c.req.param('id'))
+  const taskId = parseInt(c.req.param('taskId'))
   const { progress, note } = await c.req.json()
   if (!taskId || isNaN(taskId)) return c.json({ error: 'Invalid task id' }, 400)
 
@@ -878,7 +879,7 @@ app.get('/', (c) => {
                     <i class="fas fa-brain mr-3"></i>
                     Schedule-AI
                 </h1>
-                <p class="text-white text-opacity-90">AI 기반 스마트 업무 스케줄 관리 시스템 <span class="text-[10px] text-white/60 ml-2">v2026.04.15-click</span></p>
+                <p class="text-white text-opacity-90">AI 기반 스마트 업무 스케줄 관리 시스템 <span class="text-[10px] text-white/60 ml-2">v2026.04.15-routefix</span></p>
             </div>
         </header>
 
@@ -2434,7 +2435,7 @@ app.get('/', (c) => {
             if (!t) return;
             if (t.__logs !== undefined) return;
             try {
-                const res = await axios.get(\`/api/tasks/\${taskId}/logs\`);
+                const res = await axios.get(\`/api/task-logs/list/\${taskId}\`);
                 t.__logs = res.data || [];
             } catch (e) {
                 t.__logs = [];
@@ -2490,7 +2491,7 @@ app.get('/', (c) => {
                     await axios.put(\`/api/task-logs/\${logId}\`, { note });
                 } else {
                     // 새 기록 + 진척률 변경
-                    await axios.post(\`/api/tasks/\${taskId}/logs\`, { progress, note });
+                    await axios.post(\`/api/task-logs/create/\${taskId}\`, { progress, note });
                     await axios.put(\`/api/tasks/\${taskId}\`, { progress });
                     // 로컬 업데이트
                     const t = __tasksCache.find(x => x.id === taskId);
@@ -2692,7 +2693,7 @@ app.get('/', (c) => {
                 if (!confirm('내용이 비어 있습니다. 그대로 기록할까요?')) return;
             }
             try {
-                const postRes = await axios.post(\`/api/tasks/\${__detailTaskId}/logs\`, { progress: step, note });
+                const postRes = await axios.post(\`/api/task-logs/create/\${__detailTaskId}\`, { progress: step, note });
                 console.log('[addTaskLogFromDetail] log created', postRes.data);
                 // 진척률이 바뀌었으면 작업의 progress도 같이 업데이트
                 const t = __tasksCache.find(x => x.id === __detailTaskId);
