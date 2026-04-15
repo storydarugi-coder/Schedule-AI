@@ -878,7 +878,7 @@ app.get('/', (c) => {
                     <i class="fas fa-brain mr-3"></i>
                     Schedule-AI
                 </h1>
-                <p class="text-white text-opacity-90">AI 기반 스마트 업무 스케줄 관리 시스템 <span class="text-[10px] text-white/60 ml-2">v2026.04.15-logs</span></p>
+                <p class="text-white text-opacity-90">AI 기반 스마트 업무 스케줄 관리 시스템 <span class="text-[10px] text-white/60 ml-2">v2026.04.15-click</span></p>
             </div>
         </header>
 
@@ -2356,9 +2356,10 @@ app.get('/', (c) => {
                         alert('오류: ' + (err.message || err));
                     }
                 });
-                // 카드 더블클릭 → 상세 모달 열기 (버튼은 제외)
-                statsGrid.addEventListener('dblclick', function(e) {
+                // 카드 단일 클릭 → 상세 모달 열기 (버튼/액션 요소는 제외)
+                statsGrid.addEventListener('click', function(e) {
                     if (e.target.closest('button')) return;
+                    if (e.target.closest('[data-action]')) return;
                     const card = e.target.closest('[data-task-card]');
                     if (!card) return;
                     const id = parseInt(card.dataset.taskCard);
@@ -2546,6 +2547,16 @@ app.get('/', (c) => {
             const t = __tasksCache.find(x => x.id === taskId);
             if (!t) return;
             __detailTaskId = taskId;
+            // 단계 버튼 클릭 바인딩 (최초 1회)
+            const stepPicker = document.getElementById('task-detail-step-picker');
+            if (stepPicker && !stepPicker.__detailStepBound) {
+                stepPicker.addEventListener('click', function(e) {
+                    const btn = e.target.closest('button[data-step]');
+                    if (!btn) return;
+                    setDetailStepButton(parseInt(btn.dataset.step));
+                });
+                stepPicker.__detailStepBound = true;
+            }
             await ensureTaskLogsLoaded(taskId);
             renderTaskDetail();
             document.getElementById('task-detail-modal').classList.remove('hidden');
@@ -2669,14 +2680,20 @@ app.get('/', (c) => {
 
         // 모달 하단 "기록 추가" — 입력창 내용으로 기록 생성 + 진척률 변경
         window.addTaskLogFromDetail = async function() {
-            if (__detailTaskId === null) return;
-            const note = document.getElementById('task-detail-note-input').value.trim();
+            console.log('[addTaskLogFromDetail] taskId=', __detailTaskId, 'step=', __detailStep);
+            if (__detailTaskId === null) {
+                alert('작업이 선택되지 않았습니다. 모달을 닫고 다시 열어주세요.');
+                return;
+            }
+            const noteEl = document.getElementById('task-detail-note-input');
+            const note = noteEl ? noteEl.value.trim() : '';
             const step = __detailStep;
             if (!note) {
                 if (!confirm('내용이 비어 있습니다. 그대로 기록할까요?')) return;
             }
             try {
-                await axios.post(\`/api/tasks/\${__detailTaskId}/logs\`, { progress: step, note });
+                const postRes = await axios.post(\`/api/tasks/\${__detailTaskId}/logs\`, { progress: step, note });
+                console.log('[addTaskLogFromDetail] log created', postRes.data);
                 // 진척률이 바뀌었으면 작업의 progress도 같이 업데이트
                 const t = __tasksCache.find(x => x.id === __detailTaskId);
                 if (t && (t.progress || 0) !== step) {
@@ -2685,10 +2702,11 @@ app.get('/', (c) => {
                 }
                 if (t) t.__logs = undefined;
                 await ensureTaskLogsLoaded(__detailTaskId);
-                document.getElementById('task-detail-note-input').value = '';
+                if (noteEl) noteEl.value = '';
                 renderTaskDetail();
                 renderTasks();
             } catch (error) {
+                console.error('[addTaskLogFromDetail] error', error);
                 alert('기록 추가 실패: ' + (error.response?.data?.error || error.message));
             }
         };
