@@ -23,7 +23,6 @@ export interface MonthlyTask {
   eonron_bodo: number;
   jisikin: number;
   cafe: number;
-  deadline_pull_days: number;
   task_order: string;
   brand_order: number;
   trend_order: number;
@@ -88,7 +87,6 @@ export interface ScheduleRequest {
   trend: number;
   eonron_bodo: number;
   jisikin: number;
-  deadline_pull_days: number;
 }
 
 export interface ScheduleError {

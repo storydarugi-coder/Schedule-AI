@@ -68,11 +68,10 @@ export function getWorkdays(year: number, month: number, vacations: string[] = [
 }
 
 /**
- * 마감일 계산 (당김 적용)
+ * 마감일 계산
  */
-export function calculateDueDate(year: number, month: number, baseDueDay: number, pullDays: number, vacations: string[] = []): Date {
-  const adjustedDay = baseDueDay - pullDays
-  const dueDate = createKSTDate(year, month, adjustedDay)
+export function calculateDueDate(year: number, month: number, baseDueDay: number, vacations: string[] = []): Date {
+  const dueDate = createKSTDate(year, month, baseDueDay)
   
   // 마감일이 주말/공휴일/연차인 경우 그 전 근무일로 자동 이동
   let finalDueDate = dueDate

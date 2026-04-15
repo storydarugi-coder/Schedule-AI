@@ -17,7 +17,6 @@ CREATE TABLE IF NOT EXISTS monthly_tasks (
   trend INTEGER DEFAULT 0,
   eonron_bodo INTEGER DEFAULT 1,
   jisikin INTEGER DEFAULT 1,
-  deadline_pull_days INTEGER DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (hospital_id) REFERENCES hospitals(id) ON DELETE CASCADE,
   UNIQUE(hospital_id, year, month)
