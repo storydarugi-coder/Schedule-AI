@@ -878,7 +878,7 @@ app.get('/', (c) => {
                     <i class="fas fa-brain mr-3"></i>
                     Schedule-AI
                 </h1>
-                <p class="text-white text-opacity-90">AI 기반 스마트 업무 스케줄 관리 시스템</p>
+                <p class="text-white text-opacity-90">AI 기반 스마트 업무 스케줄 관리 시스템 <span class="text-[10px] text-white/60 ml-2">v2026.04.15-logs</span></p>
             </div>
         </header>
 
@@ -1110,27 +1110,6 @@ app.get('/', (c) => {
                 </div>
             </div>
 
-            <!-- 작업 기록 추가/수정 모달 -->
-            <div id="task-log-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                <div class="bg-white rounded-xl shadow-2xl p-6 w-96 max-w-full mx-4">
-                    <h3 id="task-log-modal-title" class="text-xl font-bold text-slate-800 mb-2">
-                        <i class="fas fa-clipboard-list text-indigo-500 mr-2"></i>작업 기록
-                    </h3>
-                    <p id="task-log-subtitle" class="text-sm text-slate-500 mb-4"></p>
-                    <input type="hidden" id="task-log-task-id" value="">
-                    <input type="hidden" id="task-log-id" value="">
-                    <input type="hidden" id="task-log-progress" value="0">
-                    <div class="mb-4">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">어떤 작업을 하셨나요?</label>
-                        <textarea id="task-log-note-input" rows="4" placeholder="예: 썸네일 디자인 완료, 영상 편집 마무리..." class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-indigo-400 focus:outline-none resize-none"></textarea>
-                    </div>
-                    <div class="flex justify-end gap-2">
-                        <button onclick="closeTaskLogModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">취소</button>
-                        <button onclick="saveTaskLog()" class="bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg px-6 py-2 font-semibold shadow-md">저장</button>
-                    </div>
-                </div>
-            </div>
-
             <div class="bg-white rounded-xl shadow-lg p-6 mb-4 border-2 border-purple-100">
                 <div class="flex justify-between items-center mb-6">
                     <h2 class="text-2xl font-bold primary-color">
@@ -1218,6 +1197,27 @@ app.get('/', (c) => {
                 <button onclick="addYoutubeEntry()" class="bg-red-500 hover:bg-red-600 text-white rounded-lg px-6 py-2 font-semibold shadow-md">
                     <i class="fas fa-plus mr-2"></i>추가
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 작업 기록 추가/수정 모달 (루트 레벨 — 탭 영향 받지 않음) -->
+    <div id="task-log-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-2xl p-6 w-96 max-w-full mx-4">
+            <h3 id="task-log-modal-title" class="text-xl font-bold text-slate-800 mb-2">
+                <i class="fas fa-clipboard-list text-indigo-500 mr-2"></i>작업 기록
+            </h3>
+            <p id="task-log-subtitle" class="text-sm text-slate-500 mb-4"></p>
+            <input type="hidden" id="task-log-task-id" value="">
+            <input type="hidden" id="task-log-id" value="">
+            <input type="hidden" id="task-log-progress" value="0">
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">어떤 작업을 하셨나요?</label>
+                <textarea id="task-log-note-input" rows="4" placeholder="예: 썸네일 디자인 완료, 영상 편집 마무리..." class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-indigo-400 focus:outline-none resize-none"></textarea>
+            </div>
+            <div class="flex justify-end gap-2">
+                <button onclick="closeTaskLogModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">취소</button>
+                <button onclick="saveTaskLog()" class="bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg px-6 py-2 font-semibold shadow-md">저장</button>
             </div>
         </div>
     </div>
@@ -2260,23 +2260,33 @@ app.get('/', (c) => {
                 statsGrid.addEventListener('click', function(e) {
                     const btn = e.target.closest('button[data-action]');
                     if (!btn) return;
-                    const id = parseInt(btn.dataset.id);
-                    const action = btn.dataset.action;
-                    if (action === 'setprog') {
-                        const step = parseInt(btn.dataset.step);
-                        openTaskLogModal(id, step);
-                    } else if (action === 'edit') {
-                        openEditTaskModal(id);
-                    } else if (action === 'delete') {
-                        deleteTask(id);
-                    } else if (action === 'togglelogs') {
-                        toggleTaskLogs(id);
-                    } else if (action === 'editlog') {
-                        const logId = parseInt(btn.dataset.logId);
-                        openEditTaskLogModal(id, logId);
-                    } else if (action === 'deletelog') {
-                        const logId = parseInt(btn.dataset.logId);
-                        deleteTaskLog(id, logId);
+                    try {
+                        const id = parseInt(btn.dataset.id);
+                        const action = btn.dataset.action;
+                        console.log('[task action]', action, 'id=', id, 'step=', btn.dataset.step);
+                        if (action === 'setprog') {
+                            const step = parseInt(btn.dataset.step);
+                            if (typeof openTaskLogModal !== 'function') {
+                                alert('작업 기록 기능이 로드되지 않았습니다. 페이지를 강력 새로고침(Ctrl+Shift+R) 해주세요.');
+                                return;
+                            }
+                            openTaskLogModal(id, step);
+                        } else if (action === 'edit') {
+                            openEditTaskModal(id);
+                        } else if (action === 'delete') {
+                            deleteTask(id);
+                        } else if (action === 'togglelogs') {
+                            toggleTaskLogs(id);
+                        } else if (action === 'editlog') {
+                            const logId = parseInt(btn.dataset.logId);
+                            openEditTaskLogModal(id, logId);
+                        } else if (action === 'deletelog') {
+                            const logId = parseInt(btn.dataset.logId);
+                            deleteTaskLog(id, logId);
+                        }
+                    } catch (err) {
+                        console.error('작업 버튼 처리 오류:', err);
+                        alert('오류: ' + (err.message || err));
                     }
                 });
                 statsGrid.__tasksBound = true;
