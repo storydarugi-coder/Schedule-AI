@@ -581,6 +581,111 @@ app.delete('/api/tasks/:id', async (c) => {
 })
 
 // =========================
+// 예산 관리 API
+// type: 'income'(수입) / 'expense'(지출)
+// =========================
+
+async function ensureBudgetsTable(db: any) {
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS budgets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        year INTEGER NOT NULL,
+        month INTEGER NOT NULL,
+        type TEXT NOT NULL DEFAULT 'expense',
+        category TEXT NOT NULL DEFAULT '',
+        description TEXT NOT NULL DEFAULT '',
+        amount INTEGER NOT NULL DEFAULT 0,
+        hospital_id INTEGER,
+        budget_date TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+  } catch (e) {}
+}
+
+// 월별 예산 항목 조회
+app.get('/api/budgets/:year/:month', async (c) => {
+  const db = c.env.DB
+  await ensureBudgetsTable(db)
+  const year = parseInt(c.req.param('year'))
+  const month = parseInt(c.req.param('month'))
+
+  const result = await db.prepare(`
+    SELECT b.*, h.name as hospital_name
+    FROM budgets b
+    LEFT JOIN hospitals h ON b.hospital_id = h.id
+    WHERE b.year = ? AND b.month = ?
+    ORDER BY b.budget_date, b.id
+  `).bind(year, month).all()
+
+  return c.json(result.results)
+})
+
+// 예산 항목 추가
+app.post('/api/budgets', async (c) => {
+  const db = c.env.DB
+  await ensureBudgetsTable(db)
+  const { year, month, type, category, description, amount, hospital_id, budget_date } = await c.req.json()
+
+  if (!year || !month) {
+    return c.json({ error: 'year, month 필수' }, 400)
+  }
+  const t = type === 'income' ? 'income' : 'expense'
+  const amt = Math.max(0, parseInt(amount) || 0)
+
+  const result = await db.prepare(`
+    INSERT INTO budgets (year, month, type, category, description, amount, hospital_id, budget_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    year, month, t,
+    category || '',
+    description || '',
+    amt,
+    hospital_id || null,
+    budget_date || null
+  ).run()
+
+  return c.json({ success: true, id: result.meta.last_row_id })
+})
+
+// 예산 항목 수정
+app.put('/api/budgets/:id', async (c) => {
+  const db = c.env.DB
+  await ensureBudgetsTable(db)
+  const id = parseInt(c.req.param('id'))
+  const data = await c.req.json()
+
+  const fields: string[] = []
+  const values: any[] = []
+  if (data.type !== undefined) {
+    fields.push('type = ?')
+    values.push(data.type === 'income' ? 'income' : 'expense')
+  }
+  if (data.category !== undefined) { fields.push('category = ?'); values.push(data.category) }
+  if (data.description !== undefined) { fields.push('description = ?'); values.push(data.description) }
+  if (data.amount !== undefined) { fields.push('amount = ?'); values.push(Math.max(0, parseInt(data.amount) || 0)) }
+  if (data.hospital_id !== undefined) { fields.push('hospital_id = ?'); values.push(data.hospital_id || null) }
+  if (data.budget_date !== undefined) { fields.push('budget_date = ?'); values.push(data.budget_date || null) }
+
+  if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400)
+
+  values.push(id)
+  await db.prepare(`UPDATE budgets SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run()
+  return c.json({ success: true })
+})
+
+// 예산 항목 삭제
+app.delete('/api/budgets/:id', async (c) => {
+  const db = c.env.DB
+  await ensureBudgetsTable(db)
+  const id = parseInt(c.req.param('id'))
+  if (!id || isNaN(id)) return c.json({ error: 'Invalid id' }, 400)
+  await db.prepare('DELETE FROM budgets WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
+// =========================
 // 연차/휴가 관리 API
 // =========================
 
@@ -712,6 +817,9 @@ app.get('/', (c) => {
                 <button onclick="showTab('instagram')" id="tab-instagram" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
                     <i class="fab fa-instagram mr-2"></i>인스타그램
                 </button>
+                <button onclick="showTab('budget')" id="tab-budget" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
+                    <i class="fas fa-won-sign mr-2"></i>예산 관리
+                </button>
                 <button onclick="showTab('calendar')" id="tab-calendar" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
                     <i class="fas fa-calendar mr-2"></i>캘린더
                 </button>
@@ -779,6 +887,107 @@ app.get('/', (c) => {
                     <select id="vacation-month" onchange="loadVacations()" class="border-2 border-yellow-200 rounded-lg px-4 py-2"></select>
                 </div>
                 <div id="vacations-list" class="space-y-3"></div>
+            </div>
+        </div>
+
+        <!-- 예산 관리 탭 -->
+        <div id="content-budget" class="tab-content hidden">
+            <div class="bg-white rounded-xl shadow-lg p-6 mb-4 border border-slate-200">
+                <div class="flex flex-wrap justify-between items-center gap-3 mb-5">
+                    <h2 class="text-2xl font-bold text-slate-800">
+                        <i class="fas fa-won-sign mr-2 text-emerald-500"></i>예산 관리
+                    </h2>
+                    <div class="flex gap-2 items-center">
+                        <select id="budget-year" onchange="loadBudgets()" class="border-2 border-emerald-200 rounded-lg px-4 py-2"></select>
+                        <select id="budget-month" onchange="loadBudgets()" class="border-2 border-emerald-200 rounded-lg px-4 py-2"></select>
+                        <button onclick="openAddBudgetModal()" class="bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg px-4 py-2 text-sm font-semibold shadow-sm">
+                            <i class="fas fa-plus mr-1"></i>항목 추가
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 월별 요약 카드 -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+                    <div class="bg-sky-50 border border-sky-200 rounded-lg p-4">
+                        <div class="text-xs text-sky-700 font-semibold mb-1">수입</div>
+                        <div id="budget-income" class="text-xl font-bold text-sky-700 tabular-nums">0원</div>
+                    </div>
+                    <div class="bg-rose-50 border border-rose-200 rounded-lg p-4">
+                        <div class="text-xs text-rose-700 font-semibold mb-1">지출</div>
+                        <div id="budget-expense" class="text-xl font-bold text-rose-700 tabular-nums">0원</div>
+                    </div>
+                    <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                        <div class="text-xs text-indigo-700 font-semibold mb-1">순이익 (수입-지출)</div>
+                        <div id="budget-net" class="text-xl font-bold text-indigo-700 tabular-nums">0원</div>
+                    </div>
+                    <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
+                        <div class="text-xs text-slate-600 font-semibold mb-1">지난 달 지출 대비</div>
+                        <div id="budget-compare" class="text-xl font-bold text-slate-700 tabular-nums">—</div>
+                        <div id="budget-compare-sub" class="text-[11px] text-slate-500 mt-0.5">지난달 0원</div>
+                    </div>
+                </div>
+
+                <!-- 예산 항목 목록 -->
+                <div class="border border-slate-200 rounded-lg overflow-hidden">
+                    <div class="grid grid-cols-12 gap-2 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-600">
+                        <div class="col-span-2">결제일</div>
+                        <div class="col-span-1">구분</div>
+                        <div class="col-span-2">카테고리</div>
+                        <div class="col-span-3">내용</div>
+                        <div class="col-span-2">병원</div>
+                        <div class="col-span-1 text-right">금액</div>
+                        <div class="col-span-1 text-right">관리</div>
+                    </div>
+                    <div id="budget-list" class="divide-y divide-slate-100"></div>
+                    <div id="budget-empty" class="text-center text-slate-400 text-sm py-8 hidden">
+                        등록된 예산 항목이 없습니다. 상단 "항목 추가"로 시작해보세요.
+                    </div>
+                </div>
+            </div>
+
+            <!-- 예산 추가/수정 모달 -->
+            <div id="budget-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                <div class="bg-white rounded-xl shadow-2xl p-6 w-[28rem] max-w-full mx-4">
+                    <h3 id="budget-modal-title" class="text-xl font-bold text-slate-800 mb-4">
+                        <i class="fas fa-plus-circle text-emerald-500 mr-2"></i>예산 항목 추가
+                    </h3>
+                    <input type="hidden" id="budget-edit-id" value="">
+                    <div class="mb-3">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">구분</label>
+                        <div class="flex gap-2">
+                            <button type="button" data-budget-type="expense" class="budget-type-btn flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors bg-rose-500 border-rose-500 text-white">지출</button>
+                            <button type="button" data-budget-type="income" class="budget-type-btn flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors bg-white border-slate-200 text-slate-600">수입</button>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">결제일</label>
+                        <input type="date" id="budget-date-input" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-emerald-400 focus:outline-none">
+                    </div>
+                    <div class="grid grid-cols-2 gap-3 mb-3">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">카테고리</label>
+                            <input type="text" id="budget-category-input" placeholder="예: 광고비, 급여" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-emerald-400 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">금액(원)</label>
+                            <input type="number" id="budget-amount-input" min="0" step="1000" value="0" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-emerald-400 focus:outline-none tabular-nums">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">내용</label>
+                        <input type="text" id="budget-description-input" placeholder="상세 내용" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-emerald-400 focus:outline-none">
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">병원 (선택)</label>
+                        <select id="budget-hospital-input" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-emerald-400 focus:outline-none">
+                            <option value="">선택 안함</option>
+                        </select>
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button onclick="closeBudgetModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">취소</button>
+                        <button onclick="saveBudget()" class="bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg px-6 py-2 font-semibold shadow-md">저장</button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -1158,6 +1367,9 @@ app.get('/', (c) => {
             }
             if (tab === 'instagram') {
                 loadInstagramEntries();
+            }
+            if (tab === 'budget') {
+                loadBudgets();
             }
         };
 
@@ -2650,7 +2862,303 @@ app.get('/', (c) => {
             for (let m = 1; m <= 12; m++) {
                 calMonth.innerHTML += \`<option value="\${m}" \${m === currentMonth ? 'selected' : ''}>\${m}월</option>\`;
             }
+
+            // 예산 관리 탭
+            const budgetYear = document.getElementById('budget-year');
+            const budgetMonth = document.getElementById('budget-month');
+            if (budgetYear && budgetMonth) {
+                for (let y = currentYear - 1; y <= currentYear + 2; y++) {
+                    budgetYear.innerHTML += \`<option value="\${y}" \${y === currentYear ? 'selected' : ''}>\${y}년</option>\`;
+                }
+                for (let m = 1; m <= 12; m++) {
+                    budgetMonth.innerHTML += \`<option value="\${m}" \${m === currentMonth ? 'selected' : ''}>\${m}월</option>\`;
+                }
+            }
         }
+
+        // =========================
+        // 예산 관리
+        // =========================
+        let __budgetCache = [];
+        let __budgetEditingType = 'expense';
+
+        function formatWon(n) {
+            return (n || 0).toLocaleString('ko-KR') + '원';
+        }
+
+        async function populateBudgetHospitals() {
+            try {
+                const res = await axios.get('/api/hospitals');
+                const hospitals = res.data || [];
+                const sel = document.getElementById('budget-hospital-input');
+                if (!sel) return;
+                const prev = sel.value;
+                while (sel.options.length > 1) sel.remove(1);
+                hospitals.forEach(h => {
+                    if (h.name === '기타') return;
+                    const o = document.createElement('option');
+                    o.value = h.id; o.textContent = h.name;
+                    sel.appendChild(o);
+                });
+                if (prev) sel.value = prev;
+            } catch (e) { console.error('병원 로드 실패', e); }
+        }
+
+        async function loadBudgets() {
+            const year = parseInt(document.getElementById('budget-year').value);
+            const month = parseInt(document.getElementById('budget-month').value);
+            if (!year || !month) return;
+            try {
+                await populateBudgetHospitals();
+
+                // 당월 + 전월 조회 (전월 대비 비교용)
+                const [curRes, prevRes] = await Promise.all([
+                    axios.get(\`/api/budgets/\${year}/\${month}\`),
+                    (function() {
+                        let py = year, pm = month - 1;
+                        if (pm < 1) { pm = 12; py = year - 1; }
+                        return axios.get(\`/api/budgets/\${py}/\${pm}\`);
+                    })()
+                ]);
+                __budgetCache = curRes.data || [];
+                const prev = prevRes.data || [];
+
+                renderBudgetSummary(__budgetCache, prev);
+                renderBudgetList(__budgetCache);
+            } catch (error) {
+                console.error('예산 로드 실패', error);
+            }
+        }
+        window.loadBudgets = loadBudgets;
+
+        function sumByType(items, type) {
+            return items.filter(b => b.type === type).reduce((acc, b) => acc + (b.amount || 0), 0);
+        }
+
+        function renderBudgetSummary(cur, prev) {
+            const income = sumByType(cur, 'income');
+            const expense = sumByType(cur, 'expense');
+            const net = income - expense;
+            const prevExpense = sumByType(prev, 'expense');
+
+            document.getElementById('budget-income').textContent = formatWon(income);
+            document.getElementById('budget-expense').textContent = formatWon(expense);
+            const netEl = document.getElementById('budget-net');
+            netEl.textContent = (net >= 0 ? '+' : '') + formatWon(net);
+            netEl.className = 'text-xl font-bold tabular-nums ' + (net >= 0 ? 'text-indigo-700' : 'text-rose-700');
+
+            const compareEl = document.getElementById('budget-compare');
+            const compareSub = document.getElementById('budget-compare-sub');
+            const diff = expense - prevExpense;
+            compareSub.textContent = \`지난달 \${formatWon(prevExpense)}\`;
+            if (prevExpense === 0 && expense === 0) {
+                compareEl.textContent = '—';
+                compareEl.className = 'text-xl font-bold tabular-nums text-slate-500';
+            } else if (diff > 0) {
+                compareEl.textContent = '+' + formatWon(diff) + ' 더 나감';
+                compareEl.className = 'text-xl font-bold tabular-nums text-rose-600';
+            } else if (diff < 0) {
+                compareEl.textContent = formatWon(Math.abs(diff)) + ' 덜 나감';
+                compareEl.className = 'text-xl font-bold tabular-nums text-emerald-600';
+            } else {
+                compareEl.textContent = '동일';
+                compareEl.className = 'text-xl font-bold tabular-nums text-slate-500';
+            }
+        }
+
+        function renderBudgetList(items) {
+            const list = document.getElementById('budget-list');
+            const empty = document.getElementById('budget-empty');
+            if (!items || items.length === 0) {
+                list.innerHTML = '';
+                empty.classList.remove('hidden');
+                return;
+            }
+            empty.classList.add('hidden');
+
+            // 결제일 오름차순
+            const sorted = [...items].sort((a, b) => {
+                const da = a.budget_date || '9999-12-31';
+                const db = b.budget_date || '9999-12-31';
+                return da.localeCompare(db);
+            });
+
+            function esc(s) {
+                return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            }
+
+            let html = '';
+            for (const b of sorted) {
+                const isIncome = b.type === 'income';
+                const typeBadge = isIncome
+                    ? '<span class="inline-block text-[11px] font-semibold text-sky-700 bg-sky-100 rounded px-2 py-0.5">수입</span>'
+                    : '<span class="inline-block text-[11px] font-semibold text-rose-700 bg-rose-100 rounded px-2 py-0.5">지출</span>';
+                const dateStr = b.budget_date ? b.budget_date.slice(5).replace('-', '/') : '—';
+                const amountClass = isIncome ? 'text-sky-700' : 'text-rose-700';
+                const amountPrefix = isIncome ? '+' : '-';
+                html += \`
+                    <div class="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm hover:bg-slate-50">
+                        <div class="col-span-2 text-slate-700 tabular-nums">\${dateStr}</div>
+                        <div class="col-span-1">\${typeBadge}</div>
+                        <div class="col-span-2 text-slate-700 truncate" title="\${esc(b.category)}">\${esc(b.category) || '—'}</div>
+                        <div class="col-span-3 text-slate-700 truncate" title="\${esc(b.description)}">\${esc(b.description) || '—'}</div>
+                        <div class="col-span-2 text-slate-500 text-xs truncate">\${esc(b.hospital_name) || '—'}</div>
+                        <div class="col-span-1 text-right font-bold tabular-nums \${amountClass}">\${amountPrefix}\${formatWon(b.amount)}</div>
+                        <div class="col-span-1 flex justify-end gap-1">
+                            <button data-action="edit" data-id="\${b.id}" title="수정" class="w-7 h-7 flex items-center justify-center rounded-md text-indigo-600 hover:bg-indigo-100">
+                                <i class="fas fa-pen text-xs"></i>
+                            </button>
+                            <button data-action="delete" data-id="\${b.id}" title="삭제" class="w-7 h-7 flex items-center justify-center rounded-md text-rose-600 hover:bg-rose-100">
+                                <i class="fas fa-trash text-xs"></i>
+                            </button>
+                        </div>
+                    </div>
+                \`;
+            }
+            list.innerHTML = html;
+
+            if (!list.__budgetBound) {
+                list.addEventListener('click', function(e) {
+                    const btn = e.target.closest('button[data-action]');
+                    if (!btn) return;
+                    const id = parseInt(btn.dataset.id);
+                    if (btn.dataset.action === 'edit') openEditBudgetModal(id);
+                    else if (btn.dataset.action === 'delete') deleteBudget(id);
+                });
+                list.__budgetBound = true;
+            }
+        }
+
+        async function deleteBudget(id) {
+            const item = __budgetCache.find(x => x.id === id);
+            const label = item ? (item.description || item.category || '항목') : '항목';
+            if (!confirm(\`'\${label}'을(를) 삭제하시겠습니까?\`)) return;
+            try {
+                await axios.delete(\`/api/budgets/\${id}\`);
+                loadBudgets();
+            } catch (error) {
+                alert('삭제 실패: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        function setBudgetTypeButton(type) {
+            __budgetEditingType = type;
+            document.querySelectorAll('.budget-type-btn').forEach(btn => {
+                const v = btn.dataset.budgetType;
+                if (v === type) {
+                    if (type === 'income') {
+                        btn.className = 'budget-type-btn flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors bg-sky-500 border-sky-500 text-white';
+                    } else {
+                        btn.className = 'budget-type-btn flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors bg-rose-500 border-rose-500 text-white';
+                    }
+                } else {
+                    btn.className = 'budget-type-btn flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors bg-white border-slate-200 text-slate-600 hover:border-slate-300';
+                }
+            });
+        }
+
+        window.openAddBudgetModal = function() {
+            populateBudgetHospitals();
+            document.getElementById('budget-modal-title').innerHTML = '<i class="fas fa-plus-circle text-emerald-500 mr-2"></i>예산 항목 추가';
+            document.getElementById('budget-edit-id').value = '';
+            document.getElementById('budget-category-input').value = '';
+            document.getElementById('budget-description-input').value = '';
+            document.getElementById('budget-amount-input').value = '0';
+            document.getElementById('budget-hospital-input').value = '';
+            // 기본 결제일 = 선택된 년/월의 오늘 일자
+            const y = document.getElementById('budget-year').value;
+            const m = document.getElementById('budget-month').value;
+            const now = new Date();
+            const day = String(now.getDate()).padStart(2, '0');
+            document.getElementById('budget-date-input').value = \`\${y}-\${String(m).padStart(2, '0')}-\${day}\`;
+            setBudgetTypeButton('expense');
+            document.getElementById('budget-modal').classList.remove('hidden');
+            setTimeout(() => document.getElementById('budget-category-input').focus(), 50);
+        };
+
+        window.openEditBudgetModal = function(id) {
+            const b = __budgetCache.find(x => x.id === id);
+            if (!b) return;
+            populateBudgetHospitals();
+            document.getElementById('budget-modal-title').innerHTML = '<i class="fas fa-pen text-emerald-500 mr-2"></i>예산 항목 수정';
+            document.getElementById('budget-edit-id').value = String(id);
+            document.getElementById('budget-category-input').value = b.category || '';
+            document.getElementById('budget-description-input').value = b.description || '';
+            document.getElementById('budget-amount-input').value = String(b.amount || 0);
+            document.getElementById('budget-hospital-input').value = b.hospital_id || '';
+            document.getElementById('budget-date-input').value = b.budget_date || '';
+            setBudgetTypeButton(b.type === 'income' ? 'income' : 'expense');
+            document.getElementById('budget-modal').classList.remove('hidden');
+        };
+
+        window.closeBudgetModal = function() {
+            document.getElementById('budget-modal').classList.add('hidden');
+        };
+
+        window.saveBudget = async function() {
+            const id = document.getElementById('budget-edit-id').value;
+            const type = __budgetEditingType;
+            const category = document.getElementById('budget-category-input').value.trim();
+            const description = document.getElementById('budget-description-input').value.trim();
+            const amount = parseInt(document.getElementById('budget-amount-input').value) || 0;
+            const hospitalId = document.getElementById('budget-hospital-input').value;
+            const budgetDate = document.getElementById('budget-date-input').value;
+
+            if (!category && !description) {
+                alert('카테고리나 내용 중 하나는 입력해주세요');
+                return;
+            }
+            if (amount <= 0) {
+                alert('금액을 입력해주세요');
+                return;
+            }
+
+            // 결제일이 있으면 그 달로 귀속, 없으면 탭에서 선택한 달로
+            let year, month;
+            if (budgetDate) {
+                const [y, m] = budgetDate.split('-');
+                year = parseInt(y);
+                month = parseInt(m);
+            } else {
+                year = parseInt(document.getElementById('budget-year').value);
+                month = parseInt(document.getElementById('budget-month').value);
+            }
+
+            try {
+                if (id) {
+                    await axios.put(\`/api/budgets/\${id}\`, {
+                        type, category, description, amount,
+                        hospital_id: hospitalId ? parseInt(hospitalId) : null,
+                        budget_date: budgetDate || null
+                    });
+                } else {
+                    await axios.post('/api/budgets', {
+                        year, month, type, category, description, amount,
+                        hospital_id: hospitalId ? parseInt(hospitalId) : null,
+                        budget_date: budgetDate || null
+                    });
+                }
+                closeBudgetModal();
+                // 연/월이 변경됐을 수 있으므로 탭 셀렉터 동기화 후 reload
+                if (year && month) {
+                    document.getElementById('budget-year').value = String(year);
+                    document.getElementById('budget-month').value = String(month);
+                }
+                loadBudgets();
+            } catch (error) {
+                alert('저장 실패: ' + (error.response?.data?.error || error.message));
+            }
+        };
+
+        // 모달 구분 버튼 바인딩
+        function bindBudgetTypeButtons() {
+            const btns = document.querySelectorAll('.budget-type-btn');
+            if (!btns || btns.length === 0) { setTimeout(bindBudgetTypeButtons, 50); return; }
+            btns.forEach(btn => {
+                btn.addEventListener('click', () => setBudgetTypeButton(btn.dataset.budgetType));
+            });
+        }
+        bindBudgetTypeButtons();
 
         // 초기화
         document.addEventListener('DOMContentLoaded', () => {
