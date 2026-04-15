@@ -461,76 +461,6 @@ app.delete('/api/schedules/item/:id', async (c) => {
   return c.json({ success: true })
 })
 
-// 작업 그룹 일괄 완료 처리 (task_type 기준, 연/월/병원 필터)
-app.put('/api/schedules/bulk/complete', async (c) => {
-  const db = c.env.DB
-  const { year, month, task_type, hospital_id, is_completed } = await c.req.json()
-
-  if (!year || !month || task_type === undefined) {
-    return c.json({ error: 'year, month, task_type 필수' }, 400)
-  }
-
-  const conditions: string[] = ['year = ?', 'month = ?', 'task_type = ?']
-  const values: any[] = [year, month, task_type]
-  if (hospital_id && hospital_id !== 'all') {
-    conditions.push('hospital_id = ?')
-    values.push(hospital_id)
-  }
-
-  values.unshift(is_completed ? 1 : 0)
-  await db.prepare(
-    `UPDATE schedules SET is_completed = ? WHERE ${conditions.join(' AND ')}`
-  ).bind(...values).run()
-
-  return c.json({ success: true })
-})
-
-// 작업 그룹 이름 일괄 수정 (task_type 기준)
-app.put('/api/schedules/bulk/rename', async (c) => {
-  const db = c.env.DB
-  const { year, month, task_type, hospital_id, new_name } = await c.req.json()
-
-  if (!year || !month || task_type === undefined || !new_name) {
-    return c.json({ error: 'year, month, task_type, new_name 필수' }, 400)
-  }
-
-  const conditions: string[] = ['year = ?', 'month = ?', 'task_type = ?']
-  const values: any[] = [new_name, new_name, year, month, task_type]
-  if (hospital_id && hospital_id !== 'all') {
-    conditions.push('hospital_id = ?')
-    values.push(hospital_id)
-  }
-
-  await db.prepare(
-    `UPDATE schedules SET task_name = ?, task_type = ? WHERE ${conditions.join(' AND ')}`
-  ).bind(...values).run()
-
-  return c.json({ success: true })
-})
-
-// 작업 그룹 일괄 삭제 (task_type 기준)
-app.delete('/api/schedules/bulk', async (c) => {
-  const db = c.env.DB
-  const { year, month, task_type, hospital_id } = await c.req.json()
-
-  if (!year || !month || task_type === undefined) {
-    return c.json({ error: 'year, month, task_type 필수' }, 400)
-  }
-
-  const conditions: string[] = ['year = ?', 'month = ?', 'task_type = ?']
-  const values: any[] = [year, month, task_type]
-  if (hospital_id && hospital_id !== 'all') {
-    conditions.push('hospital_id = ?')
-    values.push(hospital_id)
-  }
-
-  await db.prepare(
-    `DELETE FROM schedules WHERE ${conditions.join(' AND ')}`
-  ).bind(...values).run()
-
-  return c.json({ success: true })
-})
-
 // 스케줄 메모 업데이트
 app.put('/api/schedules/memo/:id', async (c) => {
   const db = c.env.DB
@@ -544,6 +474,109 @@ app.put('/api/schedules/memo/:id', async (c) => {
   await db.prepare('UPDATE schedules SET memo = ? WHERE id = ?')
     .bind(memo || '', scheduleId).run()
 
+  return c.json({ success: true })
+})
+
+// =========================
+// 독립 작업 관리 API (캘린더와 분리)
+// progress: 0~4 (0=0%, 1=25%, 2=50%, 3=75%, 4=100%)
+// =========================
+
+async function ensureTasksTable(db: any) {
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        hospital_id INTEGER,
+        year INTEGER NOT NULL,
+        month INTEGER NOT NULL,
+        progress INTEGER NOT NULL DEFAULT 0,
+        order_index INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+  } catch (e) {}
+}
+
+// 월별 작업 목록
+app.get('/api/tasks/:year/:month', async (c) => {
+  const db = c.env.DB
+  await ensureTasksTable(db)
+  const year = parseInt(c.req.param('year'))
+  const month = parseInt(c.req.param('month'))
+
+  const result = await db.prepare(`
+    SELECT t.*, h.name as hospital_name
+    FROM tasks t
+    LEFT JOIN hospitals h ON t.hospital_id = h.id
+    WHERE t.year = ? AND t.month = ?
+    ORDER BY t.order_index, t.id
+  `).bind(year, month).all()
+
+  return c.json(result.results)
+})
+
+// 작업 추가
+app.post('/api/tasks', async (c) => {
+  const db = c.env.DB
+  await ensureTasksTable(db)
+  const { name, hospital_id, year, month, progress } = await c.req.json()
+
+  if (!name || !year || !month) {
+    return c.json({ error: 'name, year, month 필수' }, 400)
+  }
+
+  const lastOrder = await db.prepare(
+    'SELECT MAX(order_index) as max_order FROM tasks WHERE year = ? AND month = ?'
+  ).bind(year, month).first()
+  const orderIndex = ((lastOrder?.max_order as number) ?? -1) + 1
+
+  const result = await db.prepare(`
+    INSERT INTO tasks (name, hospital_id, year, month, progress, order_index)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).bind(
+    name,
+    hospital_id || null,
+    year,
+    month,
+    Math.max(0, Math.min(4, parseInt(progress) || 0)),
+    orderIndex
+  ).run()
+
+  return c.json({ success: true, id: result.meta.last_row_id })
+})
+
+// 작업 수정 (이름, 진척률, 병원)
+app.put('/api/tasks/:id', async (c) => {
+  const db = c.env.DB
+  await ensureTasksTable(db)
+  const id = parseInt(c.req.param('id'))
+  const data = await c.req.json()
+
+  const fields: string[] = []
+  const values: any[] = []
+  if (data.name !== undefined) { fields.push('name = ?'); values.push(data.name) }
+  if (data.hospital_id !== undefined) { fields.push('hospital_id = ?'); values.push(data.hospital_id || null) }
+  if (data.progress !== undefined) {
+    const p = Math.max(0, Math.min(4, parseInt(data.progress) || 0))
+    fields.push('progress = ?'); values.push(p)
+  }
+
+  if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400)
+
+  values.push(id)
+  await db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run()
+  return c.json({ success: true })
+})
+
+// 작업 삭제
+app.delete('/api/tasks/:id', async (c) => {
+  const db = c.env.DB
+  await ensureTasksTable(db)
+  const id = parseInt(c.req.param('id'))
+  if (!id || isNaN(id)) return c.json({ error: 'Invalid id' }, 400)
+  await db.prepare('DELETE FROM tasks WHERE id = ?').bind(id).run()
   return c.json({ success: true })
 })
 
@@ -747,23 +780,63 @@ app.get('/', (c) => {
 
         <!-- 캘린더 탭 -->
         <div id="content-calendar" class="tab-content hidden">
-            <!-- 작업 개수 현황표 -->
-            <div id="task-stats" class="bg-white rounded-xl shadow-lg p-6 mb-4 border border-slate-200 hidden">
+            <!-- 작업 현황 (캘린더와 분리된 독립 작업 목록) -->
+            <div id="task-stats" class="bg-white rounded-xl shadow-lg p-6 mb-4 border border-slate-200">
                 <div class="flex flex-wrap justify-between items-center gap-3 mb-5">
                     <div class="flex items-center gap-3">
                         <h3 class="text-lg font-bold text-slate-800">
                             <i class="fas fa-tasks mr-2 text-indigo-500"></i>작업 현황
                         </h3>
-                        <span id="stats-overall-badge" class="text-sm font-semibold px-3 py-1 rounded-full bg-indigo-50 text-indigo-700"></span>
+                        <span id="stats-overall-badge" class="text-sm font-semibold px-3 py-1 rounded-full bg-indigo-50 text-indigo-700">전체 0/0 · 0%</span>
                     </div>
                     <div class="flex gap-2 items-center">
                         <label class="text-sm text-gray-600">병원:</label>
-                        <select id="stats-hospital" onchange="updateStatsForHospital()" class="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none">
+                        <select id="stats-hospital" onchange="renderTasks()" class="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none">
                             <option value="all">전체</option>
                         </select>
+                        <button onclick="openAddTaskModal()" class="bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm font-semibold shadow-sm">
+                            <i class="fas fa-plus mr-1"></i>작업 추가
+                        </button>
                     </div>
                 </div>
                 <div id="stats-grid" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                </div>
+                <div id="stats-empty" class="text-center text-slate-400 text-sm py-6 hidden">
+                    아직 작업이 없습니다. 상단의 "작업 추가" 버튼으로 추가해주세요.
+                </div>
+            </div>
+
+            <!-- 작업 추가/수정 모달 -->
+            <div id="task-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                <div class="bg-white rounded-xl shadow-2xl p-6 w-96 max-w-full mx-4">
+                    <h3 id="task-modal-title" class="text-xl font-bold text-slate-800 mb-4">
+                        <i class="fas fa-plus-circle text-indigo-500 mr-2"></i>작업 추가
+                    </h3>
+                    <input type="hidden" id="task-edit-id" value="">
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">작업 이름</label>
+                        <input type="text" id="task-name-input" placeholder="예: 유튜브 기능 추가" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-indigo-400 focus:outline-none">
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">병원 (선택)</label>
+                        <select id="task-hospital-input" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-indigo-400 focus:outline-none">
+                            <option value="">선택 안함</option>
+                        </select>
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">진척률 (5단계)</label>
+                        <div id="task-progress-input" class="flex gap-2" data-value="0">
+                            <button type="button" data-p="0" class="flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors">0%</button>
+                            <button type="button" data-p="1" class="flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors">25%</button>
+                            <button type="button" data-p="2" class="flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors">50%</button>
+                            <button type="button" data-p="3" class="flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors">75%</button>
+                            <button type="button" data-p="4" class="flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors">100%</button>
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button onclick="closeTaskModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">취소</button>
+                        <button onclick="saveTask()" class="bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg px-6 py-2 font-semibold shadow-md">저장</button>
+                    </div>
                 </div>
             </div>
             
@@ -776,8 +849,8 @@ app.get('/', (c) => {
                         <button onclick="deleteAllSchedules()" class="bg-red-500 hover:bg-red-600 text-white rounded-lg px-4 py-2 font-semibold shadow-md hover:shadow-lg transition-all">
                             <i class="fas fa-trash-alt mr-2"></i>전체 삭제
                         </button>
-                        <select id="calendar-year" onchange="loadCalendar()" class="border-2 border-purple-200 rounded-lg px-4 py-2"></select>
-                        <select id="calendar-month" onchange="loadCalendar()" class="border-2 border-purple-200 rounded-lg px-4 py-2"></select>
+                        <select id="calendar-year" onchange="loadCalendar(); loadTasks();" class="border-2 border-purple-200 rounded-lg px-4 py-2"></select>
+                        <select id="calendar-month" onchange="loadCalendar(); loadTasks();" class="border-2 border-purple-200 rounded-lg px-4 py-2"></select>
                     </div>
                 </div>
                 <div id="calendar"></div>
@@ -1609,6 +1682,7 @@ app.get('/', (c) => {
             });
             calendar.render();
             loadCalendar();
+            loadTasks();
         }
 
         // 캘린더 로드
@@ -1695,12 +1769,6 @@ app.get('/', (c) => {
                 calendar.addEventSource(events.concat(vacationEvents));
                 calendar.gotoDate(\`\${year}-\${month.padStart(2, '0')}-01\`);
                 
-                // 병원 목록 업데이트 (통계용)
-                updateStatsHospitalList(scheduleRes.data);
-                
-                // 작업 통계 업데이트
-                updateTaskStats(scheduleRes.data);
-
                 // 일별 총 근무시간 표시
                 displayDailyTotalHours(scheduleRes.data);
             } catch (error) {
@@ -1740,92 +1808,85 @@ app.get('/', (c) => {
             }, 100);
         }
         
-        // 통계용 병원 목록 업데이트
-        function updateStatsHospitalList(schedules) {
-            const hospitalSelect = document.getElementById('stats-hospital');
-            const uniqueHospitals = [...new Set(schedules.map(s => JSON.stringify({ id: s.hospital_id, name: s.hospital_name })))].map(s => JSON.parse(s));
-            
-            // 기존 옵션 제거 (전체 제외)
-            while (hospitalSelect.options.length > 1) {
-                hospitalSelect.remove(1);
-            }
-            
-            // 병원 옵션 추가
-            uniqueHospitals.forEach(h => {
-                const option = document.createElement('option');
-                option.value = h.id;
-                option.textContent = h.name;
-                hospitalSelect.appendChild(option);
-            });
-        }
-        
-        // 병원별 통계 업데이트 (드롭다운에서 선택 시)
-        async function updateStatsForHospital() {
+        // 독립 작업 목록 (캘린더와 분리)
+        let __tasksCache = [];
+
+        async function loadTasks() {
             const year = document.getElementById('calendar-year').value;
             const month = document.getElementById('calendar-month').value;
-            
             if (!year || !month) return;
-            
             try {
-                const scheduleRes = await axios.get(\`/api/schedules/\${year}/\${month}\`);
-                updateTaskStats(scheduleRes.data);
+                // 병원 목록을 독립적으로 채움 (캘린더 일정이 없어도 동작)
+                await populateHospitalDropdowns();
+                const res = await axios.get(\`/api/tasks/\${year}/\${month}\`);
+                __tasksCache = res.data || [];
+                renderTasks();
             } catch (error) {
-                console.error('통계 업데이트 실패', error);
+                console.error('작업 로드 실패', error);
             }
         }
-        
-        // 작업 통계 업데이트 (동적)
-        function updateTaskStats(schedules) {
+        window.loadTasks = loadTasks;
+
+        async function populateHospitalDropdowns() {
+            try {
+                const res = await axios.get('/api/hospitals');
+                const hospitals = res.data || [];
+                const filterSel = document.getElementById('stats-hospital');
+                const modalSel = document.getElementById('task-hospital-input');
+                const prevFilter = filterSel.value;
+                const prevModal = modalSel.value;
+                while (filterSel.options.length > 1) filterSel.remove(1);
+                while (modalSel.options.length > 1) modalSel.remove(1);
+                hospitals.forEach(h => {
+                    if (h.name === '기타') return;
+                    const o1 = document.createElement('option');
+                    o1.value = h.id; o1.textContent = h.name;
+                    filterSel.appendChild(o1);
+                    const o2 = document.createElement('option');
+                    o2.value = h.id; o2.textContent = h.name;
+                    modalSel.appendChild(o2);
+                });
+                if (prevFilter) filterSel.value = prevFilter;
+                if (prevModal) modalSel.value = prevModal;
+            } catch (e) {
+                console.error('병원 목록 로드 실패', e);
+            }
+        }
+
+        // 진척률 단계 → 퍼센트
+        const PROGRESS_PCT = [0, 25, 50, 75, 100];
+        function progressBarColor(step) {
+            if (step >= 4) return 'bg-emerald-500';
+            if (step === 3) return 'bg-indigo-500';
+            if (step === 2) return 'bg-sky-500';
+            if (step === 1) return 'bg-amber-500';
+            return 'bg-slate-300';
+        }
+
+        function renderTasks() {
             const statsGrid = document.getElementById('stats-grid');
             const overallBadge = document.getElementById('stats-overall-badge');
-            if (!schedules || schedules.length === 0) {
-                document.getElementById('task-stats').classList.add('hidden');
-                return;
-            }
+            const emptyEl = document.getElementById('stats-empty');
 
             const selectedHospital = document.getElementById('stats-hospital').value;
-            const filteredSchedules = selectedHospital === 'all'
-                ? schedules
-                : schedules.filter(s => s.hospital_id == selectedHospital);
+            const filtered = selectedHospital === 'all'
+                ? __tasksCache
+                : __tasksCache.filter(t => String(t.hospital_id) === String(selectedHospital));
 
-            if (filteredSchedules.length === 0) {
-                document.getElementById('task-stats').classList.add('hidden');
+            // 전체 평균 진척률
+            const total = filtered.length;
+            const sumPct = filtered.reduce((acc, t) => acc + PROGRESS_PCT[t.progress || 0], 0);
+            const overall = total > 0 ? Math.round(sumPct / total) : 0;
+            const doneCount = filtered.filter(t => (t.progress || 0) >= 4).length;
+            overallBadge.textContent = \`전체 \${doneCount}/\${total} · \${overall}%\`;
+
+            if (total === 0) {
+                statsGrid.innerHTML = '';
+                emptyEl.classList.remove('hidden');
                 return;
             }
+            emptyEl.classList.add('hidden');
 
-            // 작업 타입별 통계 (동적 수집)
-            const stats = {};
-            filteredSchedules.forEach(s => {
-                const type = s.task_type || 'unknown';
-                const label = s.task_name || type;
-                if (!stats[type]) stats[type] = { label: label, total: 0, completed: 0 };
-                stats[type].total++;
-                if (s.is_completed) stats[type].completed++;
-            });
-
-            // 전체 진행률
-            const totalTasks = Object.values(stats).reduce((sum, s) => sum + s.total, 0);
-            const completedTasks = Object.values(stats).reduce((sum, s) => sum + s.completed, 0);
-            const overall = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
-            overallBadge.textContent = \`전체 \${completedTasks}/\${totalTasks} · \${overall}%\`;
-
-            // 진행률별 색상 (단일 계열, 상태만 구분)
-            function barColor(pct, done) {
-                if (done) return 'bg-emerald-500';
-                if (pct >= 75) return 'bg-indigo-500';
-                if (pct >= 40) return 'bg-sky-500';
-                if (pct > 0) return 'bg-amber-500';
-                return 'bg-slate-300';
-            }
-
-            // 진행률 내림차순 정렬 (보기 편하게)
-            const entries = Object.entries(stats).sort((a, b) => {
-                const pa = a[1].total ? a[1].completed / a[1].total : 0;
-                const pb = b[1].total ? b[1].completed / b[1].total : 0;
-                return pb - pa;
-            });
-
-            // HTML 속성에 안전하게 삽입
             function escAttr(str) {
                 return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             }
@@ -1833,133 +1894,184 @@ app.get('/', (c) => {
                 return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             }
 
-            let html = '';
-            let idx = 0;
-            // 데이터를 dataset에 저장 (onclick 인자 대신)
-            window.__taskStatsData = window.__taskStatsData || {};
-            window.__taskStatsData.items = entries.map(([type, s]) => ({ type, label: s.label, completed: s.completed, total: s.total }));
+            // 진척률 내림차순 정렬
+            const sorted = [...filtered].sort((a, b) => (b.progress || 0) - (a.progress || 0));
 
-            for (const [type, s] of entries) {
-                const pct = s.total > 0 ? Math.round((s.completed / s.total) * 100) : 0;
-                const allDone = s.total > 0 && s.completed === s.total;
+            let html = '';
+            for (const t of sorted) {
+                const step = Math.max(0, Math.min(4, t.progress || 0));
+                const pct = PROGRESS_PCT[step];
+                const allDone = step >= 4;
                 const rowClasses = allDone
                     ? 'bg-emerald-50 border-emerald-200'
                     : 'bg-white border-slate-200 hover:border-indigo-300';
                 const nameClass = allDone ? 'text-slate-500 line-through' : 'text-slate-800';
-                const toggleIcon = allDone ? 'rotate-left' : 'check';
-                const toggleTitle = allDone ? '완료 취소' : '모두 완료';
+                const hospitalLabel = t.hospital_name ? \`<span class="text-[11px] text-slate-500 bg-slate-100 rounded px-1.5 py-0.5 ml-1">\${escText(t.hospital_name)}</span>\` : '';
+
+                // 5단계 도트 (클릭하여 진척률 설정)
+                let dots = '';
+                for (let i = 0; i <= 4; i++) {
+                    const active = i <= step;
+                    const dotColor = active
+                        ? (allDone ? 'bg-emerald-500 border-emerald-500' : 'bg-indigo-500 border-indigo-500')
+                        : 'bg-white border-slate-300 hover:border-indigo-400';
+                    dots += \`<button data-action="setprog" data-id="\${t.id}" data-step="\${i}" title="\${PROGRESS_PCT[i]}%" class="w-5 h-5 rounded-full border-2 \${dotColor} transition-all"></button>\`;
+                }
+
                 html += \`
-                    <div class="group border \${rowClasses} rounded-lg p-3 transition-all" data-task-idx="\${idx}">
+                    <div class="group border \${rowClasses} rounded-lg p-3 transition-all">
                         <div class="flex items-center justify-between gap-2 mb-2">
                             <div class="flex items-center gap-2 min-w-0 flex-1">
                                 \${allDone ? '<i class="fas fa-check-circle text-emerald-500 text-sm flex-shrink-0"></i>' : ''}
-                                <span class="text-sm font-semibold truncate \${nameClass}" title="\${escAttr(s.label)}">\${escText(s.label)}</span>
+                                <span class="text-sm font-semibold truncate \${nameClass}" title="\${escAttr(t.name)}">\${escText(t.name)}</span>
+                                \${hospitalLabel}
                             </div>
                             <div class="flex items-center gap-1 flex-shrink-0">
-                                <span class="text-xs font-bold text-slate-600 tabular-nums mr-1">\${s.completed}/\${s.total}</span>
-                                <button data-action="toggle" data-task-idx="\${idx}" title="\${toggleTitle}" class="w-7 h-7 flex items-center justify-center rounded-md text-emerald-600 hover:bg-emerald-100 transition-colors">
-                                    <i class="fas fa-\${toggleIcon} text-xs"></i>
-                                </button>
-                                <button data-action="rename" data-task-idx="\${idx}" title="이름 수정" class="w-7 h-7 flex items-center justify-center rounded-md text-indigo-600 hover:bg-indigo-100 transition-colors">
+                                <button data-action="edit" data-id="\${t.id}" title="수정" class="w-7 h-7 flex items-center justify-center rounded-md text-indigo-600 hover:bg-indigo-100 transition-colors">
                                     <i class="fas fa-pen text-xs"></i>
                                 </button>
-                                <button data-action="delete" data-task-idx="\${idx}" title="삭제" class="w-7 h-7 flex items-center justify-center rounded-md text-rose-600 hover:bg-rose-100 transition-colors">
+                                <button data-action="delete" data-id="\${t.id}" title="삭제" class="w-7 h-7 flex items-center justify-center rounded-md text-rose-600 hover:bg-rose-100 transition-colors">
                                     <i class="fas fa-trash text-xs"></i>
                                 </button>
                             </div>
                         </div>
                         <div class="flex items-center gap-2">
                             <div class="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                                <div class="h-full \${barColor(pct, allDone)} rounded-full transition-all duration-300" style="width: \${pct}%"></div>
+                                <div class="h-full \${progressBarColor(step)} rounded-full transition-all duration-300" style="width: \${pct}%"></div>
                             </div>
                             <span class="text-xs font-semibold text-slate-600 tabular-nums w-10 text-right">\${pct}%</span>
                         </div>
+                        <div class="flex items-center justify-between gap-2 mt-2">
+                            <div class="flex items-center gap-1.5">\${dots}</div>
+                            <span class="text-[11px] text-slate-400">5단계 진척률</span>
+                        </div>
                     </div>
                 \`;
-                idx++;
             }
 
             statsGrid.innerHTML = html;
-            document.getElementById('task-stats').classList.remove('hidden');
 
-            // 버튼 이벤트 위임
-            if (!statsGrid.__bulkBound) {
+            // 이벤트 위임 (1회만 바인딩)
+            if (!statsGrid.__tasksBound) {
                 statsGrid.addEventListener('click', function(e) {
                     const btn = e.target.closest('button[data-action]');
                     if (!btn) return;
-                    const i = parseInt(btn.dataset.taskIdx);
-                    const item = (window.__taskStatsData.items || [])[i];
-                    if (!item) return;
+                    const id = parseInt(btn.dataset.id);
                     const action = btn.dataset.action;
-                    const allDone = item.total > 0 && item.completed === item.total;
-                    if (action === 'toggle') bulkToggleComplete(item.type, allDone ? 0 : 1);
-                    else if (action === 'rename') bulkRenameTask(item.type, item.label);
-                    else if (action === 'delete') bulkDeleteTask(item.type, item.label);
-                });
-                statsGrid.__bulkBound = true;
-            }
-        }
-
-        // 작업 그룹 일괄 완료 토글
-        window.bulkToggleComplete = async function(taskType, isCompleted) {
-            const year = document.getElementById('calendar-year').value;
-            const month = document.getElementById('calendar-month').value;
-            const hospitalId = document.getElementById('stats-hospital').value;
-            try {
-                await axios.put('/api/schedules/bulk/complete', {
-                    year: parseInt(year),
-                    month: parseInt(month),
-                    task_type: taskType,
-                    hospital_id: hospitalId,
-                    is_completed: isCompleted
-                });
-                loadCalendar();
-            } catch (error) {
-                alert('상태 변경 실패: ' + (error.response?.data?.error || error.message));
-            }
-        }
-
-        // 작업 그룹 이름 일괄 수정
-        window.bulkRenameTask = async function(taskType, currentLabel) {
-            const newName = prompt('작업 이름을 수정합니다.\\n(이 이름의 모든 일정이 함께 변경됩니다)', currentLabel);
-            if (!newName || !newName.trim() || newName.trim() === currentLabel) return;
-            const year = document.getElementById('calendar-year').value;
-            const month = document.getElementById('calendar-month').value;
-            const hospitalId = document.getElementById('stats-hospital').value;
-            try {
-                await axios.put('/api/schedules/bulk/rename', {
-                    year: parseInt(year),
-                    month: parseInt(month),
-                    task_type: taskType,
-                    hospital_id: hospitalId,
-                    new_name: newName.trim()
-                });
-                loadCalendar();
-            } catch (error) {
-                alert('수정 실패: ' + (error.response?.data?.error || error.message));
-            }
-        }
-
-        // 작업 그룹 일괄 삭제
-        window.bulkDeleteTask = async function(taskType, label) {
-            if (!confirm(\`'\${label}' 작업을 모두 삭제하시겠습니까?\\n(이 이름의 모든 일정이 삭제됩니다)\`)) return;
-            const year = document.getElementById('calendar-year').value;
-            const month = document.getElementById('calendar-month').value;
-            const hospitalId = document.getElementById('stats-hospital').value;
-            try {
-                await axios.delete('/api/schedules/bulk', {
-                    data: {
-                        year: parseInt(year),
-                        month: parseInt(month),
-                        task_type: taskType,
-                        hospital_id: hospitalId
+                    if (action === 'setprog') {
+                        const step = parseInt(btn.dataset.step);
+                        updateTaskProgress(id, step);
+                    } else if (action === 'edit') {
+                        openEditTaskModal(id);
+                    } else if (action === 'delete') {
+                        deleteTask(id);
                     }
                 });
-                loadCalendar();
+                statsGrid.__tasksBound = true;
+            }
+        }
+        window.renderTasks = renderTasks;
+
+        async function updateTaskProgress(id, step) {
+            try {
+                await axios.put(\`/api/tasks/\${id}\`, { progress: step });
+                const t = __tasksCache.find(x => x.id === id);
+                if (t) t.progress = step;
+                renderTasks();
+            } catch (error) {
+                alert('진척률 변경 실패: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        async function deleteTask(id) {
+            const t = __tasksCache.find(x => x.id === id);
+            if (!confirm(\`'\${t ? t.name : '작업'}'을(를) 삭제하시겠습니까?\`)) return;
+            try {
+                await axios.delete(\`/api/tasks/\${id}\`);
+                loadTasks();
             } catch (error) {
                 alert('삭제 실패: ' + (error.response?.data?.error || error.message));
             }
         }
+
+        // === 작업 추가/수정 모달 ===
+        function setProgressButton(step) {
+            const container = document.getElementById('task-progress-input');
+            container.dataset.value = String(step);
+            Array.from(container.querySelectorAll('button')).forEach(btn => {
+                const v = parseInt(btn.dataset.p);
+                if (v === step) {
+                    btn.className = 'flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors bg-indigo-500 border-indigo-500 text-white';
+                } else {
+                    btn.className = 'flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors bg-white border-slate-200 text-slate-600 hover:border-indigo-300';
+                }
+            });
+        }
+
+        window.openAddTaskModal = function() {
+            document.getElementById('task-modal-title').innerHTML = '<i class="fas fa-plus-circle text-indigo-500 mr-2"></i>작업 추가';
+            document.getElementById('task-edit-id').value = '';
+            document.getElementById('task-name-input').value = '';
+            document.getElementById('task-hospital-input').value = '';
+            setProgressButton(0);
+            document.getElementById('task-modal').classList.remove('hidden');
+            setTimeout(() => document.getElementById('task-name-input').focus(), 50);
+        }
+
+        window.openEditTaskModal = function(id) {
+            const t = __tasksCache.find(x => x.id === id);
+            if (!t) return;
+            document.getElementById('task-modal-title').innerHTML = '<i class="fas fa-pen text-indigo-500 mr-2"></i>작업 수정';
+            document.getElementById('task-edit-id').value = String(id);
+            document.getElementById('task-name-input').value = t.name || '';
+            document.getElementById('task-hospital-input').value = t.hospital_id || '';
+            setProgressButton(t.progress || 0);
+            document.getElementById('task-modal').classList.remove('hidden');
+        }
+
+        window.closeTaskModal = function() {
+            document.getElementById('task-modal').classList.add('hidden');
+        }
+
+        window.saveTask = async function() {
+            const id = document.getElementById('task-edit-id').value;
+            const name = document.getElementById('task-name-input').value.trim();
+            const hospitalId = document.getElementById('task-hospital-input').value;
+            const progress = parseInt(document.getElementById('task-progress-input').dataset.value || '0');
+            if (!name) { alert('작업 이름을 입력해주세요'); return; }
+
+            const year = parseInt(document.getElementById('calendar-year').value);
+            const month = parseInt(document.getElementById('calendar-month').value);
+
+            try {
+                if (id) {
+                    await axios.put(\`/api/tasks/\${id}\`, {
+                        name, progress,
+                        hospital_id: hospitalId ? parseInt(hospitalId) : null
+                    });
+                } else {
+                    await axios.post('/api/tasks', {
+                        name, progress, year, month,
+                        hospital_id: hospitalId ? parseInt(hospitalId) : null
+                    });
+                }
+                closeTaskModal();
+                loadTasks();
+            } catch (error) {
+                alert('저장 실패: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        // 모달 진척률 버튼 클릭 바인딩 (body 끝 스크립트이므로 DOM이 이미 준비됨)
+        (function bindProgressInput() {
+            const container = document.getElementById('task-progress-input');
+            if (!container) { setTimeout(bindProgressInput, 50); return; }
+            container.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-p]');
+                if (!btn) return;
+                setProgressButton(parseInt(btn.dataset.p));
+            });
+        })();
 
         // 이벤트 클릭 핸들러 (완료 체크)
         async function handleEventClick(info) {
