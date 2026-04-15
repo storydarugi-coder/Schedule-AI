@@ -519,8 +519,11 @@ app.get('/api/tasks/:year/:month', async (c) => {
   const year = parseInt(c.req.param('year'))
   const month = parseInt(c.req.param('month'))
 
+  await ensureSubtasksTable(db)
   const result = await db.prepare(`
-    SELECT t.*, h.name as hospital_name
+    SELECT t.*, h.name as hospital_name,
+      (SELECT COUNT(*) FROM subtasks s WHERE s.task_id = t.id) AS subtask_total,
+      (SELECT COUNT(*) FROM subtasks s WHERE s.task_id = t.id AND s.is_completed = 1) AS subtask_done
     FROM tasks t
     LEFT JOIN hospitals h ON t.hospital_id = h.id
     WHERE t.year = ? AND t.month = ?
@@ -593,6 +596,118 @@ app.delete('/api/tasks/:id', async (c) => {
   try { await db.prepare('DELETE FROM task_logs WHERE task_id = ?').bind(id).run() } catch(e) {}
   await db.prepare('DELETE FROM tasks WHERE id = ?').bind(id).run()
   return c.json({ success: true })
+})
+
+// =========================
+// 하위 작업 (subtasks) API
+// 상위 작업 하나에 여러 하위 작업이 소속되며,
+// 하위 작업의 완료 비율로 상위 작업의 진척률이 자동 재계산된다.
+// =========================
+
+async function ensureSubtasksTable(db: any) {
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS subtasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        is_completed INTEGER NOT NULL DEFAULT 0,
+        order_index INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+  } catch (e) {}
+}
+
+// 상위 작업의 progress(0~4)를 하위 작업의 완료 비율로 재계산
+// 하위 작업이 없으면 아무것도 하지 않음(기존 수동 진척률 유지)
+async function recalcTaskProgressFromSubtasks(db: any, taskId: number): Promise<number | null> {
+  const row: any = await db.prepare(
+    'SELECT COUNT(*) AS total, SUM(CASE WHEN is_completed = 1 THEN 1 ELSE 0 END) AS done FROM subtasks WHERE task_id = ?'
+  ).bind(taskId).first()
+  const total = Number(row?.total || 0)
+  if (total === 0) return null
+  const done = Number(row?.done || 0)
+  // 완료 비율을 0~4 단계로 변환 (0% → 0, 100% → 4)
+  const step = Math.max(0, Math.min(4, Math.round((done / total) * 4)))
+  await db.prepare('UPDATE tasks SET progress = ? WHERE id = ?').bind(step, taskId).run()
+  return step
+}
+
+// 특정 상위 작업의 하위 작업 목록
+app.get('/api/subtasks/:taskId', async (c) => {
+  const db = c.env.DB
+  await ensureSubtasksTable(db)
+  const taskId = parseInt(c.req.param('taskId'))
+  if (!taskId || isNaN(taskId)) return c.json({ error: 'Invalid task id' }, 400)
+  const result = await db.prepare(
+    'SELECT * FROM subtasks WHERE task_id = ? ORDER BY order_index, id'
+  ).bind(taskId).all()
+  return c.json(result.results)
+})
+
+// 하위 작업 추가
+app.post('/api/subtasks', async (c) => {
+  const db = c.env.DB
+  await ensureSubtasksTable(db)
+  const { task_id, name, is_completed } = await c.req.json()
+  const taskId = parseInt(task_id)
+  if (!taskId || isNaN(taskId)) return c.json({ error: 'task_id 필수' }, 400)
+  if (!name || !name.toString().trim()) return c.json({ error: 'name 필수' }, 400)
+
+  const lastOrder: any = await db.prepare(
+    'SELECT MAX(order_index) AS max_order FROM subtasks WHERE task_id = ?'
+  ).bind(taskId).first()
+  const orderIndex = ((lastOrder?.max_order as number) ?? -1) + 1
+
+  const result = await db.prepare(
+    'INSERT INTO subtasks (task_id, name, is_completed, order_index) VALUES (?, ?, ?, ?)'
+  ).bind(taskId, name.toString().trim(), is_completed ? 1 : 0, orderIndex).run()
+
+  const step = await recalcTaskProgressFromSubtasks(db, taskId)
+  return c.json({ success: true, id: result.meta.last_row_id, task_progress: step })
+})
+
+// 하위 작업 수정 (이름 / 완료 여부)
+app.put('/api/subtasks/:id', async (c) => {
+  const db = c.env.DB
+  await ensureSubtasksTable(db)
+  const id = parseInt(c.req.param('id'))
+  if (!id || isNaN(id)) return c.json({ error: 'Invalid id' }, 400)
+  const data = await c.req.json()
+
+  const fields: string[] = []
+  const values: any[] = []
+  if (data.name !== undefined) {
+    const nm = (data.name || '').toString().trim()
+    if (!nm) return c.json({ error: 'name 비어있음' }, 400)
+    fields.push('name = ?'); values.push(nm)
+  }
+  if (data.is_completed !== undefined) {
+    fields.push('is_completed = ?'); values.push(data.is_completed ? 1 : 0)
+  }
+  if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400)
+
+  values.push(id)
+  await db.prepare(`UPDATE subtasks SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run()
+
+  const row: any = await db.prepare('SELECT task_id FROM subtasks WHERE id = ?').bind(id).first()
+  const taskId = row?.task_id as number | undefined
+  const step = taskId ? await recalcTaskProgressFromSubtasks(db, taskId) : null
+  return c.json({ success: true, task_id: taskId || null, task_progress: step })
+})
+
+// 하위 작업 삭제
+app.delete('/api/subtasks/:id', async (c) => {
+  const db = c.env.DB
+  await ensureSubtasksTable(db)
+  const id = parseInt(c.req.param('id'))
+  if (!id || isNaN(id)) return c.json({ error: 'Invalid id' }, 400)
+  const row: any = await db.prepare('SELECT task_id FROM subtasks WHERE id = ?').bind(id).first()
+  const taskId = row?.task_id as number | undefined
+  await db.prepare('DELETE FROM subtasks WHERE id = ?').bind(id).run()
+  const step = taskId ? await recalcTaskProgressFromSubtasks(db, taskId) : null
+  return c.json({ success: true, task_id: taskId || null, task_progress: step })
 })
 
 // =========================
@@ -1294,15 +1409,36 @@ app.get('/', (c) => {
                 완료 처리 및 기록 입력은 작업 카드의 "완료" 버튼을 눌러주세요.
             </div>
 
-            <!-- 기록 히스토리 -->
-            <div class="flex-1 overflow-y-auto px-6 py-4">
-                <div class="flex items-center justify-between mb-3">
-                    <h4 class="text-sm font-bold text-slate-700">
-                        <i class="fas fa-clipboard-list text-slate-500 mr-1"></i>작업 기록
-                        <span id="task-detail-log-count" class="text-xs text-slate-400 ml-1"></span>
-                    </h4>
+            <!-- 하위 작업 + 기록 히스토리 -->
+            <div class="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+                <!-- 하위 작업 (예정 목록 / 완료 체크 / 수정 / 삭제) -->
+                <div>
+                    <div class="flex items-center justify-between mb-2">
+                        <h4 class="text-sm font-bold text-slate-700">
+                            <i class="fas fa-list-check text-slate-500 mr-1"></i>하위 작업
+                            <span id="task-detail-subtask-count" class="text-xs text-slate-400 ml-1"></span>
+                        </h4>
+                    </div>
+                    <div class="flex gap-2 mb-2">
+                        <input type="text" id="task-detail-subtask-input" placeholder="예정된 하위 작업을 입력하고 Enter"
+                            class="flex-1 border-2 border-slate-200 rounded-lg px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none">
+                        <button id="task-detail-subtask-add" class="bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm font-semibold shadow-sm">
+                            <i class="fas fa-plus mr-1"></i>추가
+                        </button>
+                    </div>
+                    <div id="task-detail-subtask-list" class="space-y-1.5"></div>
                 </div>
-                <div id="task-detail-log-list" class="space-y-2"></div>
+
+                <!-- 기록 히스토리 -->
+                <div>
+                    <div class="flex items-center justify-between mb-3">
+                        <h4 class="text-sm font-bold text-slate-700">
+                            <i class="fas fa-clipboard-list text-slate-500 mr-1"></i>작업 기록
+                            <span id="task-detail-log-count" class="text-xs text-slate-400 ml-1"></span>
+                        </h4>
+                    </div>
+                    <div id="task-detail-log-list" class="space-y-2"></div>
+                </div>
             </div>
         </div>
     </div>
@@ -2273,11 +2409,25 @@ app.get('/', (c) => {
                 ? __tasksCache
                 : __tasksCache.filter(t => String(t.hospital_id) === String(selectedHospital));
 
+            // 작업의 표시 퍼센트 — 하위 작업이 있으면 그 완료 비율 우선
+            function taskDisplayPct(t) {
+                const sTotal = Number(t.subtask_total || 0);
+                if (sTotal > 0) {
+                    const sDone = Number(t.subtask_done || 0);
+                    return Math.round((sDone / sTotal) * 100);
+                }
+                return PROGRESS_PCT[t.progress || 0];
+            }
+
             // 전체 평균 진척률
             const total = filtered.length;
-            const sumPct = filtered.reduce((acc, t) => acc + PROGRESS_PCT[t.progress || 0], 0);
+            const sumPct = filtered.reduce((acc, t) => acc + taskDisplayPct(t), 0);
             const overall = total > 0 ? Math.round(sumPct / total) : 0;
-            const doneCount = filtered.filter(t => (t.progress || 0) >= 4).length;
+            const doneCount = filtered.filter(t => {
+                const sTotal = Number(t.subtask_total || 0);
+                if (sTotal > 0) return Number(t.subtask_done || 0) >= sTotal;
+                return (t.progress || 0) >= 4;
+            }).length;
             overallBadge.textContent = \`전체 \${doneCount}/\${total} · \${overall}%\`;
 
             if (total === 0) {
@@ -2294,14 +2444,17 @@ app.get('/', (c) => {
                 return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             }
 
-            // 진척률 내림차순 정렬
-            const sorted = [...filtered].sort((a, b) => (b.progress || 0) - (a.progress || 0));
+            // 진척률 내림차순 정렬 (하위 작업 기반 퍼센트 우선)
+            const sorted = [...filtered].sort((a, b) => taskDisplayPct(b) - taskDisplayPct(a));
 
             let html = '';
             for (const t of sorted) {
                 const step = Math.max(0, Math.min(4, t.progress || 0));
-                const pct = PROGRESS_PCT[step];
-                const allDone = step >= 4;
+                const pct = taskDisplayPct(t);
+                const sTotal = Number(t.subtask_total || 0);
+                const sDone = Number(t.subtask_done || 0);
+                const hasSubtasks = sTotal > 0;
+                const allDone = hasSubtasks ? (sDone >= sTotal) : (step >= 4);
                 const rowClasses = allDone
                     ? 'bg-emerald-50 border-emerald-200'
                     : 'bg-white border-slate-200 hover:border-indigo-300';
@@ -2309,16 +2462,38 @@ app.get('/', (c) => {
                 const hospitalLabel = t.hospital_name ? \`<span class="text-[11px] text-slate-500 bg-slate-100 rounded px-1.5 py-0.5 ml-1">\${escText(t.hospital_name)}</span>\` : '';
 
                 // 완료 토글 버튼 (완료: 기록 모달 열어서 100% 처리 / 완료됨: 확인 후 0%로 되돌림)
-                const toggleBtn = allDone
-                    ? \`<button data-action="uncomplete" data-id="\${t.id}" title="진행 예정으로 되돌리기" class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-600 text-white transition-colors">
+                // 하위 작업이 있으면 수동 완료 버튼 대신 하위 작업 열기 버튼을 보여준다 (진척률 자동 계산)
+                let toggleBtn;
+                if (hasSubtasks) {
+                    toggleBtn = \`<button data-action="opensubtasks" data-id="\${t.id}" title="하위 작업 열기 (진척률은 하위 작업 완료 비율로 자동 계산)" class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-md bg-white border border-indigo-300 text-indigo-600 hover:bg-indigo-500 hover:border-indigo-500 hover:text-white transition-colors">
+                            <i class="fas fa-list-check"></i>하위 작업
+                       </button>\`;
+                } else if (allDone) {
+                    toggleBtn = \`<button data-action="uncomplete" data-id="\${t.id}" title="진행 예정으로 되돌리기" class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-600 text-white transition-colors">
                             <i class="fas fa-check-circle"></i>완료됨
-                       </button>\`
-                    : \`<button data-action="complete" data-id="\${t.id}" title="완료 처리 — 기록 입력" class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-md bg-white border border-indigo-300 text-indigo-600 hover:bg-indigo-500 hover:border-indigo-500 hover:text-white transition-colors">
+                       </button>\`;
+                } else {
+                    toggleBtn = \`<button data-action="complete" data-id="\${t.id}" title="완료 처리 — 기록 입력" class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-md bg-white border border-indigo-300 text-indigo-600 hover:bg-indigo-500 hover:border-indigo-500 hover:text-white transition-colors">
                             <i class="far fa-circle"></i>완료
                        </button>\`;
+                }
                 const statusLabel = allDone
                     ? '<span class="text-[11px] font-semibold text-emerald-600"><i class="fas fa-check mr-1"></i>완료됨</span>'
-                    : '<span class="text-[11px] font-medium text-slate-500">진행 예정</span>';
+                    : (hasSubtasks
+                        ? \`<span class="text-[11px] font-medium text-slate-500">진행 중 · \${pct}%</span>\`
+                        : '<span class="text-[11px] font-medium text-slate-500">진행 예정</span>');
+
+                const subtaskBadge = hasSubtasks
+                    ? \`<span class="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 rounded-full px-2 py-0.5 ml-1" title="하위 작업 \${sDone}/\${sTotal} 완료">
+                            <i class="fas fa-list-check text-[10px]"></i>\${sDone}/\${sTotal}
+                       </span>\`
+                    : '';
+
+                const subtaskBar = hasSubtasks
+                    ? \`<div class="mt-2 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                            <div class="h-full \${progressBarColor(step)} transition-all duration-300" style="width: \${pct}%"></div>
+                       </div>\`
+                    : '';
 
                 const logCount = (t.__logs || []).length;
                 const expanded = __expandedTaskIds.has(t.id);
@@ -2330,6 +2505,7 @@ app.get('/', (c) => {
                                 \${allDone ? '<i class="fas fa-check-circle text-emerald-500 text-sm flex-shrink-0"></i>' : ''}
                                 <span class="text-sm font-semibold truncate \${nameClass}" title="\${escAttr(t.name)}">\${escText(t.name)}</span>
                                 \${hospitalLabel}
+                                \${subtaskBadge}
                             </div>
                             <div class="flex items-center gap-1 flex-shrink-0">
                                 <button data-action="edit" data-id="\${t.id}" title="수정" class="w-7 h-7 flex items-center justify-center rounded-md text-indigo-600 hover:bg-indigo-100 transition-colors">
@@ -2351,6 +2527,7 @@ app.get('/', (c) => {
                                 <i class="fas fa-chevron-\${expanded ? 'up' : 'down'} text-[9px]"></i>
                             </button>
                         </div>
+                        \${subtaskBar}
                         <div data-task-logs="\${t.id}" class="\${expanded ? '' : 'hidden'} mt-3 border-t border-slate-200 pt-2 space-y-1.5">
                             \${renderTaskLogs(t)}
                         </div>
@@ -2377,6 +2554,8 @@ app.get('/', (c) => {
                             openTaskLogModal(id, 4);
                         } else if (action === 'uncomplete') {
                             uncompleteTask(id);
+                        } else if (action === 'opensubtasks') {
+                            openTaskDetailModal(id);
                         } else if (action === 'edit') {
                             openEditTaskModal(id);
                         } else if (action === 'delete') {
@@ -2574,9 +2753,13 @@ app.get('/', (c) => {
             const t = __tasksCache.find(x => x.id === taskId);
             if (!t) return;
             __detailTaskId = taskId;
-            await ensureTaskLogsLoaded(taskId);
+            await Promise.all([
+                ensureTaskLogsLoaded(taskId),
+                ensureSubtasksLoaded(taskId),
+            ]);
             renderTaskDetail();
             document.getElementById('task-detail-modal').classList.remove('hidden');
+            bindSubtaskInputOnce();
         };
 
         window.closeTaskDetailModal = function() {
@@ -2590,8 +2773,13 @@ app.get('/', (c) => {
             if (!t) return;
 
             const step = Math.max(0, Math.min(4, t.progress || 0));
-            const pct = PROGRESS_PCT[step];
-            const allDone = step >= 4;
+            const sTotal = Number(t.subtask_total || 0);
+            const sDone = Number(t.subtask_done || 0);
+            const hasSubtasks = sTotal > 0;
+            const pct = hasSubtasks
+                ? Math.round((sDone / sTotal) * 100)
+                : PROGRESS_PCT[step];
+            const allDone = hasSubtasks ? (sDone >= sTotal) : (step >= 4);
 
             document.getElementById('task-detail-name').textContent = t.name || '';
             const hospEl = document.getElementById('task-detail-hospital');
@@ -2606,6 +2794,9 @@ app.get('/', (c) => {
             bar.style.width = pct + '%';
             bar.className = 'h-full rounded-full transition-all duration-300 ' + progressBarColor(step);
             document.getElementById('task-detail-progress-pct').textContent = pct + '%';
+
+            // 하위 작업
+            renderSubtaskList(t);
 
             // 로그 리스트
             const logs = t.__logs || [];
@@ -2668,6 +2859,212 @@ app.get('/', (c) => {
                 });
                 listEl.__detailLogBound = true;
             }
+        }
+
+        // =========================
+        // 하위 작업 (subtasks)
+        // 추가/완료 토글/수정/삭제 가능. 변경 시 상위 작업 진척률이 자동 재계산된다.
+        // =========================
+        async function ensureSubtasksLoaded(taskId) {
+            const t = __tasksCache.find(x => x.id === taskId);
+            if (!t) return;
+            if (t.__subtasks !== undefined) return;
+            try {
+                const res = await axios.get(\`/api/subtasks/\${taskId}\`);
+                t.__subtasks = res.data || [];
+            } catch (e) {
+                t.__subtasks = [];
+            }
+        }
+
+        // 상위 작업 정보(진척률/카운트)를 서버 응답으로 갱신
+        function applySubtaskResultToTask(taskId, result) {
+            const t = __tasksCache.find(x => x.id === taskId);
+            if (!t) return;
+            if (result && typeof result.task_progress === 'number') {
+                t.progress = result.task_progress;
+            }
+            // 카운트 재계산 (로컬 __subtasks 기반)
+            const list = t.__subtasks || [];
+            t.subtask_total = list.length;
+            t.subtask_done = list.filter(s => s.is_completed).length;
+        }
+
+        function renderSubtaskList(t) {
+            const listEl = document.getElementById('task-detail-subtask-list');
+            const countEl = document.getElementById('task-detail-subtask-count');
+            if (!listEl || !countEl) return;
+
+            const subs = t.__subtasks;
+            if (subs === undefined) {
+                listEl.innerHTML = '<div class="text-sm text-slate-400 italic text-center py-3">불러오는 중...</div>';
+                countEl.textContent = '';
+                return;
+            }
+
+            const doneCount = subs.filter(s => s.is_completed).length;
+            const total = subs.length;
+            countEl.textContent = total > 0
+                ? \`(\${doneCount}/\${total} · \${Math.round((doneCount / total) * 100)}%)\`
+                : '';
+
+            if (total === 0) {
+                listEl.innerHTML = '<div class="text-sm text-slate-400 italic text-center py-4">아직 하위 작업이 없습니다. 위 입력창에 예정된 작업을 추가해보세요.</div>';
+            } else {
+                function escText(str) {
+                    return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                }
+                function escAttr(str) {
+                    return String(str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                }
+                let html = '';
+                for (const s of subs) {
+                    const done = !!s.is_completed;
+                    const checkIcon = done
+                        ? '<i class="fas fa-check-circle text-emerald-500"></i>'
+                        : '<i class="far fa-circle text-slate-400"></i>';
+                    const nameCls = done ? 'text-slate-400 line-through' : 'text-slate-700';
+                    html += \`
+                        <div class="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2 group/sub hover:border-indigo-300 transition-colors">
+                            <button data-sub-action="toggle" data-sub-id="\${s.id}" title="\${done ? '완료 해제' : '완료 처리'}"
+                                class="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-md hover:bg-slate-100">
+                                \${checkIcon}
+                            </button>
+                            <span class="flex-1 text-sm \${nameCls} break-words" title="\${escAttr(s.name)}">\${escText(s.name)}</span>
+                            <div class="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover/sub:opacity-100 transition-opacity">
+                                <button data-sub-action="edit" data-sub-id="\${s.id}" title="이름 수정"
+                                    class="w-7 h-7 flex items-center justify-center rounded text-indigo-600 hover:bg-indigo-100">
+                                    <i class="fas fa-pen text-xs"></i>
+                                </button>
+                                <button data-sub-action="delete" data-sub-id="\${s.id}" title="삭제"
+                                    class="w-7 h-7 flex items-center justify-center rounded text-rose-600 hover:bg-rose-100">
+                                    <i class="fas fa-trash text-xs"></i>
+                                </button>
+                            </div>
+                        </div>
+                    \`;
+                }
+                listEl.innerHTML = html;
+            }
+
+            if (!listEl.__subBound) {
+                listEl.addEventListener('click', async function(e) {
+                    const btn = e.target.closest('button[data-sub-action]');
+                    if (!btn) return;
+                    const subId = parseInt(btn.dataset.subId);
+                    const action = btn.dataset.subAction;
+                    if (action === 'toggle') {
+                        await toggleSubtask(subId);
+                    } else if (action === 'edit') {
+                        await renameSubtask(subId);
+                    } else if (action === 'delete') {
+                        await deleteSubtask(subId);
+                    }
+                });
+                listEl.__subBound = true;
+            }
+        }
+
+        async function addSubtaskFromInput() {
+            if (__detailTaskId === null) return;
+            const taskId = __detailTaskId;
+            const input = document.getElementById('task-detail-subtask-input');
+            const name = (input.value || '').trim();
+            if (!name) return;
+            try {
+                const res = await axios.post('/api/subtasks', { task_id: taskId, name });
+                const t = __tasksCache.find(x => x.id === taskId);
+                if (t) {
+                    if (!Array.isArray(t.__subtasks)) t.__subtasks = [];
+                    t.__subtasks.push({
+                        id: res.data?.id,
+                        task_id: taskId,
+                        name,
+                        is_completed: 0,
+                        order_index: t.__subtasks.length,
+                    });
+                    applySubtaskResultToTask(taskId, res.data);
+                }
+                input.value = '';
+                renderTaskDetail();
+                renderTasks();
+            } catch (error) {
+                alert('하위 작업 추가 실패: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        async function toggleSubtask(subId) {
+            if (__detailTaskId === null) return;
+            const taskId = __detailTaskId;
+            const t = __tasksCache.find(x => x.id === taskId);
+            if (!t || !Array.isArray(t.__subtasks)) return;
+            const s = t.__subtasks.find(x => x.id === subId);
+            if (!s) return;
+            const next = s.is_completed ? 0 : 1;
+            try {
+                const res = await axios.put(\`/api/subtasks/\${subId}\`, { is_completed: next });
+                s.is_completed = next;
+                applySubtaskResultToTask(taskId, res.data);
+                renderTaskDetail();
+                renderTasks();
+            } catch (error) {
+                alert('하위 작업 상태 변경 실패: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        async function renameSubtask(subId) {
+            if (__detailTaskId === null) return;
+            const taskId = __detailTaskId;
+            const t = __tasksCache.find(x => x.id === taskId);
+            if (!t || !Array.isArray(t.__subtasks)) return;
+            const s = t.__subtasks.find(x => x.id === subId);
+            if (!s) return;
+            const next = prompt('하위 작업 이름을 수정하세요', s.name);
+            if (next === null) return;
+            const trimmed = next.trim();
+            if (!trimmed || trimmed === s.name) return;
+            try {
+                await axios.put(\`/api/subtasks/\${subId}\`, { name: trimmed });
+                s.name = trimmed;
+                renderTaskDetail();
+            } catch (error) {
+                alert('하위 작업 수정 실패: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        async function deleteSubtask(subId) {
+            if (__detailTaskId === null) return;
+            const taskId = __detailTaskId;
+            const t = __tasksCache.find(x => x.id === taskId);
+            if (!t || !Array.isArray(t.__subtasks)) return;
+            const s = t.__subtasks.find(x => x.id === subId);
+            if (!s) return;
+            if (!confirm(\`하위 작업 '\${s.name}'을(를) 삭제하시겠습니까?\`)) return;
+            try {
+                const res = await axios.delete(\`/api/subtasks/\${subId}\`);
+                t.__subtasks = t.__subtasks.filter(x => x.id !== subId);
+                applySubtaskResultToTask(taskId, res.data);
+                renderTaskDetail();
+                renderTasks();
+            } catch (error) {
+                alert('하위 작업 삭제 실패: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        let __subtaskInputBound = false;
+        function bindSubtaskInputOnce() {
+            if (__subtaskInputBound) return;
+            const addBtn = document.getElementById('task-detail-subtask-add');
+            const input = document.getElementById('task-detail-subtask-input');
+            if (!addBtn || !input) return;
+            addBtn.addEventListener('click', addSubtaskFromInput);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addSubtaskFromInput();
+                }
+            });
+            __subtaskInputBound = true;
         }
 
         // 상세 모달에서 작업 자체 수정/삭제
