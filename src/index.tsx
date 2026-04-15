@@ -898,7 +898,7 @@ app.get('/', (c) => {
                     <i class="fas fa-brain mr-3"></i>
                     Schedule-AI
                 </h1>
-                <p class="text-white text-opacity-90">AI 기반 스마트 업무 스케줄 관리 시스템 <span class="text-[10px] text-white/60 ml-2">v2026.04.15-routefix2</span></p>
+                <p class="text-white text-opacity-90">AI 기반 스마트 업무 스케줄 관리 시스템 <span class="text-[10px] text-white/60 ml-2">v2026.04.15-split</span></p>
             </div>
         </header>
 
@@ -1237,7 +1237,6 @@ app.get('/', (c) => {
                         </div>
                         <span id="task-detail-progress-pct" class="text-xs font-semibold text-slate-600 tabular-nums w-10 text-right">0%</span>
                     </div>
-                    <div id="task-detail-dots" class="flex items-center gap-1.5 mt-2"></div>
                 </div>
                 <div class="flex items-start gap-1 flex-shrink-0">
                     <button onclick="openEditTaskModalFromDetail()" title="작업 수정" class="w-8 h-8 flex items-center justify-center rounded-md text-indigo-600 hover:bg-indigo-100">
@@ -1252,27 +1251,10 @@ app.get('/', (c) => {
                 </div>
             </div>
 
-            <!-- 작업 기록 작성 (빠른 추가) -->
-            <div class="px-6 py-4 border-b border-slate-200 bg-slate-50">
-                <label class="block text-sm font-semibold text-slate-700 mb-2">
-                    <i class="fas fa-pen-to-square text-indigo-500 mr-1"></i>어떤 작업을 하셨나요?
-                </label>
-                <textarea id="task-detail-note-input" rows="3" placeholder="예: 썸네일 디자인 완료, 영상 편집 마무리..." class="w-full border-2 border-slate-200 rounded-lg px-3 py-2 focus:border-indigo-400 focus:outline-none resize-none text-sm"></textarea>
-                <div class="flex items-center justify-between gap-2 mt-2">
-                    <div class="flex items-center gap-2">
-                        <span class="text-xs text-slate-600">기록 시점 진척률:</span>
-                        <div id="task-detail-step-picker" class="flex gap-1" data-step="0">
-                            <button type="button" data-step="0" class="detail-step-btn px-2 py-1 rounded text-[11px] font-semibold border-2 transition-colors">0%</button>
-                            <button type="button" data-step="1" class="detail-step-btn px-2 py-1 rounded text-[11px] font-semibold border-2 transition-colors">25%</button>
-                            <button type="button" data-step="2" class="detail-step-btn px-2 py-1 rounded text-[11px] font-semibold border-2 transition-colors">50%</button>
-                            <button type="button" data-step="3" class="detail-step-btn px-2 py-1 rounded text-[11px] font-semibold border-2 transition-colors">75%</button>
-                            <button type="button" data-step="4" class="detail-step-btn px-2 py-1 rounded text-[11px] font-semibold border-2 transition-colors">100%</button>
-                        </div>
-                    </div>
-                    <button onclick="addTaskLogFromDetail()" class="bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg px-4 py-1.5 text-sm font-semibold shadow-sm">
-                        <i class="fas fa-plus mr-1"></i>기록 추가
-                    </button>
-                </div>
+            <!-- 안내 (카드 클릭은 열람 전용) -->
+            <div class="px-6 py-2 border-b border-slate-200 bg-slate-50 text-[11px] text-slate-500 flex items-center gap-1.5">
+                <i class="fas fa-circle-info text-slate-400"></i>
+                기록을 추가하려면 작업 카드의 진척률 동그라미(●)를 눌러주세요.
             </div>
 
             <!-- 기록 히스토리 -->
@@ -2544,43 +2526,17 @@ app.get('/', (c) => {
         }
 
         // =========================
-        // 작업 상세 모달 (더블클릭 진입)
+        // 작업 상세 모달 (카드 클릭 — 열람 전용)
         // =========================
         let __detailTaskId = null;
-        let __detailStep = 0;
-
-        function setDetailStepButton(step) {
-            __detailStep = step;
-            const container = document.getElementById('task-detail-step-picker');
-            if (container) container.dataset.step = String(step);
-            document.querySelectorAll('.detail-step-btn').forEach(btn => {
-                const v = parseInt(btn.dataset.step);
-                if (v === step) {
-                    btn.className = 'detail-step-btn px-2 py-1 rounded text-[11px] font-semibold border-2 transition-colors bg-indigo-500 border-indigo-500 text-white';
-                } else {
-                    btn.className = 'detail-step-btn px-2 py-1 rounded text-[11px] font-semibold border-2 transition-colors bg-white border-slate-200 text-slate-600 hover:border-indigo-300';
-                }
-            });
-        }
 
         window.openTaskDetailModal = async function(taskId) {
             const t = __tasksCache.find(x => x.id === taskId);
             if (!t) return;
             __detailTaskId = taskId;
-            // 단계 버튼 클릭 바인딩 (최초 1회)
-            const stepPicker = document.getElementById('task-detail-step-picker');
-            if (stepPicker && !stepPicker.__detailStepBound) {
-                stepPicker.addEventListener('click', function(e) {
-                    const btn = e.target.closest('button[data-step]');
-                    if (!btn) return;
-                    setDetailStepButton(parseInt(btn.dataset.step));
-                });
-                stepPicker.__detailStepBound = true;
-            }
             await ensureTaskLogsLoaded(taskId);
             renderTaskDetail();
             document.getElementById('task-detail-modal').classList.remove('hidden');
-            setTimeout(() => document.getElementById('task-detail-note-input').focus(), 50);
         };
 
         window.closeTaskDetailModal = function() {
@@ -2610,30 +2566,6 @@ app.get('/', (c) => {
             bar.style.width = pct + '%';
             bar.className = 'h-full rounded-full transition-all duration-300 ' + progressBarColor(step);
             document.getElementById('task-detail-progress-pct').textContent = pct + '%';
-
-            // 상단 도트 (간단 표시용 · 클릭하면 기록 모달 열림)
-            const dotsEl = document.getElementById('task-detail-dots');
-            let dotsHtml = '';
-            for (let i = 0; i <= 4; i++) {
-                const active = i <= step;
-                const dotColor = active
-                    ? (allDone ? 'bg-emerald-500 border-emerald-500' : 'bg-indigo-500 border-indigo-500')
-                    : 'bg-white border-slate-300 hover:border-indigo-400';
-                dotsHtml += \`<button data-detail-dot="\${i}" title="\${PROGRESS_PCT[i]}% — 기록 작성 시점으로 사용" class="w-4 h-4 rounded-full border-2 \${dotColor} transition-all"></button>\`;
-            }
-            dotsEl.innerHTML = dotsHtml;
-            // 상단 도트 클릭: 하단 작성 영역의 진척률 선택을 변경
-            if (!dotsEl.__detailBound) {
-                dotsEl.addEventListener('click', function(e) {
-                    const btn = e.target.closest('button[data-detail-dot]');
-                    if (!btn) return;
-                    setDetailStepButton(parseInt(btn.dataset.detailDot));
-                });
-                dotsEl.__detailBound = true;
-            }
-
-            // 현재 진척률로 기본 선택
-            setDetailStepButton(step);
 
             // 로그 리스트
             const logs = t.__logs || [];
@@ -2697,39 +2629,6 @@ app.get('/', (c) => {
                 listEl.__detailLogBound = true;
             }
         }
-
-        // 모달 하단 "기록 추가" — 입력창 내용으로 기록 생성 + 진척률 변경
-        window.addTaskLogFromDetail = async function() {
-            console.log('[addTaskLogFromDetail] taskId=', __detailTaskId, 'step=', __detailStep);
-            if (__detailTaskId === null) {
-                alert('작업이 선택되지 않았습니다. 모달을 닫고 다시 열어주세요.');
-                return;
-            }
-            const noteEl = document.getElementById('task-detail-note-input');
-            const note = noteEl ? noteEl.value.trim() : '';
-            const step = __detailStep;
-            if (!note) {
-                if (!confirm('내용이 비어 있습니다. 그대로 기록할까요?')) return;
-            }
-            try {
-                const postRes = await axios.post(\`/api/task-logs/create/\${__detailTaskId}\`, { progress: step, note });
-                console.log('[addTaskLogFromDetail] log created', postRes.data);
-                // 진척률이 바뀌었으면 작업의 progress도 같이 업데이트
-                const t = __tasksCache.find(x => x.id === __detailTaskId);
-                if (t && (t.progress || 0) !== step) {
-                    await axios.put(\`/api/tasks/\${__detailTaskId}\`, { progress: step });
-                    t.progress = step;
-                }
-                if (t) t.__logs = undefined;
-                await ensureTaskLogsLoaded(__detailTaskId);
-                if (noteEl) noteEl.value = '';
-                renderTaskDetail();
-                renderTasks();
-            } catch (error) {
-                console.error('[addTaskLogFromDetail] error', error);
-                alert('기록 추가 실패: ' + (error.response?.data?.error || error.message));
-            }
-        };
 
         // 상세 모달에서 작업 자체 수정/삭제
         window.openEditTaskModalFromDetail = function() {
