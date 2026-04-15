@@ -501,6 +501,19 @@ async function ensureTasksTable(db: any) {
 
 // 월별 작업 목록
 app.get('/api/tasks/:year/:month', async (c) => {
+  // 구버전 클라이언트 호환 — 옛날 JS가 /api/tasks/:id/logs 로 GET 요청하면
+  // year=:id, month='logs' 로 파싱되므로 여기서 감지해서 로그 핸들러로 위임
+  if (c.req.param('month') === 'logs') {
+    const db2 = c.env.DB
+    await ensureTaskLogsTable(db2)
+    const tid = parseInt(c.req.param('year'))
+    if (!tid || isNaN(tid)) return c.json({ error: 'Invalid task id' }, 400)
+    const r = await db2.prepare(
+      'SELECT * FROM task_logs WHERE task_id = ? ORDER BY created_at DESC, id DESC'
+    ).bind(tid).all()
+    return c.json(r.results)
+  }
+
   const db = c.env.DB
   await ensureTasksTable(db)
   const year = parseInt(c.req.param('year'))
@@ -602,22 +615,21 @@ async function ensureTaskLogsTable(db: any) {
 
 // 특정 작업의 기록 목록 (경로를 /api/task-logs/list/:taskId 로 두어
 // /api/tasks/:year/:month 라우트와 충돌하지 않도록 함)
-app.get('/api/task-logs/list/:taskId', async (c) => {
+async function listTaskLogsHandler(c: any) {
   const db = c.env.DB
   await ensureTaskLogsTable(db)
-  const taskId = parseInt(c.req.param('taskId'))
+  const taskId = parseInt(c.req.param('taskId') || c.req.param('id'))
   if (!taskId || isNaN(taskId)) return c.json({ error: 'Invalid task id' }, 400)
   const result = await db.prepare(
     'SELECT * FROM task_logs WHERE task_id = ? ORDER BY created_at DESC, id DESC'
   ).bind(taskId).all()
   return c.json(result.results)
-})
+}
 
-// 작업 기록 추가
-app.post('/api/task-logs/create/:taskId', async (c) => {
+async function createTaskLogHandler(c: any) {
   const db = c.env.DB
   await ensureTaskLogsTable(db)
-  const taskId = parseInt(c.req.param('taskId'))
+  const taskId = parseInt(c.req.param('taskId') || c.req.param('id'))
   const { progress, note } = await c.req.json()
   if (!taskId || isNaN(taskId)) return c.json({ error: 'Invalid task id' }, 400)
 
@@ -627,7 +639,14 @@ app.post('/api/task-logs/create/:taskId', async (c) => {
   ).bind(taskId, p, (note || '').toString()).run()
 
   return c.json({ success: true, id: result.meta.last_row_id })
-})
+}
+
+app.get('/api/task-logs/list/:taskId', listTaskLogsHandler)
+app.post('/api/task-logs/create/:taskId', createTaskLogHandler)
+// 구버전 경로도 유지 (브라우저가 옛 HTML 캐시를 쥐고 있을 때를 대비)
+// 주의: GET /api/tasks/:id/logs 는 /api/tasks/:year/:month 에 가려지므로
+// 명시적으로 핸들러를 연결해도 월별 리스트가 먼저 매칭됨. POST만 별칭 유지.
+app.post('/api/tasks/:id/logs', createTaskLogHandler)
 
 // 작업 기록 수정
 app.put('/api/task-logs/:id', async (c) => {
@@ -879,7 +898,7 @@ app.get('/', (c) => {
                     <i class="fas fa-brain mr-3"></i>
                     Schedule-AI
                 </h1>
-                <p class="text-white text-opacity-90">AI 기반 스마트 업무 스케줄 관리 시스템 <span class="text-[10px] text-white/60 ml-2">v2026.04.15-routefix</span></p>
+                <p class="text-white text-opacity-90">AI 기반 스마트 업무 스케줄 관리 시스템 <span class="text-[10px] text-white/60 ml-2">v2026.04.15-routefix2</span></p>
             </div>
         </header>
 
