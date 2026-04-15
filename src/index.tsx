@@ -2060,10 +2060,10 @@ app.get('/', (c) => {
             } catch (error) {
                 alert('저장 실패: ' + (error.response?.data?.error || error.message));
             }
-        }
+        };
 
         // 모달 진척률 버튼 클릭 바인딩 (body 끝 스크립트이므로 DOM이 이미 준비됨)
-        (function bindProgressInput() {
+        function bindProgressInput() {
             const container = document.getElementById('task-progress-input');
             if (!container) { setTimeout(bindProgressInput, 50); return; }
             container.addEventListener('click', (e) => {
@@ -2071,7 +2071,8 @@ app.get('/', (c) => {
                 if (!btn) return;
                 setProgressButton(parseInt(btn.dataset.p));
             });
-        })();
+        }
+        bindProgressInput();
 
         // 이벤트 클릭 핸들러 (완료 체크)
         async function handleEventClick(info) {
