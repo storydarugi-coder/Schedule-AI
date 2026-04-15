@@ -576,7 +576,87 @@ app.delete('/api/tasks/:id', async (c) => {
   await ensureTasksTable(db)
   const id = parseInt(c.req.param('id'))
   if (!id || isNaN(id)) return c.json({ error: 'Invalid id' }, 400)
+  // 관련 작업 기록 먼저 삭제 (FK ON DELETE CASCADE가 안 걸려있는 경우 대비)
+  try { await db.prepare('DELETE FROM task_logs WHERE task_id = ?').bind(id).run() } catch(e) {}
   await db.prepare('DELETE FROM tasks WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
+// =========================
+// 작업 기록 API (각 진척률 변경 시 어떤 작업을 했는지)
+// =========================
+
+async function ensureTaskLogsTable(db: any) {
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS task_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        progress INTEGER NOT NULL DEFAULT 0,
+        note TEXT NOT NULL DEFAULT '',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+  } catch (e) {}
+}
+
+// 특정 작업의 기록 목록
+app.get('/api/tasks/:id/logs', async (c) => {
+  const db = c.env.DB
+  await ensureTaskLogsTable(db)
+  const taskId = parseInt(c.req.param('id'))
+  if (!taskId || isNaN(taskId)) return c.json({ error: 'Invalid task id' }, 400)
+  const result = await db.prepare(
+    'SELECT * FROM task_logs WHERE task_id = ? ORDER BY created_at DESC, id DESC'
+  ).bind(taskId).all()
+  return c.json(result.results)
+})
+
+// 작업 기록 추가
+app.post('/api/tasks/:id/logs', async (c) => {
+  const db = c.env.DB
+  await ensureTaskLogsTable(db)
+  const taskId = parseInt(c.req.param('id'))
+  const { progress, note } = await c.req.json()
+  if (!taskId || isNaN(taskId)) return c.json({ error: 'Invalid task id' }, 400)
+
+  const p = Math.max(0, Math.min(4, parseInt(progress) || 0))
+  const result = await db.prepare(
+    'INSERT INTO task_logs (task_id, progress, note) VALUES (?, ?, ?)'
+  ).bind(taskId, p, (note || '').toString()).run()
+
+  return c.json({ success: true, id: result.meta.last_row_id })
+})
+
+// 작업 기록 수정
+app.put('/api/task-logs/:id', async (c) => {
+  const db = c.env.DB
+  await ensureTaskLogsTable(db)
+  const id = parseInt(c.req.param('id'))
+  const { note, progress } = await c.req.json()
+  if (!id || isNaN(id)) return c.json({ error: 'Invalid id' }, 400)
+
+  const fields: string[] = []
+  const values: any[] = []
+  if (note !== undefined) { fields.push('note = ?'); values.push((note || '').toString()) }
+  if (progress !== undefined) {
+    const p = Math.max(0, Math.min(4, parseInt(progress) || 0))
+    fields.push('progress = ?'); values.push(p)
+  }
+  if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400)
+
+  values.push(id)
+  await db.prepare(`UPDATE task_logs SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run()
+  return c.json({ success: true })
+})
+
+// 작업 기록 삭제
+app.delete('/api/task-logs/:id', async (c) => {
+  const db = c.env.DB
+  await ensureTaskLogsTable(db)
+  const id = parseInt(c.req.param('id'))
+  if (!id || isNaN(id)) return c.json({ error: 'Invalid id' }, 400)
+  await db.prepare('DELETE FROM task_logs WHERE id = ?').bind(id).run()
   return c.json({ success: true })
 })
 
@@ -907,22 +987,14 @@ app.get('/', (c) => {
                 </div>
 
                 <!-- 월별 요약 카드 -->
-                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
-                    <div class="bg-sky-50 border border-sky-200 rounded-lg p-4">
-                        <div class="text-xs text-sky-700 font-semibold mb-1">수입</div>
-                        <div id="budget-income" class="text-xl font-bold text-sky-700 tabular-nums">0원</div>
-                    </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                     <div class="bg-rose-50 border border-rose-200 rounded-lg p-4">
-                        <div class="text-xs text-rose-700 font-semibold mb-1">지출</div>
-                        <div id="budget-expense" class="text-xl font-bold text-rose-700 tabular-nums">0원</div>
-                    </div>
-                    <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-                        <div class="text-xs text-indigo-700 font-semibold mb-1">순이익 (수입-지출)</div>
-                        <div id="budget-net" class="text-xl font-bold text-indigo-700 tabular-nums">0원</div>
+                        <div class="text-xs text-rose-700 font-semibold mb-1">이번 달 지출</div>
+                        <div id="budget-expense" class="text-2xl font-bold text-rose-700 tabular-nums">0원</div>
                     </div>
                     <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
                         <div class="text-xs text-slate-600 font-semibold mb-1">지난 달 지출 대비</div>
-                        <div id="budget-compare" class="text-xl font-bold text-slate-700 tabular-nums">—</div>
+                        <div id="budget-compare" class="text-2xl font-bold text-slate-700 tabular-nums">—</div>
                         <div id="budget-compare-sub" class="text-[11px] text-slate-500 mt-0.5">지난달 0원</div>
                     </div>
                 </div>
@@ -931,11 +1003,9 @@ app.get('/', (c) => {
                 <div class="border border-slate-200 rounded-lg overflow-hidden">
                     <div class="grid grid-cols-12 gap-2 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-600">
                         <div class="col-span-2">결제일</div>
-                        <div class="col-span-1">구분</div>
-                        <div class="col-span-2">카테고리</div>
-                        <div class="col-span-3">내용</div>
-                        <div class="col-span-2">병원</div>
-                        <div class="col-span-1 text-right">금액</div>
+                        <div class="col-span-3">카테고리</div>
+                        <div class="col-span-4">내용</div>
+                        <div class="col-span-2 text-right">금액</div>
                         <div class="col-span-1 text-right">관리</div>
                     </div>
                     <div id="budget-list" class="divide-y divide-slate-100"></div>
@@ -953,13 +1023,6 @@ app.get('/', (c) => {
                     </h3>
                     <input type="hidden" id="budget-edit-id" value="">
                     <div class="mb-3">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">구분</label>
-                        <div class="flex gap-2">
-                            <button type="button" data-budget-type="expense" class="budget-type-btn flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors bg-rose-500 border-rose-500 text-white">지출</button>
-                            <button type="button" data-budget-type="income" class="budget-type-btn flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors bg-white border-slate-200 text-slate-600">수입</button>
-                        </div>
-                    </div>
-                    <div class="mb-3">
                         <label class="block text-sm font-medium text-gray-700 mb-1">결제일</label>
                         <input type="date" id="budget-date-input" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-emerald-400 focus:outline-none">
                     </div>
@@ -973,15 +1036,9 @@ app.get('/', (c) => {
                             <input type="number" id="budget-amount-input" min="0" step="1000" value="0" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-emerald-400 focus:outline-none tabular-nums">
                         </div>
                     </div>
-                    <div class="mb-3">
+                    <div class="mb-4">
                         <label class="block text-sm font-medium text-gray-700 mb-1">내용</label>
                         <input type="text" id="budget-description-input" placeholder="상세 내용" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-emerald-400 focus:outline-none">
-                    </div>
-                    <div class="mb-4">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">병원 (선택)</label>
-                        <select id="budget-hospital-input" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-emerald-400 focus:outline-none">
-                            <option value="">선택 안함</option>
-                        </select>
                     </div>
                     <div class="flex justify-end gap-2">
                         <button onclick="closeBudgetModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">취소</button>
@@ -1052,7 +1109,28 @@ app.get('/', (c) => {
                     </div>
                 </div>
             </div>
-            
+
+            <!-- 작업 기록 추가/수정 모달 -->
+            <div id="task-log-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                <div class="bg-white rounded-xl shadow-2xl p-6 w-96 max-w-full mx-4">
+                    <h3 id="task-log-modal-title" class="text-xl font-bold text-slate-800 mb-2">
+                        <i class="fas fa-clipboard-list text-indigo-500 mr-2"></i>작업 기록
+                    </h3>
+                    <p id="task-log-subtitle" class="text-sm text-slate-500 mb-4"></p>
+                    <input type="hidden" id="task-log-task-id" value="">
+                    <input type="hidden" id="task-log-id" value="">
+                    <input type="hidden" id="task-log-progress" value="0">
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">어떤 작업을 하셨나요?</label>
+                        <textarea id="task-log-note-input" rows="4" placeholder="예: 썸네일 디자인 완료, 영상 편집 마무리..." class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-indigo-400 focus:outline-none resize-none"></textarea>
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button onclick="closeTaskLogModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">취소</button>
+                        <button onclick="saveTaskLog()" class="bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg px-6 py-2 font-semibold shadow-md">저장</button>
+                    </div>
+                </div>
+            </div>
+
             <div class="bg-white rounded-xl shadow-lg p-6 mb-4 border-2 border-purple-100">
                 <div class="flex justify-between items-center mb-6">
                     <h2 class="text-2xl font-bold primary-color">
@@ -2124,18 +2202,21 @@ app.get('/', (c) => {
                 const nameClass = allDone ? 'text-slate-500 line-through' : 'text-slate-800';
                 const hospitalLabel = t.hospital_name ? \`<span class="text-[11px] text-slate-500 bg-slate-100 rounded px-1.5 py-0.5 ml-1">\${escText(t.hospital_name)}</span>\` : '';
 
-                // 5단계 도트 (클릭하여 진척률 설정)
+                // 5단계 도트 (클릭하면 기록 모달이 열리고, 저장 시 진척률이 해당 단계로 변경됨)
                 let dots = '';
                 for (let i = 0; i <= 4; i++) {
                     const active = i <= step;
                     const dotColor = active
                         ? (allDone ? 'bg-emerald-500 border-emerald-500' : 'bg-indigo-500 border-indigo-500')
                         : 'bg-white border-slate-300 hover:border-indigo-400';
-                    dots += \`<button data-action="setprog" data-id="\${t.id}" data-step="\${i}" title="\${PROGRESS_PCT[i]}%" class="w-5 h-5 rounded-full border-2 \${dotColor} transition-all"></button>\`;
+                    dots += \`<button data-action="setprog" data-id="\${t.id}" data-step="\${i}" title="\${PROGRESS_PCT[i]}% — 작업 기록 추가" class="w-5 h-5 rounded-full border-2 \${dotColor} transition-all"></button>\`;
                 }
 
+                const logCount = (t.__logs || []).length;
+                const expanded = __expandedTaskIds.has(t.id);
+
                 html += \`
-                    <div class="group border \${rowClasses} rounded-lg p-3 transition-all">
+                    <div class="group border \${rowClasses} rounded-lg p-3 transition-all" data-task-card="\${t.id}">
                         <div class="flex items-center justify-between gap-2 mb-2">
                             <div class="flex items-center gap-2 min-w-0 flex-1">
                                 \${allDone ? '<i class="fas fa-check-circle text-emerald-500 text-sm flex-shrink-0"></i>' : ''}
@@ -2159,7 +2240,14 @@ app.get('/', (c) => {
                         </div>
                         <div class="flex items-center justify-between gap-2 mt-2">
                             <div class="flex items-center gap-1.5">\${dots}</div>
-                            <span class="text-[11px] text-slate-400">5단계 진척률</span>
+                            <button data-action="togglelogs" data-id="\${t.id}" class="text-[11px] text-slate-500 hover:text-indigo-600 flex items-center gap-1">
+                                <i class="fas fa-clipboard-list"></i>
+                                작업 기록 \${logCount > 0 ? '('+logCount+')' : ''}
+                                <i class="fas fa-chevron-\${expanded ? 'up' : 'down'} text-[9px]"></i>
+                            </button>
+                        </div>
+                        <div data-task-logs="\${t.id}" class="\${expanded ? '' : 'hidden'} mt-3 border-t border-slate-200 pt-2 space-y-1.5">
+                            \${renderTaskLogs(t)}
                         </div>
                     </div>
                 \`;
@@ -2176,11 +2264,19 @@ app.get('/', (c) => {
                     const action = btn.dataset.action;
                     if (action === 'setprog') {
                         const step = parseInt(btn.dataset.step);
-                        updateTaskProgress(id, step);
+                        openTaskLogModal(id, step);
                     } else if (action === 'edit') {
                         openEditTaskModal(id);
                     } else if (action === 'delete') {
                         deleteTask(id);
+                    } else if (action === 'togglelogs') {
+                        toggleTaskLogs(id);
+                    } else if (action === 'editlog') {
+                        const logId = parseInt(btn.dataset.logId);
+                        openEditTaskLogModal(id, logId);
+                    } else if (action === 'deletelog') {
+                        const logId = parseInt(btn.dataset.logId);
+                        deleteTaskLog(id, logId);
                     }
                 });
                 statsGrid.__tasksBound = true;
@@ -2188,14 +2284,154 @@ app.get('/', (c) => {
         }
         window.renderTasks = renderTasks;
 
-        async function updateTaskProgress(id, step) {
+        function renderTaskLogs(t) {
+            const logs = t.__logs;
+            if (logs === undefined) {
+                return '<div class="text-[11px] text-slate-400 italic">불러오는 중...</div>';
+            }
+            if (logs.length === 0) {
+                return '<div class="text-[11px] text-slate-400 italic">아직 기록이 없습니다. 진척률 점을 눌러 작업 기록을 남겨보세요.</div>';
+            }
+            function escText(str) {
+                return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            }
+            function fmtDate(s) {
+                if (!s) return '';
+                const d = new Date(s.replace(' ', 'T') + 'Z');
+                if (isNaN(d.getTime())) return s;
+                // KST 변환
+                const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+                const mm = String(kst.getUTCMonth() + 1).padStart(2, '0');
+                const dd = String(kst.getUTCDate()).padStart(2, '0');
+                const hh = String(kst.getUTCHours()).padStart(2, '0');
+                const mi = String(kst.getUTCMinutes()).padStart(2, '0');
+                return \`\${mm}/\${dd} \${hh}:\${mi}\`;
+            }
+            let out = '';
+            for (const log of logs) {
+                const p = PROGRESS_PCT[log.progress || 0];
+                out += \`
+                    <div class="flex items-start gap-2 text-xs bg-slate-50 rounded-md px-2 py-1.5 group/log">
+                        <span class="inline-block text-[10px] font-bold text-indigo-600 bg-indigo-50 rounded px-1.5 py-0.5 tabular-nums flex-shrink-0 mt-0.5">\${p}%</span>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-slate-700 break-words whitespace-pre-wrap">\${escText(log.note) || '<span class="italic text-slate-400">(내용 없음)</span>'}</div>
+                            <div class="text-[10px] text-slate-400 mt-0.5 tabular-nums">\${fmtDate(log.created_at)}</div>
+                        </div>
+                        <div class="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover/log:opacity-100 transition-opacity">
+                            <button data-action="editlog" data-id="\${t.id}" data-log-id="\${log.id}" title="기록 수정" class="w-6 h-6 flex items-center justify-center rounded text-indigo-600 hover:bg-indigo-100">
+                                <i class="fas fa-pen text-[10px]"></i>
+                            </button>
+                            <button data-action="deletelog" data-id="\${t.id}" data-log-id="\${log.id}" title="기록 삭제" class="w-6 h-6 flex items-center justify-center rounded text-rose-600 hover:bg-rose-100">
+                                <i class="fas fa-trash text-[10px]"></i>
+                            </button>
+                        </div>
+                    </div>
+                \`;
+            }
+            return out;
+        }
+
+        // 작업 기록 영역 토글 (펼치기/접기)
+        const __expandedTaskIds = new Set();
+        async function toggleTaskLogs(taskId) {
+            if (__expandedTaskIds.has(taskId)) {
+                __expandedTaskIds.delete(taskId);
+            } else {
+                __expandedTaskIds.add(taskId);
+                await ensureTaskLogsLoaded(taskId);
+            }
+            renderTasks();
+        }
+
+        async function ensureTaskLogsLoaded(taskId) {
+            const t = __tasksCache.find(x => x.id === taskId);
+            if (!t) return;
+            if (t.__logs !== undefined) return;
             try {
-                await axios.put(\`/api/tasks/\${id}\`, { progress: step });
-                const t = __tasksCache.find(x => x.id === id);
-                if (t) t.progress = step;
+                const res = await axios.get(\`/api/tasks/\${taskId}/logs\`);
+                t.__logs = res.data || [];
+            } catch (e) {
+                t.__logs = [];
+            }
+        }
+
+        // 기록 모달: taskId와 새 진척률(step) 또는 기존 logId를 받음
+        window.openTaskLogModal = async function(taskId, step) {
+            const t = __tasksCache.find(x => x.id === taskId);
+            if (!t) return;
+            document.getElementById('task-log-task-id').value = String(taskId);
+            document.getElementById('task-log-id').value = '';
+            document.getElementById('task-log-progress').value = String(step);
+            document.getElementById('task-log-note-input').value = '';
+            document.getElementById('task-log-modal-title').innerHTML =
+                '<i class="fas fa-clipboard-list text-indigo-500 mr-2"></i>작업 기록 추가';
+            document.getElementById('task-log-subtitle').textContent =
+                \`'\${t.name}' · 진척률을 \${PROGRESS_PCT[step]}%로 변경합니다\`;
+            document.getElementById('task-log-modal').classList.remove('hidden');
+            setTimeout(() => document.getElementById('task-log-note-input').focus(), 50);
+        };
+
+        window.openEditTaskLogModal = function(taskId, logId) {
+            const t = __tasksCache.find(x => x.id === taskId);
+            if (!t || !t.__logs) return;
+            const log = t.__logs.find(l => l.id === logId);
+            if (!log) return;
+            document.getElementById('task-log-task-id').value = String(taskId);
+            document.getElementById('task-log-id').value = String(logId);
+            document.getElementById('task-log-progress').value = String(log.progress || 0);
+            document.getElementById('task-log-note-input').value = log.note || '';
+            document.getElementById('task-log-modal-title').innerHTML =
+                '<i class="fas fa-pen text-indigo-500 mr-2"></i>작업 기록 수정';
+            document.getElementById('task-log-subtitle').textContent =
+                \`'\${t.name}' · \${PROGRESS_PCT[log.progress || 0]}% 시점 기록\`;
+            document.getElementById('task-log-modal').classList.remove('hidden');
+            setTimeout(() => document.getElementById('task-log-note-input').focus(), 50);
+        };
+
+        window.closeTaskLogModal = function() {
+            document.getElementById('task-log-modal').classList.add('hidden');
+        };
+
+        window.saveTaskLog = async function() {
+            const taskId = parseInt(document.getElementById('task-log-task-id').value);
+            const logId = document.getElementById('task-log-id').value;
+            const progress = parseInt(document.getElementById('task-log-progress').value);
+            const note = document.getElementById('task-log-note-input').value.trim();
+            if (!taskId) return;
+            try {
+                if (logId) {
+                    // 기록 수정만
+                    await axios.put(\`/api/task-logs/\${logId}\`, { note });
+                } else {
+                    // 새 기록 + 진척률 변경
+                    await axios.post(\`/api/tasks/\${taskId}/logs\`, { progress, note });
+                    await axios.put(\`/api/tasks/\${taskId}\`, { progress });
+                    // 로컬 업데이트
+                    const t = __tasksCache.find(x => x.id === taskId);
+                    if (t) t.progress = progress;
+                    __expandedTaskIds.add(taskId);
+                }
+                // 해당 작업의 로그 캐시 무효화 후 재로드
+                const t = __tasksCache.find(x => x.id === taskId);
+                if (t) t.__logs = undefined;
+                await ensureTaskLogsLoaded(taskId);
+                closeTaskLogModal();
                 renderTasks();
             } catch (error) {
-                alert('진척률 변경 실패: ' + (error.response?.data?.error || error.message));
+                alert('저장 실패: ' + (error.response?.data?.error || error.message));
+            }
+        };
+
+        async function deleteTaskLog(taskId, logId) {
+            if (!confirm('이 작업 기록을 삭제하시겠습니까?')) return;
+            try {
+                await axios.delete(\`/api/task-logs/\${logId}\`);
+                const t = __tasksCache.find(x => x.id === taskId);
+                if (t) t.__logs = undefined;
+                await ensureTaskLogsLoaded(taskId);
+                renderTasks();
+            } catch (error) {
+                alert('삭제 실패: ' + (error.response?.data?.error || error.message));
             }
         }
 
@@ -2880,28 +3116,9 @@ app.get('/', (c) => {
         // 예산 관리
         // =========================
         let __budgetCache = [];
-        let __budgetEditingType = 'expense';
 
         function formatWon(n) {
             return (n || 0).toLocaleString('ko-KR') + '원';
-        }
-
-        async function populateBudgetHospitals() {
-            try {
-                const res = await axios.get('/api/hospitals');
-                const hospitals = res.data || [];
-                const sel = document.getElementById('budget-hospital-input');
-                if (!sel) return;
-                const prev = sel.value;
-                while (sel.options.length > 1) sel.remove(1);
-                hospitals.forEach(h => {
-                    if (h.name === '기타') return;
-                    const o = document.createElement('option');
-                    o.value = h.id; o.textContent = h.name;
-                    sel.appendChild(o);
-                });
-                if (prev) sel.value = prev;
-            } catch (e) { console.error('병원 로드 실패', e); }
         }
 
         async function loadBudgets() {
@@ -2909,8 +3126,6 @@ app.get('/', (c) => {
             const month = parseInt(document.getElementById('budget-month').value);
             if (!year || !month) return;
             try {
-                await populateBudgetHospitals();
-
                 // 당월 + 전월 조회 (전월 대비 비교용)
                 const [curRes, prevRes] = await Promise.all([
                     axios.get(\`/api/budgets/\${year}/\${month}\`),
@@ -2931,21 +3146,12 @@ app.get('/', (c) => {
         }
         window.loadBudgets = loadBudgets;
 
-        function sumByType(items, type) {
-            return items.filter(b => b.type === type).reduce((acc, b) => acc + (b.amount || 0), 0);
-        }
-
         function renderBudgetSummary(cur, prev) {
-            const income = sumByType(cur, 'income');
-            const expense = sumByType(cur, 'expense');
-            const net = income - expense;
-            const prevExpense = sumByType(prev, 'expense');
+            // 지출만 집계 (수입 개념은 사용하지 않음)
+            const expense = cur.reduce((acc, b) => acc + (b.amount || 0), 0);
+            const prevExpense = prev.reduce((acc, b) => acc + (b.amount || 0), 0);
 
-            document.getElementById('budget-income').textContent = formatWon(income);
             document.getElementById('budget-expense').textContent = formatWon(expense);
-            const netEl = document.getElementById('budget-net');
-            netEl.textContent = (net >= 0 ? '+' : '') + formatWon(net);
-            netEl.className = 'text-xl font-bold tabular-nums ' + (net >= 0 ? 'text-indigo-700' : 'text-rose-700');
 
             const compareEl = document.getElementById('budget-compare');
             const compareSub = document.getElementById('budget-compare-sub');
@@ -2953,16 +3159,16 @@ app.get('/', (c) => {
             compareSub.textContent = \`지난달 \${formatWon(prevExpense)}\`;
             if (prevExpense === 0 && expense === 0) {
                 compareEl.textContent = '—';
-                compareEl.className = 'text-xl font-bold tabular-nums text-slate-500';
+                compareEl.className = 'text-2xl font-bold tabular-nums text-slate-500';
             } else if (diff > 0) {
                 compareEl.textContent = '+' + formatWon(diff) + ' 더 나감';
-                compareEl.className = 'text-xl font-bold tabular-nums text-rose-600';
+                compareEl.className = 'text-2xl font-bold tabular-nums text-rose-600';
             } else if (diff < 0) {
                 compareEl.textContent = formatWon(Math.abs(diff)) + ' 덜 나감';
-                compareEl.className = 'text-xl font-bold tabular-nums text-emerald-600';
+                compareEl.className = 'text-2xl font-bold tabular-nums text-emerald-600';
             } else {
                 compareEl.textContent = '동일';
-                compareEl.className = 'text-xl font-bold tabular-nums text-slate-500';
+                compareEl.className = 'text-2xl font-bold tabular-nums text-slate-500';
             }
         }
 
@@ -2989,21 +3195,13 @@ app.get('/', (c) => {
 
             let html = '';
             for (const b of sorted) {
-                const isIncome = b.type === 'income';
-                const typeBadge = isIncome
-                    ? '<span class="inline-block text-[11px] font-semibold text-sky-700 bg-sky-100 rounded px-2 py-0.5">수입</span>'
-                    : '<span class="inline-block text-[11px] font-semibold text-rose-700 bg-rose-100 rounded px-2 py-0.5">지출</span>';
                 const dateStr = b.budget_date ? b.budget_date.slice(5).replace('-', '/') : '—';
-                const amountClass = isIncome ? 'text-sky-700' : 'text-rose-700';
-                const amountPrefix = isIncome ? '+' : '-';
                 html += \`
                     <div class="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm hover:bg-slate-50">
                         <div class="col-span-2 text-slate-700 tabular-nums">\${dateStr}</div>
-                        <div class="col-span-1">\${typeBadge}</div>
-                        <div class="col-span-2 text-slate-700 truncate" title="\${esc(b.category)}">\${esc(b.category) || '—'}</div>
-                        <div class="col-span-3 text-slate-700 truncate" title="\${esc(b.description)}">\${esc(b.description) || '—'}</div>
-                        <div class="col-span-2 text-slate-500 text-xs truncate">\${esc(b.hospital_name) || '—'}</div>
-                        <div class="col-span-1 text-right font-bold tabular-nums \${amountClass}">\${amountPrefix}\${formatWon(b.amount)}</div>
+                        <div class="col-span-3 text-slate-700 truncate" title="\${esc(b.category)}">\${esc(b.category) || '—'}</div>
+                        <div class="col-span-4 text-slate-700 truncate" title="\${esc(b.description)}">\${esc(b.description) || '—'}</div>
+                        <div class="col-span-2 text-right font-bold tabular-nums text-rose-700">-\${formatWon(b.amount)}</div>
                         <div class="col-span-1 flex justify-end gap-1">
                             <button data-action="edit" data-id="\${b.id}" title="수정" class="w-7 h-7 flex items-center justify-center rounded-md text-indigo-600 hover:bg-indigo-100">
                                 <i class="fas fa-pen text-xs"></i>
@@ -3041,37 +3239,18 @@ app.get('/', (c) => {
             }
         }
 
-        function setBudgetTypeButton(type) {
-            __budgetEditingType = type;
-            document.querySelectorAll('.budget-type-btn').forEach(btn => {
-                const v = btn.dataset.budgetType;
-                if (v === type) {
-                    if (type === 'income') {
-                        btn.className = 'budget-type-btn flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors bg-sky-500 border-sky-500 text-white';
-                    } else {
-                        btn.className = 'budget-type-btn flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors bg-rose-500 border-rose-500 text-white';
-                    }
-                } else {
-                    btn.className = 'budget-type-btn flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors bg-white border-slate-200 text-slate-600 hover:border-slate-300';
-                }
-            });
-        }
-
         window.openAddBudgetModal = function() {
-            populateBudgetHospitals();
             document.getElementById('budget-modal-title').innerHTML = '<i class="fas fa-plus-circle text-emerald-500 mr-2"></i>예산 항목 추가';
             document.getElementById('budget-edit-id').value = '';
             document.getElementById('budget-category-input').value = '';
             document.getElementById('budget-description-input').value = '';
             document.getElementById('budget-amount-input').value = '0';
-            document.getElementById('budget-hospital-input').value = '';
             // 기본 결제일 = 선택된 년/월의 오늘 일자
             const y = document.getElementById('budget-year').value;
             const m = document.getElementById('budget-month').value;
             const now = new Date();
             const day = String(now.getDate()).padStart(2, '0');
             document.getElementById('budget-date-input').value = \`\${y}-\${String(m).padStart(2, '0')}-\${day}\`;
-            setBudgetTypeButton('expense');
             document.getElementById('budget-modal').classList.remove('hidden');
             setTimeout(() => document.getElementById('budget-category-input').focus(), 50);
         };
@@ -3079,15 +3258,12 @@ app.get('/', (c) => {
         window.openEditBudgetModal = function(id) {
             const b = __budgetCache.find(x => x.id === id);
             if (!b) return;
-            populateBudgetHospitals();
             document.getElementById('budget-modal-title').innerHTML = '<i class="fas fa-pen text-emerald-500 mr-2"></i>예산 항목 수정';
             document.getElementById('budget-edit-id').value = String(id);
             document.getElementById('budget-category-input').value = b.category || '';
             document.getElementById('budget-description-input').value = b.description || '';
             document.getElementById('budget-amount-input').value = String(b.amount || 0);
-            document.getElementById('budget-hospital-input').value = b.hospital_id || '';
             document.getElementById('budget-date-input').value = b.budget_date || '';
-            setBudgetTypeButton(b.type === 'income' ? 'income' : 'expense');
             document.getElementById('budget-modal').classList.remove('hidden');
         };
 
@@ -3097,11 +3273,9 @@ app.get('/', (c) => {
 
         window.saveBudget = async function() {
             const id = document.getElementById('budget-edit-id').value;
-            const type = __budgetEditingType;
             const category = document.getElementById('budget-category-input').value.trim();
             const description = document.getElementById('budget-description-input').value.trim();
             const amount = parseInt(document.getElementById('budget-amount-input').value) || 0;
-            const hospitalId = document.getElementById('budget-hospital-input').value;
             const budgetDate = document.getElementById('budget-date-input').value;
 
             if (!category && !description) {
@@ -3127,14 +3301,12 @@ app.get('/', (c) => {
             try {
                 if (id) {
                     await axios.put(\`/api/budgets/\${id}\`, {
-                        type, category, description, amount,
-                        hospital_id: hospitalId ? parseInt(hospitalId) : null,
+                        type: 'expense', category, description, amount,
                         budget_date: budgetDate || null
                     });
                 } else {
                     await axios.post('/api/budgets', {
-                        year, month, type, category, description, amount,
-                        hospital_id: hospitalId ? parseInt(hospitalId) : null,
+                        year, month, type: 'expense', category, description, amount,
                         budget_date: budgetDate || null
                     });
                 }
@@ -3149,16 +3321,6 @@ app.get('/', (c) => {
                 alert('저장 실패: ' + (error.response?.data?.error || error.message));
             }
         };
-
-        // 모달 구분 버튼 바인딩
-        function bindBudgetTypeButtons() {
-            const btns = document.querySelectorAll('.budget-type-btn');
-            if (!btns || btns.length === 0) { setTimeout(bindBudgetTypeButtons, 50); return; }
-            btns.forEach(btn => {
-                btn.addEventListener('click', () => setBudgetTypeButton(btn.dataset.budgetType));
-            });
-        }
-        bindBudgetTypeButtons();
 
         // 초기화
         document.addEventListener('DOMContentLoaded', () => {
