@@ -698,10 +698,19 @@ async function ensureBudgetsTable(db: any) {
         amount INTEGER NOT NULL DEFAULT 0,
         hospital_id INTEGER,
         budget_date TEXT,
+        payment_type TEXT NOT NULL DEFAULT 'onetime',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `).run()
   } catch (e) {}
+  // 기존 배포 DB에 payment_type 컬럼 없으면 추가
+  try {
+    await db.prepare(`ALTER TABLE budgets ADD COLUMN payment_type TEXT NOT NULL DEFAULT 'onetime'`).run()
+  } catch (e) {}
+}
+
+function normalizePaymentType(v: any): string {
+  return v === 'recurring' ? 'recurring' : 'onetime'
 }
 
 // 월별 예산 항목 조회
@@ -726,24 +735,26 @@ app.get('/api/budgets/:year/:month', async (c) => {
 app.post('/api/budgets', async (c) => {
   const db = c.env.DB
   await ensureBudgetsTable(db)
-  const { year, month, type, category, description, amount, hospital_id, budget_date } = await c.req.json()
+  const { year, month, type, category, description, amount, hospital_id, budget_date, payment_type } = await c.req.json()
 
   if (!year || !month) {
     return c.json({ error: 'year, month 필수' }, 400)
   }
   const t = type === 'income' ? 'income' : 'expense'
   const amt = Math.max(0, parseInt(amount) || 0)
+  const pt = normalizePaymentType(payment_type)
 
   const result = await db.prepare(`
-    INSERT INTO budgets (year, month, type, category, description, amount, hospital_id, budget_date)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO budgets (year, month, type, category, description, amount, hospital_id, budget_date, payment_type)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     year, month, t,
     category || '',
     description || '',
     amt,
     hospital_id || null,
-    budget_date || null
+    budget_date || null,
+    pt
   ).run()
 
   return c.json({ success: true, id: result.meta.last_row_id })
@@ -767,6 +778,7 @@ app.put('/api/budgets/:id', async (c) => {
   if (data.amount !== undefined) { fields.push('amount = ?'); values.push(Math.max(0, parseInt(data.amount) || 0)) }
   if (data.hospital_id !== undefined) { fields.push('hospital_id = ?'); values.push(data.hospital_id || null) }
   if (data.budget_date !== undefined) { fields.push('budget_date = ?'); values.push(data.budget_date || null) }
+  if (data.payment_type !== undefined) { fields.push('payment_type = ?'); values.push(normalizePaymentType(data.payment_type)) }
 
   if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400)
 
@@ -898,7 +910,7 @@ app.get('/', (c) => {
                     <i class="fas fa-brain mr-3"></i>
                     Schedule-AI
                 </h1>
-                <p class="text-white text-opacity-90">AI 기반 스마트 업무 스케줄 관리 시스템 <span class="text-[10px] text-white/60 ml-2">v2026.04.15-split</span></p>
+                <p class="text-white text-opacity-90">AI 기반 스마트 업무 스케줄 관리 시스템 <span class="text-[10px] text-white/60 ml-2">v2026.04.15-toggle</span></p>
             </div>
         </header>
 
@@ -1007,24 +1019,40 @@ app.get('/', (c) => {
                 </div>
 
                 <!-- 월별 요약 카드 -->
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <div class="text-xs text-blue-700 font-semibold mb-1"><i class="fas fa-sync-alt mr-1"></i>정기결제</div>
+                        <div id="budget-recurring" class="text-xl font-bold text-blue-700 tabular-nums">0원</div>
+                    </div>
+                    <div class="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                        <div class="text-xs text-amber-700 font-semibold mb-1"><i class="fas fa-credit-card mr-1"></i>수시결제</div>
+                        <div id="budget-onetime" class="text-xl font-bold text-amber-700 tabular-nums">0원</div>
+                    </div>
                     <div class="bg-rose-50 border border-rose-200 rounded-lg p-4">
-                        <div class="text-xs text-rose-700 font-semibold mb-1">이번 달 지출</div>
-                        <div id="budget-expense" class="text-2xl font-bold text-rose-700 tabular-nums">0원</div>
+                        <div class="text-xs text-rose-700 font-semibold mb-1"><i class="fas fa-coins mr-1"></i>이번 달 합계</div>
+                        <div id="budget-expense" class="text-xl font-bold text-rose-700 tabular-nums">0원</div>
                     </div>
                     <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
-                        <div class="text-xs text-slate-600 font-semibold mb-1">지난 달 지출 대비</div>
-                        <div id="budget-compare" class="text-2xl font-bold text-slate-700 tabular-nums">—</div>
+                        <div class="text-xs text-slate-600 font-semibold mb-1"><i class="fas fa-chart-line mr-1"></i>지난 달 대비</div>
+                        <div id="budget-compare" class="text-xl font-bold text-slate-700 tabular-nums">—</div>
                         <div id="budget-compare-sub" class="text-[11px] text-slate-500 mt-0.5">지난달 0원</div>
                     </div>
+                </div>
+
+                <!-- 필터 탭 -->
+                <div class="flex gap-1 mb-3 border-b border-slate-200">
+                    <button data-budget-filter="all" class="budget-filter-tab px-4 py-2 text-sm font-semibold border-b-2 border-emerald-500 text-emerald-700">전체</button>
+                    <button data-budget-filter="recurring" class="budget-filter-tab px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-slate-500 hover:text-blue-600"><i class="fas fa-sync-alt mr-1"></i>정기결제</button>
+                    <button data-budget-filter="onetime" class="budget-filter-tab px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-slate-500 hover:text-amber-600"><i class="fas fa-credit-card mr-1"></i>수시결제</button>
                 </div>
 
                 <!-- 예산 항목 목록 -->
                 <div class="border border-slate-200 rounded-lg overflow-hidden">
                     <div class="grid grid-cols-12 gap-2 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-600">
                         <div class="col-span-2">결제일</div>
-                        <div class="col-span-3">카테고리</div>
-                        <div class="col-span-4">내용</div>
+                        <div class="col-span-2">유형</div>
+                        <div class="col-span-2">카테고리</div>
+                        <div class="col-span-3">내용</div>
                         <div class="col-span-2 text-right">금액</div>
                         <div class="col-span-1 text-right">관리</div>
                     </div>
@@ -1042,6 +1070,18 @@ app.get('/', (c) => {
                         <i class="fas fa-plus-circle text-emerald-500 mr-2"></i>예산 항목 추가
                     </h3>
                     <input type="hidden" id="budget-edit-id" value="">
+                    <div class="mb-3">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">결제 유형</label>
+                        <div id="budget-payment-type-input" class="flex gap-2" data-value="onetime">
+                            <button type="button" data-pt="recurring" class="flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors">
+                                <i class="fas fa-sync-alt mr-1.5"></i>정기결제
+                            </button>
+                            <button type="button" data-pt="onetime" class="flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors">
+                                <i class="fas fa-credit-card mr-1.5"></i>수시결제
+                            </button>
+                        </div>
+                        <div class="text-[11px] text-slate-500 mt-1">정기결제: 매월 자동 결제 / 수시결제: 크레딧·일회성 결제</div>
+                    </div>
                     <div class="mb-3">
                         <label class="block text-sm font-medium text-gray-700 mb-1">결제일</label>
                         <input type="date" id="budget-date-input" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-emerald-400 focus:outline-none">
@@ -1114,13 +1154,10 @@ app.get('/', (c) => {
                         </select>
                     </div>
                     <div class="mb-4">
-                        <label class="block text-sm font-medium text-gray-700 mb-2">진척률 (5단계)</label>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">상태</label>
                         <div id="task-progress-input" class="flex gap-2" data-value="0">
-                            <button type="button" data-p="0" class="flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors">0%</button>
-                            <button type="button" data-p="1" class="flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors">25%</button>
-                            <button type="button" data-p="2" class="flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors">50%</button>
-                            <button type="button" data-p="3" class="flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors">75%</button>
-                            <button type="button" data-p="4" class="flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors">100%</button>
+                            <button type="button" data-p="0" class="flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors"><i class="far fa-circle mr-1.5"></i>진행 예정</button>
+                            <button type="button" data-p="4" class="flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors"><i class="fas fa-check-circle mr-1.5"></i>완료</button>
                         </div>
                     </div>
                     <div class="flex justify-end gap-2">
@@ -1254,7 +1291,7 @@ app.get('/', (c) => {
             <!-- 안내 (카드 클릭은 열람 전용) -->
             <div class="px-6 py-2 border-b border-slate-200 bg-slate-50 text-[11px] text-slate-500 flex items-center gap-1.5">
                 <i class="fas fa-circle-info text-slate-400"></i>
-                기록을 추가하려면 작업 카드의 진척률 동그라미(●)를 눌러주세요.
+                완료 처리 및 기록 입력은 작업 카드의 "완료" 버튼을 눌러주세요.
             </div>
 
             <!-- 기록 히스토리 -->
@@ -2271,15 +2308,17 @@ app.get('/', (c) => {
                 const nameClass = allDone ? 'text-slate-500 line-through' : 'text-slate-800';
                 const hospitalLabel = t.hospital_name ? \`<span class="text-[11px] text-slate-500 bg-slate-100 rounded px-1.5 py-0.5 ml-1">\${escText(t.hospital_name)}</span>\` : '';
 
-                // 5단계 도트 (클릭하면 기록 모달이 열리고, 저장 시 진척률이 해당 단계로 변경됨)
-                let dots = '';
-                for (let i = 0; i <= 4; i++) {
-                    const active = i <= step;
-                    const dotColor = active
-                        ? (allDone ? 'bg-emerald-500 border-emerald-500' : 'bg-indigo-500 border-indigo-500')
-                        : 'bg-white border-slate-300 hover:border-indigo-400';
-                    dots += \`<button data-action="setprog" data-id="\${t.id}" data-step="\${i}" title="\${PROGRESS_PCT[i]}% — 작업 기록 추가" class="w-5 h-5 rounded-full border-2 \${dotColor} transition-all"></button>\`;
-                }
+                // 완료 토글 버튼 (완료: 기록 모달 열어서 100% 처리 / 완료됨: 확인 후 0%로 되돌림)
+                const toggleBtn = allDone
+                    ? \`<button data-action="uncomplete" data-id="\${t.id}" title="진행 예정으로 되돌리기" class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-600 text-white transition-colors">
+                            <i class="fas fa-check-circle"></i>완료됨
+                       </button>\`
+                    : \`<button data-action="complete" data-id="\${t.id}" title="완료 처리 — 기록 입력" class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-md bg-white border border-indigo-300 text-indigo-600 hover:bg-indigo-500 hover:border-indigo-500 hover:text-white transition-colors">
+                            <i class="far fa-circle"></i>완료
+                       </button>\`;
+                const statusLabel = allDone
+                    ? '<span class="text-[11px] font-semibold text-emerald-600"><i class="fas fa-check mr-1"></i>완료됨</span>'
+                    : '<span class="text-[11px] font-medium text-slate-500">진행 예정</span>';
 
                 const logCount = (t.__logs || []).length;
                 const expanded = __expandedTaskIds.has(t.id);
@@ -2301,14 +2340,11 @@ app.get('/', (c) => {
                                 </button>
                             </div>
                         </div>
-                        <div class="flex items-center gap-2">
-                            <div class="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                                <div class="h-full \${progressBarColor(step)} rounded-full transition-all duration-300" style="width: \${pct}%"></div>
+                        <div class="flex items-center justify-between gap-2 mt-1">
+                            <div class="flex items-center gap-2">
+                                \${toggleBtn}
+                                \${statusLabel}
                             </div>
-                            <span class="text-xs font-semibold text-slate-600 tabular-nums w-10 text-right">\${pct}%</span>
-                        </div>
-                        <div class="flex items-center justify-between gap-2 mt-2">
-                            <div class="flex items-center gap-1.5">\${dots}</div>
                             <button data-action="togglelogs" data-id="\${t.id}" class="text-[11px] text-slate-500 hover:text-indigo-600 flex items-center gap-1">
                                 <i class="fas fa-clipboard-list"></i>
                                 작업 기록 \${logCount > 0 ? '('+logCount+')' : ''}
@@ -2333,13 +2369,14 @@ app.get('/', (c) => {
                         const id = parseInt(btn.dataset.id);
                         const action = btn.dataset.action;
                         console.log('[task action]', action, 'id=', id, 'step=', btn.dataset.step);
-                        if (action === 'setprog') {
-                            const step = parseInt(btn.dataset.step);
+                        if (action === 'complete') {
                             if (typeof openTaskLogModal !== 'function') {
                                 alert('작업 기록 기능이 로드되지 않았습니다. 페이지를 강력 새로고침(Ctrl+Shift+R) 해주세요.');
                                 return;
                             }
-                            openTaskLogModal(id, step);
+                            openTaskLogModal(id, 4);
+                        } else if (action === 'uncomplete') {
+                            uncompleteTask(id);
                         } else if (action === 'edit') {
                             openEditTaskModal(id);
                         } else if (action === 'delete') {
@@ -2378,7 +2415,7 @@ app.get('/', (c) => {
                 return '<div class="text-[11px] text-slate-400 italic">불러오는 중...</div>';
             }
             if (logs.length === 0) {
-                return '<div class="text-[11px] text-slate-400 italic">아직 기록이 없습니다. 진척률 점을 눌러 작업 기록을 남겨보세요.</div>';
+                return '<div class="text-[11px] text-slate-400 italic">아직 기록이 없습니다. "완료" 버튼을 눌러 작업 기록을 남겨보세요.</div>';
             }
             function escText(str) {
                 return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -2451,10 +2488,13 @@ app.get('/', (c) => {
             document.getElementById('task-log-id').value = '';
             document.getElementById('task-log-progress').value = String(step);
             document.getElementById('task-log-note-input').value = '';
-            document.getElementById('task-log-modal-title').innerHTML =
-                '<i class="fas fa-clipboard-list text-indigo-500 mr-2"></i>작업 기록 추가';
-            document.getElementById('task-log-subtitle').textContent =
-                \`'\${t.name}' · 진척률을 \${PROGRESS_PCT[step]}%로 변경합니다\`;
+            const isComplete = step >= 4;
+            document.getElementById('task-log-modal-title').innerHTML = isComplete
+                ? '<i class="fas fa-check-circle text-emerald-500 mr-2"></i>작업 완료 처리'
+                : '<i class="fas fa-clipboard-list text-indigo-500 mr-2"></i>작업 기록 추가';
+            document.getElementById('task-log-subtitle').textContent = isComplete
+                ? \`'\${t.name}'을(를) 완료 처리합니다. 마지막으로 한 작업을 적어주세요.\`
+                : \`'\${t.name}' · 진척률을 \${PROGRESS_PCT[step]}%로 변경합니다\`;
             document.getElementById('task-log-modal').classList.remove('hidden');
             setTimeout(() => document.getElementById('task-log-note-input').focus(), 50);
         };
@@ -2663,6 +2703,21 @@ app.get('/', (c) => {
             }
         }
 
+        async function uncompleteTask(id) {
+            const t = __tasksCache.find(x => x.id === id);
+            const label = t ? t.name : '작업';
+            if (!confirm(\`'\${label}'을(를) 진행 예정으로 되돌릴까요?\n(작업 기록은 그대로 남습니다)\`)) return;
+            try {
+                await axios.put(\`/api/tasks/\${id}\`, { progress: 0 });
+                if (t) t.progress = 0;
+                renderTasks();
+                if (__detailTaskId === id) renderTaskDetail();
+            } catch (error) {
+                alert('변경 실패: ' + (error.response?.data?.error || error.message));
+            }
+        }
+        window.uncompleteTask = uncompleteTask;
+
         // === 작업 추가/수정 모달 ===
         function setProgressButton(step) {
             const container = document.getElementById('task-progress-input');
@@ -2694,7 +2749,8 @@ app.get('/', (c) => {
             document.getElementById('task-edit-id').value = String(id);
             document.getElementById('task-name-input').value = t.name || '';
             document.getElementById('task-hospital-input').value = t.hospital_id || '';
-            setProgressButton(t.progress || 0);
+            // 진척률은 진행 예정(0) / 완료(4) 둘 중 하나로 정규화
+            setProgressButton((t.progress || 0) >= 4 ? 4 : 0);
             document.getElementById('task-modal').classList.remove('hidden');
         };
 
@@ -3333,9 +3389,14 @@ app.get('/', (c) => {
         // 예산 관리
         // =========================
         let __budgetCache = [];
+        let __budgetFilter = 'all'; // 'all' | 'recurring' | 'onetime'
 
         function formatWon(n) {
             return (n || 0).toLocaleString('ko-KR') + '원';
+        }
+
+        function budgetPaymentType(b) {
+            return b && b.payment_type === 'recurring' ? 'recurring' : 'onetime';
         }
 
         async function loadBudgets() {
@@ -3367,7 +3428,11 @@ app.get('/', (c) => {
             // 지출만 집계 (수입 개념은 사용하지 않음)
             const expense = cur.reduce((acc, b) => acc + (b.amount || 0), 0);
             const prevExpense = prev.reduce((acc, b) => acc + (b.amount || 0), 0);
+            const recurring = cur.filter(b => budgetPaymentType(b) === 'recurring').reduce((acc, b) => acc + (b.amount || 0), 0);
+            const onetime = cur.filter(b => budgetPaymentType(b) === 'onetime').reduce((acc, b) => acc + (b.amount || 0), 0);
 
+            document.getElementById('budget-recurring').textContent = formatWon(recurring);
+            document.getElementById('budget-onetime').textContent = formatWon(onetime);
             document.getElementById('budget-expense').textContent = formatWon(expense);
 
             const compareEl = document.getElementById('budget-compare');
@@ -3392,15 +3457,25 @@ app.get('/', (c) => {
         function renderBudgetList(items) {
             const list = document.getElementById('budget-list');
             const empty = document.getElementById('budget-empty');
-            if (!items || items.length === 0) {
+
+            // 필터 적용
+            const filtered = (items || []).filter(b => {
+                if (__budgetFilter === 'all') return true;
+                return budgetPaymentType(b) === __budgetFilter;
+            });
+
+            if (filtered.length === 0) {
                 list.innerHTML = '';
                 empty.classList.remove('hidden');
+                empty.textContent = __budgetFilter === 'all'
+                    ? '등록된 예산 항목이 없습니다. 상단 "항목 추가"로 시작해보세요.'
+                    : (__budgetFilter === 'recurring' ? '등록된 정기결제가 없습니다.' : '등록된 수시결제가 없습니다.');
                 return;
             }
             empty.classList.add('hidden');
 
             // 결제일 오름차순
-            const sorted = [...items].sort((a, b) => {
+            const sorted = [...filtered].sort((a, b) => {
                 const da = a.budget_date || '9999-12-31';
                 const db = b.budget_date || '9999-12-31';
                 return da.localeCompare(db);
@@ -3413,11 +3488,16 @@ app.get('/', (c) => {
             let html = '';
             for (const b of sorted) {
                 const dateStr = b.budget_date ? b.budget_date.slice(5).replace('-', '/') : '—';
+                const pt = budgetPaymentType(b);
+                const badge = pt === 'recurring'
+                    ? '<span class="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded px-2 py-0.5"><i class="fas fa-sync-alt"></i>정기</span>'
+                    : '<span class="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5"><i class="fas fa-credit-card"></i>수시</span>';
                 html += \`
                     <div class="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm hover:bg-slate-50">
                         <div class="col-span-2 text-slate-700 tabular-nums">\${dateStr}</div>
-                        <div class="col-span-3 text-slate-700 truncate" title="\${esc(b.category)}">\${esc(b.category) || '—'}</div>
-                        <div class="col-span-4 text-slate-700 truncate" title="\${esc(b.description)}">\${esc(b.description) || '—'}</div>
+                        <div class="col-span-2">\${badge}</div>
+                        <div class="col-span-2 text-slate-700 truncate" title="\${esc(b.category)}">\${esc(b.category) || '—'}</div>
+                        <div class="col-span-3 text-slate-700 truncate" title="\${esc(b.description)}">\${esc(b.description) || '—'}</div>
                         <div class="col-span-2 text-right font-bold tabular-nums text-rose-700">-\${formatWon(b.amount)}</div>
                         <div class="col-span-1 flex justify-end gap-1">
                             <button data-action="edit" data-id="\${b.id}" title="수정" class="w-7 h-7 flex items-center justify-center rounded-md text-indigo-600 hover:bg-indigo-100">
@@ -3444,6 +3524,59 @@ app.get('/', (c) => {
             }
         }
 
+        // 결제 유형 필터 탭 바인딩
+        function bindBudgetFilterTabs() {
+            const tabs = document.querySelectorAll('[data-budget-filter]');
+            if (!tabs || tabs.length === 0) { setTimeout(bindBudgetFilterTabs, 100); return; }
+            tabs.forEach(tab => {
+                tab.addEventListener('click', () => {
+                    __budgetFilter = tab.dataset.budgetFilter;
+                    // 탭 스타일 갱신
+                    tabs.forEach(t => {
+                        const f = t.dataset.budgetFilter;
+                        const active = f === __budgetFilter;
+                        const color = f === 'recurring' ? 'blue' : (f === 'onetime' ? 'amber' : 'emerald');
+                        if (active) {
+                            t.className = \`budget-filter-tab px-4 py-2 text-sm font-semibold border-b-2 border-\${color}-500 text-\${color}-700\`;
+                        } else {
+                            t.className = \`budget-filter-tab px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-slate-500 hover:text-\${color}-600\`;
+                        }
+                    });
+                    renderBudgetList(__budgetCache);
+                });
+            });
+        }
+        bindBudgetFilterTabs();
+
+        // 결제 유형 선택 버튼 (모달)
+        function setBudgetPaymentTypeButton(pt) {
+            const container = document.getElementById('budget-payment-type-input');
+            if (!container) return;
+            const val = pt === 'recurring' ? 'recurring' : 'onetime';
+            container.dataset.value = val;
+            Array.from(container.querySelectorAll('button')).forEach(btn => {
+                const v = btn.dataset.pt;
+                const active = v === val;
+                const color = v === 'recurring' ? 'blue' : 'amber';
+                if (active) {
+                    btn.className = \`flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors bg-\${color}-500 border-\${color}-500 text-white\`;
+                } else {
+                    btn.className = 'flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors bg-white border-slate-200 text-slate-600 hover:border-slate-300';
+                }
+            });
+        }
+
+        function bindBudgetPaymentTypeInput() {
+            const container = document.getElementById('budget-payment-type-input');
+            if (!container) { setTimeout(bindBudgetPaymentTypeInput, 100); return; }
+            container.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-pt]');
+                if (!btn) return;
+                setBudgetPaymentTypeButton(btn.dataset.pt);
+            });
+        }
+        bindBudgetPaymentTypeInput();
+
         async function deleteBudget(id) {
             const item = __budgetCache.find(x => x.id === id);
             const label = item ? (item.description || item.category || '항목') : '항목';
@@ -3462,6 +3595,8 @@ app.get('/', (c) => {
             document.getElementById('budget-category-input').value = '';
             document.getElementById('budget-description-input').value = '';
             document.getElementById('budget-amount-input').value = '0';
+            // 현재 필터에 맞춰 기본 유형 설정 (전체일 땐 수시결제 기본)
+            setBudgetPaymentTypeButton(__budgetFilter === 'recurring' ? 'recurring' : 'onetime');
             // 기본 결제일 = 선택된 년/월의 오늘 일자
             const y = document.getElementById('budget-year').value;
             const m = document.getElementById('budget-month').value;
@@ -3481,6 +3616,7 @@ app.get('/', (c) => {
             document.getElementById('budget-description-input').value = b.description || '';
             document.getElementById('budget-amount-input').value = String(b.amount || 0);
             document.getElementById('budget-date-input').value = b.budget_date || '';
+            setBudgetPaymentTypeButton(budgetPaymentType(b));
             document.getElementById('budget-modal').classList.remove('hidden');
         };
 
@@ -3494,6 +3630,7 @@ app.get('/', (c) => {
             const description = document.getElementById('budget-description-input').value.trim();
             const amount = parseInt(document.getElementById('budget-amount-input').value) || 0;
             const budgetDate = document.getElementById('budget-date-input').value;
+            const paymentType = document.getElementById('budget-payment-type-input').dataset.value || 'onetime';
 
             if (!category && !description) {
                 alert('카테고리나 내용 중 하나는 입력해주세요');
@@ -3519,12 +3656,14 @@ app.get('/', (c) => {
                 if (id) {
                     await axios.put(\`/api/budgets/\${id}\`, {
                         type: 'expense', category, description, amount,
-                        budget_date: budgetDate || null
+                        budget_date: budgetDate || null,
+                        payment_type: paymentType
                     });
                 } else {
                     await axios.post('/api/budgets', {
                         year, month, type: 'expense', category, description, amount,
-                        budget_date: budgetDate || null
+                        budget_date: budgetDate || null,
+                        payment_type: paymentType
                     });
                 }
                 closeBudgetModal();
