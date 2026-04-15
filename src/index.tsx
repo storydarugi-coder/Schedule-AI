@@ -1201,6 +1201,73 @@ app.get('/', (c) => {
         </div>
     </div>
 
+    <!-- 작업 상세 모달 (더블클릭 시 — 작업 정보 + 기록 작성/열람/수정/삭제) -->
+    <div id="task-detail-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+            <!-- 헤더 -->
+            <div class="px-6 py-4 border-b border-slate-200 flex items-start justify-between gap-3">
+                <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <h3 id="task-detail-name" class="text-xl font-bold text-slate-800 break-words"></h3>
+                        <span id="task-detail-hospital" class="text-xs text-slate-500 bg-slate-100 rounded px-2 py-0.5 hidden"></span>
+                    </div>
+                    <div class="flex items-center gap-3 mt-2">
+                        <div class="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div id="task-detail-progress-bar" class="h-full bg-indigo-500 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                        <span id="task-detail-progress-pct" class="text-xs font-semibold text-slate-600 tabular-nums w-10 text-right">0%</span>
+                    </div>
+                    <div id="task-detail-dots" class="flex items-center gap-1.5 mt-2"></div>
+                </div>
+                <div class="flex items-start gap-1 flex-shrink-0">
+                    <button onclick="openEditTaskModalFromDetail()" title="작업 수정" class="w-8 h-8 flex items-center justify-center rounded-md text-indigo-600 hover:bg-indigo-100">
+                        <i class="fas fa-pen text-sm"></i>
+                    </button>
+                    <button onclick="deleteTaskFromDetail()" title="작업 삭제" class="w-8 h-8 flex items-center justify-center rounded-md text-rose-600 hover:bg-rose-100">
+                        <i class="fas fa-trash text-sm"></i>
+                    </button>
+                    <button onclick="closeTaskDetailModal()" title="닫기" class="w-8 h-8 flex items-center justify-center rounded-md text-slate-500 hover:bg-slate-100">
+                        <i class="fas fa-times text-sm"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 작업 기록 작성 (빠른 추가) -->
+            <div class="px-6 py-4 border-b border-slate-200 bg-slate-50">
+                <label class="block text-sm font-semibold text-slate-700 mb-2">
+                    <i class="fas fa-pen-to-square text-indigo-500 mr-1"></i>어떤 작업을 하셨나요?
+                </label>
+                <textarea id="task-detail-note-input" rows="3" placeholder="예: 썸네일 디자인 완료, 영상 편집 마무리..." class="w-full border-2 border-slate-200 rounded-lg px-3 py-2 focus:border-indigo-400 focus:outline-none resize-none text-sm"></textarea>
+                <div class="flex items-center justify-between gap-2 mt-2">
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs text-slate-600">기록 시점 진척률:</span>
+                        <div id="task-detail-step-picker" class="flex gap-1" data-step="0">
+                            <button type="button" data-step="0" class="detail-step-btn px-2 py-1 rounded text-[11px] font-semibold border-2 transition-colors">0%</button>
+                            <button type="button" data-step="1" class="detail-step-btn px-2 py-1 rounded text-[11px] font-semibold border-2 transition-colors">25%</button>
+                            <button type="button" data-step="2" class="detail-step-btn px-2 py-1 rounded text-[11px] font-semibold border-2 transition-colors">50%</button>
+                            <button type="button" data-step="3" class="detail-step-btn px-2 py-1 rounded text-[11px] font-semibold border-2 transition-colors">75%</button>
+                            <button type="button" data-step="4" class="detail-step-btn px-2 py-1 rounded text-[11px] font-semibold border-2 transition-colors">100%</button>
+                        </div>
+                    </div>
+                    <button onclick="addTaskLogFromDetail()" class="bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg px-4 py-1.5 text-sm font-semibold shadow-sm">
+                        <i class="fas fa-plus mr-1"></i>기록 추가
+                    </button>
+                </div>
+            </div>
+
+            <!-- 기록 히스토리 -->
+            <div class="flex-1 overflow-y-auto px-6 py-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h4 class="text-sm font-bold text-slate-700">
+                        <i class="fas fa-clipboard-list text-slate-500 mr-1"></i>작업 기록
+                        <span id="task-detail-log-count" class="text-xs text-slate-400 ml-1"></span>
+                    </h4>
+                </div>
+                <div id="task-detail-log-list" class="space-y-2"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- 작업 기록 추가/수정 모달 (루트 레벨 — 탭 영향 받지 않음) -->
     <div id="task-log-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div class="bg-white rounded-xl shadow-2xl p-6 w-96 max-w-full mx-4">
@@ -2216,7 +2283,7 @@ app.get('/', (c) => {
                 const expanded = __expandedTaskIds.has(t.id);
 
                 html += \`
-                    <div class="group border \${rowClasses} rounded-lg p-3 transition-all" data-task-card="\${t.id}">
+                    <div class="group border \${rowClasses} rounded-lg p-3 transition-all cursor-pointer" data-task-card="\${t.id}" title="더블클릭하면 상세보기">
                         <div class="flex items-center justify-between gap-2 mb-2">
                             <div class="flex items-center gap-2 min-w-0 flex-1">
                                 \${allDone ? '<i class="fas fa-check-circle text-emerald-500 text-sm flex-shrink-0"></i>' : ''}
@@ -2288,6 +2355,14 @@ app.get('/', (c) => {
                         console.error('작업 버튼 처리 오류:', err);
                         alert('오류: ' + (err.message || err));
                     }
+                });
+                // 카드 더블클릭 → 상세 모달 열기 (버튼은 제외)
+                statsGrid.addEventListener('dblclick', function(e) {
+                    if (e.target.closest('button')) return;
+                    const card = e.target.closest('[data-task-card]');
+                    if (!card) return;
+                    const id = parseInt(card.dataset.taskCard);
+                    openTaskDetailModal(id);
                 });
                 statsGrid.__tasksBound = true;
             }
@@ -2440,10 +2515,205 @@ app.get('/', (c) => {
                 if (t) t.__logs = undefined;
                 await ensureTaskLogsLoaded(taskId);
                 renderTasks();
+                // 상세 모달이 열려있으면 동기화
+                if (__detailTaskId === taskId) renderTaskDetail();
             } catch (error) {
                 alert('삭제 실패: ' + (error.response?.data?.error || error.message));
             }
         }
+
+        // =========================
+        // 작업 상세 모달 (더블클릭 진입)
+        // =========================
+        let __detailTaskId = null;
+        let __detailStep = 0;
+
+        function setDetailStepButton(step) {
+            __detailStep = step;
+            const container = document.getElementById('task-detail-step-picker');
+            if (container) container.dataset.step = String(step);
+            document.querySelectorAll('.detail-step-btn').forEach(btn => {
+                const v = parseInt(btn.dataset.step);
+                if (v === step) {
+                    btn.className = 'detail-step-btn px-2 py-1 rounded text-[11px] font-semibold border-2 transition-colors bg-indigo-500 border-indigo-500 text-white';
+                } else {
+                    btn.className = 'detail-step-btn px-2 py-1 rounded text-[11px] font-semibold border-2 transition-colors bg-white border-slate-200 text-slate-600 hover:border-indigo-300';
+                }
+            });
+        }
+
+        window.openTaskDetailModal = async function(taskId) {
+            const t = __tasksCache.find(x => x.id === taskId);
+            if (!t) return;
+            __detailTaskId = taskId;
+            await ensureTaskLogsLoaded(taskId);
+            renderTaskDetail();
+            document.getElementById('task-detail-modal').classList.remove('hidden');
+            setTimeout(() => document.getElementById('task-detail-note-input').focus(), 50);
+        };
+
+        window.closeTaskDetailModal = function() {
+            document.getElementById('task-detail-modal').classList.add('hidden');
+            __detailTaskId = null;
+        };
+
+        function renderTaskDetail() {
+            if (__detailTaskId === null) return;
+            const t = __tasksCache.find(x => x.id === __detailTaskId);
+            if (!t) return;
+
+            const step = Math.max(0, Math.min(4, t.progress || 0));
+            const pct = PROGRESS_PCT[step];
+            const allDone = step >= 4;
+
+            document.getElementById('task-detail-name').textContent = t.name || '';
+            const hospEl = document.getElementById('task-detail-hospital');
+            if (t.hospital_name) {
+                hospEl.textContent = t.hospital_name;
+                hospEl.classList.remove('hidden');
+            } else {
+                hospEl.classList.add('hidden');
+            }
+
+            const bar = document.getElementById('task-detail-progress-bar');
+            bar.style.width = pct + '%';
+            bar.className = 'h-full rounded-full transition-all duration-300 ' + progressBarColor(step);
+            document.getElementById('task-detail-progress-pct').textContent = pct + '%';
+
+            // 상단 도트 (간단 표시용 · 클릭하면 기록 모달 열림)
+            const dotsEl = document.getElementById('task-detail-dots');
+            let dotsHtml = '';
+            for (let i = 0; i <= 4; i++) {
+                const active = i <= step;
+                const dotColor = active
+                    ? (allDone ? 'bg-emerald-500 border-emerald-500' : 'bg-indigo-500 border-indigo-500')
+                    : 'bg-white border-slate-300 hover:border-indigo-400';
+                dotsHtml += \`<button data-detail-dot="\${i}" title="\${PROGRESS_PCT[i]}% — 기록 작성 시점으로 사용" class="w-4 h-4 rounded-full border-2 \${dotColor} transition-all"></button>\`;
+            }
+            dotsEl.innerHTML = dotsHtml;
+            // 상단 도트 클릭: 하단 작성 영역의 진척률 선택을 변경
+            if (!dotsEl.__detailBound) {
+                dotsEl.addEventListener('click', function(e) {
+                    const btn = e.target.closest('button[data-detail-dot]');
+                    if (!btn) return;
+                    setDetailStepButton(parseInt(btn.dataset.detailDot));
+                });
+                dotsEl.__detailBound = true;
+            }
+
+            // 현재 진척률로 기본 선택
+            setDetailStepButton(step);
+
+            // 로그 리스트
+            const logs = t.__logs || [];
+            document.getElementById('task-detail-log-count').textContent = logs.length ? '(' + logs.length + ')' : '';
+            const listEl = document.getElementById('task-detail-log-list');
+            if (logs.length === 0) {
+                listEl.innerHTML = '<div class="text-sm text-slate-400 italic text-center py-6">아직 기록이 없습니다. 위 입력창에 뭐 했는지 적고 \\'기록 추가\\'를 눌러보세요.</div>';
+            } else {
+                function escText(str) {
+                    return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                }
+                function fmtDate(s) {
+                    if (!s) return '';
+                    const d = new Date(s.replace(' ', 'T') + 'Z');
+                    if (isNaN(d.getTime())) return s;
+                    const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+                    const yy = kst.getUTCFullYear();
+                    const mm = String(kst.getUTCMonth() + 1).padStart(2, '0');
+                    const dd = String(kst.getUTCDate()).padStart(2, '0');
+                    const hh = String(kst.getUTCHours()).padStart(2, '0');
+                    const mi = String(kst.getUTCMinutes()).padStart(2, '0');
+                    return \`\${yy}/\${mm}/\${dd} \${hh}:\${mi}\`;
+                }
+                let html = '';
+                for (const log of logs) {
+                    const p = PROGRESS_PCT[log.progress || 0];
+                    html += \`
+                        <div class="flex items-start gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2.5 group/dlog">
+                            <span class="inline-block text-[11px] font-bold text-indigo-600 bg-indigo-50 rounded px-2 py-0.5 tabular-nums flex-shrink-0 mt-0.5">\${p}%</span>
+                            <div class="flex-1 min-w-0">
+                                <div class="text-sm text-slate-700 break-words whitespace-pre-wrap">\${escText(log.note) || '<span class="italic text-slate-400">(내용 없음)</span>'}</div>
+                                <div class="text-[11px] text-slate-400 mt-1 tabular-nums">\${fmtDate(log.created_at)}</div>
+                            </div>
+                            <div class="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover/dlog:opacity-100 transition-opacity">
+                                <button data-detail-action="editlog" data-log-id="\${log.id}" title="수정" class="w-7 h-7 flex items-center justify-center rounded text-indigo-600 hover:bg-indigo-100">
+                                    <i class="fas fa-pen text-xs"></i>
+                                </button>
+                                <button data-detail-action="deletelog" data-log-id="\${log.id}" title="삭제" class="w-7 h-7 flex items-center justify-center rounded text-rose-600 hover:bg-rose-100">
+                                    <i class="fas fa-trash text-xs"></i>
+                                </button>
+                            </div>
+                        </div>
+                    \`;
+                }
+                listEl.innerHTML = html;
+            }
+
+            // 로그 리스트 액션 이벤트 위임
+            if (!listEl.__detailLogBound) {
+                listEl.addEventListener('click', function(e) {
+                    const btn = e.target.closest('button[data-detail-action]');
+                    if (!btn) return;
+                    const logId = parseInt(btn.dataset.logId);
+                    const action = btn.dataset.detailAction;
+                    if (action === 'editlog') {
+                        openEditTaskLogModal(__detailTaskId, logId);
+                    } else if (action === 'deletelog') {
+                        deleteTaskLog(__detailTaskId, logId);
+                    }
+                });
+                listEl.__detailLogBound = true;
+            }
+        }
+
+        // 모달 하단 "기록 추가" — 입력창 내용으로 기록 생성 + 진척률 변경
+        window.addTaskLogFromDetail = async function() {
+            if (__detailTaskId === null) return;
+            const note = document.getElementById('task-detail-note-input').value.trim();
+            const step = __detailStep;
+            if (!note) {
+                if (!confirm('내용이 비어 있습니다. 그대로 기록할까요?')) return;
+            }
+            try {
+                await axios.post(\`/api/tasks/\${__detailTaskId}/logs\`, { progress: step, note });
+                // 진척률이 바뀌었으면 작업의 progress도 같이 업데이트
+                const t = __tasksCache.find(x => x.id === __detailTaskId);
+                if (t && (t.progress || 0) !== step) {
+                    await axios.put(\`/api/tasks/\${__detailTaskId}\`, { progress: step });
+                    t.progress = step;
+                }
+                if (t) t.__logs = undefined;
+                await ensureTaskLogsLoaded(__detailTaskId);
+                document.getElementById('task-detail-note-input').value = '';
+                renderTaskDetail();
+                renderTasks();
+            } catch (error) {
+                alert('기록 추가 실패: ' + (error.response?.data?.error || error.message));
+            }
+        };
+
+        // 상세 모달에서 작업 자체 수정/삭제
+        window.openEditTaskModalFromDetail = function() {
+            if (__detailTaskId === null) return;
+            const id = __detailTaskId;
+            closeTaskDetailModal();
+            openEditTaskModal(id);
+        };
+
+        window.deleteTaskFromDetail = async function() {
+            if (__detailTaskId === null) return;
+            const id = __detailTaskId;
+            const t = __tasksCache.find(x => x.id === id);
+            if (!confirm(\`'\${t ? t.name : '작업'}'을(를) 삭제하시겠습니까?\\n관련 작업 기록도 모두 삭제됩니다.\`)) return;
+            try {
+                await axios.delete(\`/api/tasks/\${id}\`);
+                closeTaskDetailModal();
+                loadTasks();
+            } catch (error) {
+                alert('삭제 실패: ' + (error.response?.data?.error || error.message));
+            }
+        };
 
         async function deleteTask(id) {
             const t = __tasksCache.find(x => x.id === id);
