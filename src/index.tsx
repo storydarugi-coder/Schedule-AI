@@ -598,6 +598,32 @@ app.delete('/api/tasks/:id', async (c) => {
   return c.json({ success: true })
 })
 
+// 작업 순서 재정렬 — 전달받은 id 배열 순서대로 order_index 를 0,1,2... 로 기록한다.
+// 작업 현황에서 진행 예정인 작업을 위/아래로 옮길 때 사용된다.
+app.post('/api/tasks/reorder', async (c) => {
+  const db = c.env.DB
+  await ensureTasksTable(db)
+  const { ids } = await c.req.json()
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return c.json({ error: 'ids 배열 필수' }, 400)
+  }
+
+  const stmt = db.prepare('UPDATE tasks SET order_index = ? WHERE id = ?')
+  const batch = ids
+    .map((raw: any, idx: number) => {
+      const id = parseInt(raw)
+      if (!id || isNaN(id)) return null
+      return stmt.bind(idx, id)
+    })
+    .filter((s: any) => s !== null)
+
+  if (batch.length === 0) return c.json({ error: '유효한 id 가 없음' }, 400)
+
+  await db.batch(batch)
+  return c.json({ success: true, updated: batch.length })
+})
+
 // =========================
 // 하위 작업 (subtasks) API
 // 상위 작업 하나에 여러 하위 작업이 소속되며,
@@ -817,6 +843,7 @@ async function ensureBudgetsTable(db: any) {
         carry_over INTEGER NOT NULL DEFAULT 1,
         stop_year INTEGER,
         stop_month INTEGER,
+        ai_provider TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `).run()
@@ -834,10 +861,22 @@ async function ensureBudgetsTable(db: any) {
   try {
     await db.prepare(`ALTER TABLE budgets ADD COLUMN stop_month INTEGER`).run()
   } catch (e) {}
+  try {
+    await db.prepare(`ALTER TABLE budgets ADD COLUMN ai_provider TEXT`).run()
+  } catch (e) {}
 }
 
 function normalizePaymentType(v: any): string {
   return v === 'recurring' ? 'recurring' : 'onetime'
+}
+
+// AI 제공자 정규화: 'claude' | 'gemini' | null
+function normalizeAiProvider(v: any): string | null {
+  if (v === null || v === undefined || v === '') return null
+  const s = String(v).toLowerCase().trim()
+  if (s === 'claude') return 'claude'
+  if (s === 'gemini') return 'gemini'
+  return null
 }
 
 // 월별 예산 항목 조회
@@ -877,7 +916,7 @@ app.get('/api/budgets/:year/:month', async (c) => {
 app.post('/api/budgets', async (c) => {
   const db = c.env.DB
   await ensureBudgetsTable(db)
-  const { year, month, type, category, description, amount, hospital_id, budget_date, payment_type, carry_over } = await c.req.json()
+  const { year, month, type, category, description, amount, hospital_id, budget_date, payment_type, carry_over, ai_provider } = await c.req.json()
 
   if (!year || !month) {
     return c.json({ error: 'year, month 필수' }, 400)
@@ -886,10 +925,11 @@ app.post('/api/budgets', async (c) => {
   const amt = Math.max(0, parseInt(amount) || 0)
   const pt = normalizePaymentType(payment_type)
   const co = carry_over === 0 || carry_over === false ? 0 : 1
+  const ap = normalizeAiProvider(ai_provider)
 
   const result = await db.prepare(`
-    INSERT INTO budgets (year, month, type, category, description, amount, hospital_id, budget_date, payment_type, carry_over)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO budgets (year, month, type, category, description, amount, hospital_id, budget_date, payment_type, carry_over, ai_provider)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     year, month, t,
     category || '',
@@ -898,7 +938,8 @@ app.post('/api/budgets', async (c) => {
     hospital_id || null,
     budget_date || null,
     pt,
-    co
+    co,
+    ap
   ).run()
 
   return c.json({ success: true, id: result.meta.last_row_id })
@@ -926,6 +967,7 @@ app.put('/api/budgets/:id', async (c) => {
   if (data.carry_over !== undefined) { fields.push('carry_over = ?'); values.push(data.carry_over ? 1 : 0) }
   if (data.stop_year !== undefined) { fields.push('stop_year = ?'); values.push(data.stop_year === null ? null : parseInt(data.stop_year)) }
   if (data.stop_month !== undefined) { fields.push('stop_month = ?'); values.push(data.stop_month === null ? null : parseInt(data.stop_month)) }
+  if (data.ai_provider !== undefined) { fields.push('ai_provider = ?'); values.push(normalizeAiProvider(data.ai_provider)) }
 
   if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400)
 
@@ -1210,6 +1252,35 @@ app.get('/', (c) => {
                     </div>
                 </div>
 
+                <!-- AI 사용 현황 (수시결제 기반 Claude / Gemini 일자별 집계) -->
+                <div id="budget-ai-usage" class="mb-4 bg-gradient-to-br from-indigo-50 to-violet-50 border border-indigo-200 rounded-xl p-4 hidden">
+                    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+                        <h3 class="text-sm font-bold text-slate-800">
+                            <i class="fas fa-chart-line mr-1.5 text-indigo-600"></i>AI 사용 현황
+                            <span class="text-[11px] text-slate-500 font-medium ml-1">(수시결제 기반, 일자별)</span>
+                        </h3>
+                        <div class="flex items-center gap-3 text-xs">
+                            <span class="inline-flex items-center gap-1 text-slate-700">
+                                <span class="w-2.5 h-2.5 rounded-full bg-orange-500"></span>
+                                Claude <span id="budget-ai-claude-total" class="font-bold tabular-nums">$0</span>
+                            </span>
+                            <span class="inline-flex items-center gap-1 text-slate-700">
+                                <span class="w-2.5 h-2.5 rounded-full bg-sky-500"></span>
+                                Gemini <span id="budget-ai-gemini-total" class="font-bold tabular-nums">$0</span>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="border border-indigo-100 rounded-lg overflow-hidden bg-white">
+                        <div class="grid grid-cols-12 gap-2 bg-indigo-50/60 px-3 py-1.5 text-[11px] font-semibold text-slate-600">
+                            <div class="col-span-3">날짜</div>
+                            <div class="col-span-4 text-right">Claude</div>
+                            <div class="col-span-4 text-right">Gemini</div>
+                            <div class="col-span-1 text-right">합계</div>
+                        </div>
+                        <div id="budget-ai-usage-list" class="divide-y divide-indigo-50 text-xs tabular-nums"></div>
+                    </div>
+                </div>
+
                 <!-- 필터 탭 -->
                 <div class="flex gap-1 mb-3 border-b border-slate-200">
                     <button data-budget-filter="all" class="budget-filter-tab px-4 py-2 text-sm font-semibold border-b-2 border-emerald-500 text-emerald-700">전체</button>
@@ -1270,6 +1341,21 @@ app.get('/', (c) => {
                     <div class="mb-3">
                         <label class="block text-sm font-medium text-gray-700 mb-1">내용</label>
                         <input type="text" id="budget-description-input" placeholder="상세 내용" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-emerald-400 focus:outline-none">
+                    </div>
+                    <div class="mb-3">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">AI 제공자 (선택)</label>
+                        <div id="budget-ai-provider-input" class="flex gap-2" data-value="">
+                            <button type="button" data-ap="" class="flex-1 py-2 rounded-lg border-2 text-xs font-semibold transition-colors">
+                                <i class="fas fa-ban mr-1"></i>해당 없음
+                            </button>
+                            <button type="button" data-ap="claude" class="flex-1 py-2 rounded-lg border-2 text-xs font-semibold transition-colors">
+                                <i class="fas fa-robot mr-1"></i>Claude
+                            </button>
+                            <button type="button" data-ap="gemini" class="flex-1 py-2 rounded-lg border-2 text-xs font-semibold transition-colors">
+                                <i class="fas fa-gem mr-1"></i>Gemini
+                            </button>
+                        </div>
+                        <div class="text-[11px] text-slate-500 mt-1">AI 크레딧 사용액은 "AI 사용 현황" 패널에서 일자별로 집계됩니다.</div>
                     </div>
                     <div class="mb-4">
                         <label class="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
@@ -2466,11 +2552,45 @@ app.get('/', (c) => {
                 return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             }
 
-            // 진척률 내림차순 정렬 (하위 작업 기반 퍼센트 우선)
-            const sorted = [...filtered].sort((a, b) => taskDisplayPct(b) - taskDisplayPct(a));
+            // 작업 상태 분류 — 진행 예정(0) / 진행 중(1) / 완료됨(2)
+            function taskStatusBucket(t) {
+                const sTotal = Number(t.subtask_total || 0);
+                if (sTotal > 0) {
+                    const sDone = Number(t.subtask_done || 0);
+                    if (sDone >= sTotal) return 2; // 완료
+                    if (sDone > 0) return 1; // 진행 중
+                    return 0; // 하위 작업은 있지만 아직 시작 안 함 → 진행 예정
+                }
+                if ((t.progress || 0) >= 4) return 2;
+                if ((t.progress || 0) > 0) return 1;
+                return 0;
+            }
+
+            // 정렬:
+            // 1) 진행 예정/진행 중 먼저, 완료됨은 아래로
+            // 2) 같은 그룹 내에서는 order_index 기준 (사용자가 정한 순서 유지)
+            const sorted = [...filtered].sort((a, b) => {
+                const ba = taskStatusBucket(a);
+                const bb = taskStatusBucket(b);
+                if (ba !== bb) return ba - bb;
+                const oa = Number(a.order_index ?? 0);
+                const ob = Number(b.order_index ?? 0);
+                if (oa !== ob) return oa - ob;
+                return (a.id || 0) - (b.id || 0);
+            });
+
+            // 같은 상태 그룹 내에서의 첫/마지막 여부 — 화살표 버튼 비활성화용
+            const bucketFirstIndex = new Map();
+            const bucketLastIndex = new Map();
+            sorted.forEach((t, idx) => {
+                const bkt = taskStatusBucket(t);
+                if (!bucketFirstIndex.has(bkt)) bucketFirstIndex.set(bkt, idx);
+                bucketLastIndex.set(bkt, idx);
+            });
 
             let html = '';
-            for (const t of sorted) {
+            for (let idx = 0; idx < sorted.length; idx++) {
+                const t = sorted[idx];
                 const step = Math.max(0, Math.min(4, t.progress || 0));
                 const pct = taskDisplayPct(t);
                 const sTotal = Number(t.subtask_total || 0);
@@ -2482,6 +2602,19 @@ app.get('/', (c) => {
                     : 'bg-white border-slate-200 hover:border-indigo-300';
                 const nameClass = allDone ? 'text-slate-500 line-through' : 'text-slate-800';
                 const hospitalLabel = t.hospital_name ? \`<span class="text-[11px] text-slate-500 bg-slate-100 rounded px-1.5 py-0.5 ml-1">\${escText(t.hospital_name)}</span>\` : '';
+
+                // 순서 이동 버튼 (완료된 작업은 숨김 — 주로 "진행 예정" 작업의 순서 조정에 사용)
+                const bkt = taskStatusBucket(t);
+                const isFirstInBucket = bucketFirstIndex.get(bkt) === idx;
+                const isLastInBucket = bucketLastIndex.get(bkt) === idx;
+                const reorderBtns = allDone ? '' : \`
+                    <button data-action="moveup" data-id="\${t.id}" title="위로 이동" \${isFirstInBucket ? 'disabled' : ''} class="w-7 h-7 flex items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent">
+                        <i class="fas fa-arrow-up text-xs"></i>
+                    </button>
+                    <button data-action="movedown" data-id="\${t.id}" title="아래로 이동" \${isLastInBucket ? 'disabled' : ''} class="w-7 h-7 flex items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent">
+                        <i class="fas fa-arrow-down text-xs"></i>
+                    </button>
+                \`;
 
                 // 완료 토글 버튼 (완료: 기록 모달 열어서 100% 처리 / 완료됨: 확인 후 0%로 되돌림)
                 // 하위 작업이 있으면 수동 완료 버튼 대신 하위 작업 열기 버튼을 보여준다 (진척률 자동 계산)
@@ -2527,6 +2660,7 @@ app.get('/', (c) => {
                                 \${subtaskBadge}
                             </div>
                             <div class="flex items-center gap-1 flex-shrink-0">
+                                \${reorderBtns}
                                 <button data-action="edit" data-id="\${t.id}" title="수정" class="w-7 h-7 flex items-center justify-center rounded-md text-indigo-600 hover:bg-indigo-100 transition-colors">
                                     <i class="fas fa-pen text-xs"></i>
                                 </button>
@@ -2566,6 +2700,10 @@ app.get('/', (c) => {
                             openEditTaskModal(id);
                         } else if (action === 'delete') {
                             deleteTask(id);
+                        } else if (action === 'moveup') {
+                            moveTask(id, -1);
+                        } else if (action === 'movedown') {
+                            moveTask(id, 1);
                         }
                     } catch (err) {
                         console.error('작업 버튼 처리 오류:', err);
@@ -2890,6 +3028,75 @@ app.get('/', (c) => {
             }
         }
         window.completeTaskDirect = completeTaskDirect;
+
+        // 같은 상태 그룹(진행 예정/진행 중/완료됨) 안에서 작업 순서를 위/아래로 이동
+        // dir: -1(위) / +1(아래). 현재 화면에 보이는 정렬 순서 기준으로 교환한다.
+        async function moveTask(id, dir) {
+            const selectedHospital = document.getElementById('stats-hospital').value;
+            const filtered = selectedHospital === 'all'
+                ? __tasksCache
+                : __tasksCache.filter(t => String(t.hospital_id) === String(selectedHospital));
+
+            function bucketOf(t) {
+                const sTotal = Number(t.subtask_total || 0);
+                if (sTotal > 0) {
+                    const sDone = Number(t.subtask_done || 0);
+                    if (sDone >= sTotal) return 2;
+                    if (sDone > 0) return 1;
+                    return 0;
+                }
+                if ((t.progress || 0) >= 4) return 2;
+                if ((t.progress || 0) > 0) return 1;
+                return 0;
+            }
+
+            const sorted = [...filtered].sort((a, b) => {
+                const ba = bucketOf(a);
+                const bb = bucketOf(b);
+                if (ba !== bb) return ba - bb;
+                const oa = Number(a.order_index ?? 0);
+                const ob = Number(b.order_index ?? 0);
+                if (oa !== ob) return oa - ob;
+                return (a.id || 0) - (b.id || 0);
+            });
+
+            const curIdx = sorted.findIndex(x => x.id === id);
+            if (curIdx < 0) return;
+            const targetIdx = curIdx + dir;
+            if (targetIdx < 0 || targetIdx >= sorted.length) return;
+            if (bucketOf(sorted[curIdx]) !== bucketOf(sorted[targetIdx])) return;
+
+            // 표시 순서 교환
+            const tmp = sorted[curIdx];
+            sorted[curIdx] = sorted[targetIdx];
+            sorted[targetIdx] = tmp;
+
+            // 전체 캐시 기준으로 새 order_index 를 배정 — 화면에 보이지 않는 항목은
+            // 기존 순서대로 뒤에 붙인다.
+            const visibleIds = new Set(sorted.map(x => x.id));
+            const visibleOrder = sorted.map(x => x.id);
+            const invisibleSorted = [...__tasksCache]
+                .filter(x => !visibleIds.has(x.id))
+                .sort((a, b) => Number(a.order_index ?? 0) - Number(b.order_index ?? 0));
+            const newOrderIds = [...visibleOrder, ...invisibleSorted.map(x => x.id)];
+
+            // 낙관적 UI — 먼저 캐시의 order_index 를 갱신하고 렌더
+            newOrderIds.forEach((tid, i) => {
+                const t = __tasksCache.find(x => x.id === tid);
+                if (t) t.order_index = i;
+            });
+            renderTasks();
+
+            try {
+                await axios.post('/api/tasks/reorder', { ids: newOrderIds });
+            } catch (error) {
+                console.error('작업 순서 변경 실패', error);
+                alert('순서 변경 실패: ' + (error.response?.data?.error || error.message));
+                // 실패 시 서버 기준 재로드
+                loadTasks();
+            }
+        }
+        window.moveTask = moveTask;
 
         async function uncompleteTask(id) {
             const t = __tasksCache.find(x => x.id === id);
@@ -3608,12 +3815,98 @@ app.get('/', (c) => {
                 const prev = prevRes.data || [];
 
                 renderBudgetSummary(__budgetCache, prev);
+                renderAiUsage(__budgetCache, year, month);
                 renderBudgetList(__budgetCache);
             } catch (error) {
                 console.error('예산 로드 실패', error);
             }
         }
         window.loadBudgets = loadBudgets;
+
+        // 항목에서 AI 제공자 판별 — ai_provider 컬럼이 우선, 없으면 카테고리/내용에서 추정
+        function detectAiProvider(b) {
+            const raw = (b && b.ai_provider ? String(b.ai_provider) : '').toLowerCase();
+            if (raw === 'claude' || raw === 'gemini') return raw;
+            const hay = \`\${b.category || ''} \${b.description || ''}\`.toLowerCase();
+            if (hay.includes('claude')) return 'claude';
+            if (hay.includes('gemini')) return 'gemini';
+            return null;
+        }
+
+        // 수시결제로 등록된 Claude / Gemini 사용 금액을 일자별로 집계해 표시
+        function renderAiUsage(items, year, month) {
+            const panel = document.getElementById('budget-ai-usage');
+            const listEl = document.getElementById('budget-ai-usage-list');
+            const claudeTotEl = document.getElementById('budget-ai-claude-total');
+            const geminiTotEl = document.getElementById('budget-ai-gemini-total');
+            if (!panel || !listEl) return;
+
+            // 수시결제(onetime)이면서 Claude/Gemini 로 식별되는 항목만 집계
+            const aiItems = (items || []).filter(b => {
+                if (budgetPaymentType(b) !== 'onetime') return false;
+                return detectAiProvider(b) !== null;
+            });
+
+            if (aiItems.length === 0) {
+                panel.classList.add('hidden');
+                listEl.innerHTML = '';
+                claudeTotEl.textContent = '$0';
+                geminiTotEl.textContent = '$0';
+                return;
+            }
+            panel.classList.remove('hidden');
+
+            // 날짜별로 그룹화: { 'YYYY-MM-DD': { claude, gemini } }
+            const byDate = {};
+            let claudeTotal = 0, geminiTotal = 0;
+            const ymStr = \`\${year}-\${String(month).padStart(2, '0')}\`;
+            for (const b of aiItems) {
+                const prov = detectAiProvider(b);
+                const amount = Number(b.amount || 0);
+                // 결제일이 없으면 당월 1일로 간주
+                const dateKey = b.budget_date || \`\${ymStr}-01\`;
+                if (!byDate[dateKey]) byDate[dateKey] = { claude: 0, gemini: 0 };
+                byDate[dateKey][prov] += amount;
+                if (prov === 'claude') claudeTotal += amount;
+                else if (prov === 'gemini') geminiTotal += amount;
+            }
+
+            claudeTotEl.textContent = formatMoney(claudeTotal);
+            geminiTotEl.textContent = formatMoney(geminiTotal);
+
+            // 날짜 오름차순
+            const sortedDates = Object.keys(byDate).sort();
+            let html = '';
+            for (const d of sortedDates) {
+                const v = byDate[d];
+                const sum = (v.claude || 0) + (v.gemini || 0);
+                const dateLabel = d.slice(5).replace('-', '/');
+                const claudeCell = v.claude > 0
+                    ? \`<span class="text-orange-700 font-semibold">\${formatMoney(v.claude)}</span>\`
+                    : '<span class="text-slate-300">—</span>';
+                const geminiCell = v.gemini > 0
+                    ? \`<span class="text-sky-700 font-semibold">\${formatMoney(v.gemini)}</span>\`
+                    : '<span class="text-slate-300">—</span>';
+                html += \`
+                    <div class="grid grid-cols-12 gap-2 px-3 py-1.5 items-center hover:bg-indigo-50/40">
+                        <div class="col-span-3 text-slate-700">\${dateLabel}</div>
+                        <div class="col-span-4 text-right">\${claudeCell}</div>
+                        <div class="col-span-4 text-right">\${geminiCell}</div>
+                        <div class="col-span-1 text-right font-bold text-slate-800">\${formatMoney(sum)}</div>
+                    </div>
+                \`;
+            }
+            // 합계 행
+            html += \`
+                <div class="grid grid-cols-12 gap-2 px-3 py-1.5 items-center bg-indigo-50/70 font-bold">
+                    <div class="col-span-3 text-slate-700">합계</div>
+                    <div class="col-span-4 text-right text-orange-700">\${formatMoney(claudeTotal)}</div>
+                    <div class="col-span-4 text-right text-sky-700">\${formatMoney(geminiTotal)}</div>
+                    <div class="col-span-1 text-right text-slate-800">\${formatMoney(claudeTotal + geminiTotal)}</div>
+                </div>
+            \`;
+            listEl.innerHTML = html;
+        }
 
         function renderBudgetSummary(cur, prev) {
             // 지출만 집계 (수입 개념은 사용하지 않음)
@@ -3686,11 +3979,17 @@ app.get('/', (c) => {
                 const carryBadge = b.is_carryover
                     ? \`<span class="inline-flex items-center gap-1 text-[10px] font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded px-1.5 py-0.5 ml-1" title="\${b.year}/\${String(b.month).padStart(2,'0')} 항목에서 자동 이월"><i class="fas fa-angles-right"></i>이월</span>\`
                     : '';
+                const ap = (b.ai_provider || '').toLowerCase();
+                const aiBadge = ap === 'claude'
+                    ? '<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5 ml-1" title="Claude 사용"><i class="fas fa-robot"></i>Claude</span>'
+                    : (ap === 'gemini'
+                        ? '<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5 ml-1" title="Gemini 사용"><i class="fas fa-gem"></i>Gemini</span>'
+                        : '');
                 html += \`
                     <div class="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm hover:bg-slate-50">
                         <div class="col-span-2 text-slate-700 tabular-nums">\${dateStr}</div>
                         <div class="col-span-2">\${badge}\${carryBadge}</div>
-                        <div class="col-span-2 text-slate-700 truncate" title="\${esc(b.category)}">\${esc(b.category) || '—'}</div>
+                        <div class="col-span-2 text-slate-700 truncate" title="\${esc(b.category)}">\${esc(b.category) || '—'}\${aiBadge}</div>
                         <div class="col-span-3 text-slate-700 truncate" title="\${esc(b.description)}">\${esc(b.description) || '—'}</div>
                         <div class="col-span-2 text-right font-bold tabular-nums text-rose-700">-\${formatMoney(b.amount)}</div>
                         <div class="col-span-1 flex justify-end gap-1">
@@ -3771,6 +4070,35 @@ app.get('/', (c) => {
         }
         bindBudgetPaymentTypeInput();
 
+        // AI 제공자 선택 버튼 (모달)
+        function setBudgetAiProviderButton(ap) {
+            const container = document.getElementById('budget-ai-provider-input');
+            if (!container) return;
+            const val = (ap === 'claude' || ap === 'gemini') ? ap : '';
+            container.dataset.value = val;
+            Array.from(container.querySelectorAll('button')).forEach(btn => {
+                const v = btn.dataset.ap || '';
+                const active = v === val;
+                const color = v === 'claude' ? 'orange' : (v === 'gemini' ? 'sky' : 'slate');
+                if (active) {
+                    btn.className = \`flex-1 py-2 rounded-lg border-2 text-xs font-semibold transition-colors bg-\${color}-500 border-\${color}-500 text-white\`;
+                } else {
+                    btn.className = 'flex-1 py-2 rounded-lg border-2 text-xs font-semibold transition-colors bg-white border-slate-200 text-slate-600 hover:border-slate-300';
+                }
+            });
+        }
+
+        function bindBudgetAiProviderInput() {
+            const container = document.getElementById('budget-ai-provider-input');
+            if (!container) { setTimeout(bindBudgetAiProviderInput, 100); return; }
+            container.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-ap]');
+                if (!btn) return;
+                setBudgetAiProviderButton(btn.dataset.ap || '');
+            });
+        }
+        bindBudgetAiProviderInput();
+
         async function deleteBudget(id) {
             const item = __budgetCache.find(x => x.id === id);
             const label = item ? (item.description || item.category || '항목') : '항목';
@@ -3801,6 +4129,8 @@ app.get('/', (c) => {
             document.getElementById('budget-carry-over-input').checked = true;
             // 현재 필터에 맞춰 기본 유형 설정 (전체일 땐 수시결제 기본)
             setBudgetPaymentTypeButton(__budgetFilter === 'recurring' ? 'recurring' : 'onetime');
+            // AI 제공자 기본값 — 미지정
+            setBudgetAiProviderButton('');
             // 기본 결제일 = 선택된 년/월의 오늘 일자
             const y = document.getElementById('budget-year').value;
             const m = document.getElementById('budget-month').value;
@@ -3822,6 +4152,7 @@ app.get('/', (c) => {
             document.getElementById('budget-date-input').value = b.budget_date || '';
             document.getElementById('budget-carry-over-input').checked = b.carry_over === 0 || b.carry_over === false ? false : true;
             setBudgetPaymentTypeButton(budgetPaymentType(b));
+            setBudgetAiProviderButton((b.ai_provider || '').toLowerCase());
             document.getElementById('budget-modal').classList.remove('hidden');
         };
 
@@ -3837,6 +4168,8 @@ app.get('/', (c) => {
             const budgetDate = document.getElementById('budget-date-input').value;
             const paymentType = document.getElementById('budget-payment-type-input').dataset.value || 'onetime';
             const carryOver = document.getElementById('budget-carry-over-input').checked ? 1 : 0;
+            const aiProviderRaw = document.getElementById('budget-ai-provider-input').dataset.value || '';
+            const aiProvider = (aiProviderRaw === 'claude' || aiProviderRaw === 'gemini') ? aiProviderRaw : null;
 
             if (!category && !description) {
                 alert('카테고리나 내용 중 하나는 입력해주세요');
@@ -3866,6 +4199,7 @@ app.get('/', (c) => {
                         budget_date: budgetDate || null,
                         payment_type: paymentType,
                         carry_over: carryOver,
+                        ai_provider: aiProvider,
                         // carry_over 재활성화 시 stop 해제
                         stop_year: carryOver ? null : undefined,
                         stop_month: carryOver ? null : undefined
@@ -3875,7 +4209,8 @@ app.get('/', (c) => {
                         year, month, type: 'expense', category, description, amount,
                         budget_date: budgetDate || null,
                         payment_type: paymentType,
-                        carry_over: carryOver
+                        carry_over: carryOver,
+                        ai_provider: aiProvider
                     });
                 }
                 closeBudgetModal();
