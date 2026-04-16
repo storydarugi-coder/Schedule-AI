@@ -922,7 +922,7 @@ app.post('/api/budgets', async (c) => {
     return c.json({ error: 'year, month 필수' }, 400)
   }
   const t = type === 'income' ? 'income' : 'expense'
-  const amt = Math.max(0, parseInt(amount) || 0)
+  const amt = parseMoneyAmount(amount)
   const pt = normalizePaymentType(payment_type)
   const co = carry_over === 0 || carry_over === false ? 0 : 1
   const ap = normalizeAiProvider(ai_provider)
@@ -960,7 +960,7 @@ app.put('/api/budgets/:id', async (c) => {
   }
   if (data.category !== undefined) { fields.push('category = ?'); values.push(data.category) }
   if (data.description !== undefined) { fields.push('description = ?'); values.push(data.description) }
-  if (data.amount !== undefined) { fields.push('amount = ?'); values.push(Math.max(0, parseInt(data.amount) || 0)) }
+  if (data.amount !== undefined) { fields.push('amount = ?'); values.push(parseMoneyAmount(data.amount)) }
   if (data.hospital_id !== undefined) { fields.push('hospital_id = ?'); values.push(data.hospital_id || null) }
   if (data.budget_date !== undefined) { fields.push('budget_date = ?'); values.push(data.budget_date || null) }
   if (data.payment_type !== undefined) { fields.push('payment_type = ?'); values.push(normalizePaymentType(data.payment_type)) }
@@ -1022,7 +1022,7 @@ async function ensureAiUsageTable(db: any) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         usage_date TEXT NOT NULL,
         provider TEXT NOT NULL,
-        amount INTEGER NOT NULL DEFAULT 0,
+        amount REAL NOT NULL DEFAULT 0,
         note TEXT NOT NULL DEFAULT '',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
@@ -1036,6 +1036,13 @@ function normalizeAiUsageProvider(v: any): string | null {
   if (s === 'claude') return 'claude'
   if (s === 'gemini') return 'gemini'
   return null
+}
+
+// USD 금액 정규화 — 음수 방지 + 소수점 2자리까지
+function parseMoneyAmount(v: any): number {
+  const n = parseFloat(v)
+  if (!isFinite(n) || n < 0) return 0
+  return Math.round(n * 100) / 100
 }
 
 // 월별 AI 사용 내역 조회
@@ -1067,7 +1074,7 @@ app.post('/api/ai-usage', async (c) => {
   if (!usage_date) return c.json({ error: 'usage_date 필수 (YYYY-MM-DD)' }, 400)
   const prov = normalizeAiUsageProvider(provider)
   if (!prov) return c.json({ error: "provider 는 'claude' 또는 'gemini'" }, 400)
-  const amt = Math.max(0, parseInt(amount) || 0)
+  const amt = parseMoneyAmount(amount)
 
   const result = await db.prepare(
     'INSERT INTO ai_usage (usage_date, provider, amount, note) VALUES (?, ?, ?, ?)'
@@ -1092,7 +1099,7 @@ app.put('/api/ai-usage/:id', async (c) => {
     if (!prov) return c.json({ error: "provider 는 'claude' 또는 'gemini'" }, 400)
     fields.push('provider = ?'); values.push(prov)
   }
-  if (data.amount !== undefined) { fields.push('amount = ?'); values.push(Math.max(0, parseInt(data.amount) || 0)) }
+  if (data.amount !== undefined) { fields.push('amount = ?'); values.push(parseMoneyAmount(data.amount)) }
   if (data.note !== undefined) { fields.push('note = ?'); values.push((data.note || '').toString()) }
 
   if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400)
@@ -1110,6 +1117,34 @@ app.delete('/api/ai-usage/:id', async (c) => {
   if (!id || isNaN(id)) return c.json({ error: 'Invalid id' }, 400)
   await db.prepare('DELETE FROM ai_usage WHERE id = ?').bind(id).run()
   return c.json({ success: true })
+})
+
+// Claude / Gemini 전체 누적 잔액 — (충전 총합) - (사용 총합)
+// 충전: budgets.ai_provider = 'claude' | 'gemini' (수시결제, 이월 등 무관하게 원본 1회만 집계)
+// 사용: ai_usage.provider = 'claude' | 'gemini'
+app.get('/api/ai-balance', async (c) => {
+  const db = c.env.DB
+  await ensureBudgetsTable(db)
+  await ensureAiUsageTable(db)
+
+  const row: any = await db.prepare(`
+    SELECT
+      (SELECT COALESCE(SUM(amount), 0) FROM budgets WHERE ai_provider = 'claude') AS claude_topup,
+      (SELECT COALESCE(SUM(amount), 0) FROM ai_usage WHERE provider = 'claude') AS claude_usage,
+      (SELECT COALESCE(SUM(amount), 0) FROM budgets WHERE ai_provider = 'gemini') AS gemini_topup,
+      (SELECT COALESCE(SUM(amount), 0) FROM ai_usage WHERE provider = 'gemini') AS gemini_usage
+  `).first()
+
+  const ct = Number(row?.claude_topup || 0)
+  const cu = Number(row?.claude_usage || 0)
+  const gt = Number(row?.gemini_topup || 0)
+  const gu = Number(row?.gemini_usage || 0)
+  const round = (n: number) => Math.round(n * 100) / 100
+
+  return c.json({
+    claude: { topup: round(ct), usage: round(cu), balance: round(ct - cu) },
+    gemini: { topup: round(gt), usage: round(gu), balance: round(gt - gu) }
+  })
 })
 
 // =========================
@@ -1364,14 +1399,49 @@ app.get('/', (c) => {
                         <div class="flex items-center gap-3 text-xs">
                             <span class="inline-flex items-center gap-1 text-slate-700">
                                 <span class="w-2.5 h-2.5 rounded-full bg-orange-500"></span>
-                                Claude <span id="budget-ai-claude-total" class="font-bold tabular-nums">$0</span>
+                                Claude <span class="text-[11px] text-slate-500">이번 달</span> <span id="budget-ai-claude-total" class="font-bold tabular-nums">$0.00</span>
                             </span>
                             <span class="inline-flex items-center gap-1 text-slate-700">
                                 <span class="w-2.5 h-2.5 rounded-full bg-sky-500"></span>
-                                Gemini <span id="budget-ai-gemini-total" class="font-bold tabular-nums">$0</span>
+                                Gemini <span class="text-[11px] text-slate-500">이번 달</span> <span id="budget-ai-gemini-total" class="font-bold tabular-nums">$0.00</span>
                             </span>
                         </div>
                     </div>
+
+                    <!-- 누적 충전 / 사용 / 잔액 요약 -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
+                        <div class="bg-white border border-orange-200 rounded-lg px-3 py-2">
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="text-[11px] font-semibold text-orange-700">
+                                    <i class="fas fa-robot mr-1"></i>Claude <span class="text-slate-400 font-normal">누적</span>
+                                </div>
+                                <div class="text-sm">
+                                    잔액 <span id="ai-balance-claude-remain" class="tabular-nums font-bold text-emerald-600">$0.00</span>
+                                </div>
+                            </div>
+                            <div class="text-[11px] text-slate-500 mt-0.5">
+                                충전 <span id="ai-balance-claude-topup" class="tabular-nums font-semibold text-slate-700">$0.00</span>
+                                <span class="mx-1 text-slate-300">·</span>
+                                사용 <span id="ai-balance-claude-usage" class="tabular-nums font-semibold text-orange-700">$0.00</span>
+                            </div>
+                        </div>
+                        <div class="bg-white border border-sky-200 rounded-lg px-3 py-2">
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="text-[11px] font-semibold text-sky-700">
+                                    <i class="fas fa-gem mr-1"></i>Gemini <span class="text-slate-400 font-normal">누적</span>
+                                </div>
+                                <div class="text-sm">
+                                    잔액 <span id="ai-balance-gemini-remain" class="tabular-nums font-bold text-emerald-600">$0.00</span>
+                                </div>
+                            </div>
+                            <div class="text-[11px] text-slate-500 mt-0.5">
+                                충전 <span id="ai-balance-gemini-topup" class="tabular-nums font-semibold text-slate-700">$0.00</span>
+                                <span class="mx-1 text-slate-300">·</span>
+                                사용 <span id="ai-balance-gemini-usage" class="tabular-nums font-semibold text-sky-700">$0.00</span>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="border border-indigo-100 rounded-lg overflow-hidden bg-white">
                         <div class="grid grid-cols-12 gap-2 bg-indigo-50/60 px-3 py-1.5 text-[11px] font-semibold text-slate-600">
                             <div class="col-span-3">날짜</div>
@@ -1386,10 +1456,10 @@ app.get('/', (c) => {
                                 <input type="date" id="ai-add-date" class="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:border-indigo-400 focus:outline-none">
                             </div>
                             <div class="col-span-3">
-                                <input type="number" id="ai-add-claude" min="0" step="1" placeholder="Claude $" class="w-full border border-slate-200 rounded px-2 py-1 text-xs text-right focus:border-orange-400 focus:outline-none tabular-nums">
+                                <input type="number" id="ai-add-claude" min="0" step="0.01" placeholder="Claude $" class="w-full border border-slate-200 rounded px-2 py-1 text-xs text-right focus:border-orange-400 focus:outline-none tabular-nums">
                             </div>
                             <div class="col-span-3">
-                                <input type="number" id="ai-add-gemini" min="0" step="1" placeholder="Gemini $" class="w-full border border-slate-200 rounded px-2 py-1 text-xs text-right focus:border-sky-400 focus:outline-none tabular-nums">
+                                <input type="number" id="ai-add-gemini" min="0" step="0.01" placeholder="Gemini $" class="w-full border border-slate-200 rounded px-2 py-1 text-xs text-right focus:border-sky-400 focus:outline-none tabular-nums">
                             </div>
                             <div class="col-span-2"></div>
                             <div class="col-span-1 flex justify-end">
@@ -1459,7 +1529,7 @@ app.get('/', (c) => {
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">금액 ($)</label>
-                            <input type="number" id="budget-amount-input" min="0" step="1" value="0" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-emerald-400 focus:outline-none tabular-nums">
+                            <input type="number" id="budget-amount-input" min="0" step="0.01" value="0" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-emerald-400 focus:outline-none tabular-nums">
                         </div>
                     </div>
                     <div class="mb-3">
@@ -3910,9 +3980,18 @@ app.get('/', (c) => {
         let __budgetCache = [];
         let __budgetFilter = 'all'; // 'all' | 'recurring' | 'onetime'
 
-        // 금액 포맷 — USD ($)
+        // 금액 포맷 — USD ($) · 소수점 2자리 (ex: $16.50, $4.70)
         function formatMoney(n) {
-            return '$' + (n || 0).toLocaleString('en-US');
+            const v = Number(n) || 0;
+            const sign = v < 0 ? '-$' : '$';
+            const abs = Math.abs(v);
+            return sign + abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+        // 사용자가 입력한 금액 문자열을 2자리 소수점으로 반올림한 숫자로 변환
+        function parseMoneyInput(v) {
+            const n = parseFloat(v);
+            if (!isFinite(n) || n < 0) return 0;
+            return Math.round(n * 100) / 100;
         }
         // 구버전 호환용 별칭
         function formatWon(n) { return formatMoney(n); }
@@ -3926,15 +4005,16 @@ app.get('/', (c) => {
             const month = parseInt(document.getElementById('budget-month').value);
             if (!year || !month) return;
             try {
-                // 당월 + 전월 예산 + 당월 AI 사용량
-                const [curRes, prevRes, aiRes] = await Promise.all([
+                // 당월 + 전월 예산 + 당월 AI 사용량 + 누적 AI 잔액
+                const [curRes, prevRes, aiRes, balRes] = await Promise.all([
                     axios.get(\`/api/budgets/\${year}/\${month}\`),
                     (function() {
                         let py = year, pm = month - 1;
                         if (pm < 1) { pm = 12; py = year - 1; }
                         return axios.get(\`/api/budgets/\${py}/\${pm}\`);
                     })(),
-                    axios.get(\`/api/ai-usage/\${year}/\${month}\`).catch(() => ({ data: [] }))
+                    axios.get(\`/api/ai-usage/\${year}/\${month}\`).catch(() => ({ data: [] })),
+                    axios.get('/api/ai-balance').catch(() => ({ data: null }))
                 ]);
                 __budgetCache = curRes.data || [];
                 const prev = prevRes.data || [];
@@ -3942,12 +4022,42 @@ app.get('/', (c) => {
 
                 renderBudgetSummary(__budgetCache, prev);
                 renderAiUsage(aiUsage, year, month);
+                renderAiBalance(balRes.data);
                 renderBudgetList(__budgetCache);
             } catch (error) {
                 console.error('예산 로드 실패', error);
             }
         }
         window.loadBudgets = loadBudgets;
+
+        // 누적 Claude / Gemini 충전·사용·잔액 표시
+        function renderAiBalance(data) {
+            const safeNum = (x) => Number(x) || 0;
+            const c = (data && data.claude) || { topup: 0, usage: 0, balance: 0 };
+            const g = (data && data.gemini) || { topup: 0, usage: 0, balance: 0 };
+
+            const claudeTopupEl = document.getElementById('ai-balance-claude-topup');
+            const claudeUsageEl = document.getElementById('ai-balance-claude-usage');
+            const claudeRemainEl = document.getElementById('ai-balance-claude-remain');
+            const geminiTopupEl = document.getElementById('ai-balance-gemini-topup');
+            const geminiUsageEl = document.getElementById('ai-balance-gemini-usage');
+            const geminiRemainEl = document.getElementById('ai-balance-gemini-remain');
+
+            if (claudeTopupEl) claudeTopupEl.textContent = formatMoney(safeNum(c.topup));
+            if (claudeUsageEl) claudeUsageEl.textContent = formatMoney(safeNum(c.usage));
+            if (claudeRemainEl) {
+                const bal = safeNum(c.balance);
+                claudeRemainEl.textContent = formatMoney(bal);
+                claudeRemainEl.className = 'tabular-nums font-bold ' + (bal < 0 ? 'text-rose-600' : 'text-emerald-600');
+            }
+            if (geminiTopupEl) geminiTopupEl.textContent = formatMoney(safeNum(g.topup));
+            if (geminiUsageEl) geminiUsageEl.textContent = formatMoney(safeNum(g.usage));
+            if (geminiRemainEl) {
+                const bal = safeNum(g.balance);
+                geminiRemainEl.textContent = formatMoney(bal);
+                geminiRemainEl.className = 'tabular-nums font-bold ' + (bal < 0 ? 'text-rose-600' : 'text-emerald-600');
+            }
+        }
 
         // AI 사용 현황 — 예산(충전)과 별개, 일자별 실사용량만 기록
         // __aiUsageByDate: { 'YYYY-MM-DD': { claude: { total, ids }, gemini: { total, ids } } }
@@ -4020,13 +4130,13 @@ app.get('/', (c) => {
                     <div class="grid grid-cols-12 gap-2 px-3 py-1.5 items-center hover:bg-indigo-50/40" data-ai-row="\${d}">
                         <div class="col-span-3 text-slate-700">\${dateLabel}</div>
                         <div class="col-span-3">
-                            <input type="number" min="0" step="1" value="\${claudeVal}"
+                            <input type="number" min="0" step="0.01" value="\${claudeVal}"
                                 data-ai-prov="claude" data-ai-date="\${d}"
                                 class="w-full border border-transparent hover:border-orange-200 focus:border-orange-400 rounded px-2 py-0.5 text-right text-orange-700 font-semibold focus:outline-none bg-transparent tabular-nums"
                                 placeholder="—">
                         </div>
                         <div class="col-span-3">
-                            <input type="number" min="0" step="1" value="\${geminiVal}"
+                            <input type="number" min="0" step="0.01" value="\${geminiVal}"
                                 data-ai-prov="gemini" data-ai-date="\${d}"
                                 class="w-full border border-transparent hover:border-sky-200 focus:border-sky-400 rounded px-2 py-0.5 text-right text-sky-700 font-semibold focus:outline-none bg-transparent tabular-nums"
                                 placeholder="—">
@@ -4057,7 +4167,7 @@ app.get('/', (c) => {
         // 특정 (날짜, 제공자) 의 사용량 갱신 — 기존 N건은 합쳐서 1건으로 재저장, 0이면 삭제
         async function upsertAiUsageCell(date, provider, amount) {
             if (!date || (provider !== 'claude' && provider !== 'gemini')) return;
-            const amt = Math.max(0, Math.floor(Number(amount) || 0));
+            const amt = parseMoneyInput(amount);
             const bucket = __aiUsageByDate[date];
             const existingIds = bucket && bucket[provider] ? [...bucket[provider].ids] : [];
 
@@ -4109,8 +4219,8 @@ app.get('/', (c) => {
         // 신규 AI 사용 입력 — 날짜 + Claude/Gemini 금액
         async function addAiUsageEntry() {
             const date = document.getElementById('ai-add-date').value;
-            const claude = parseInt(document.getElementById('ai-add-claude').value) || 0;
-            const gemini = parseInt(document.getElementById('ai-add-gemini').value) || 0;
+            const claude = parseMoneyInput(document.getElementById('ai-add-claude').value);
+            const gemini = parseMoneyInput(document.getElementById('ai-add-gemini').value);
             if (!date) { alert('날짜를 선택해주세요'); return; }
             if (claude <= 0 && gemini <= 0) { alert('Claude 또는 Gemini 사용 금액을 입력해주세요'); return; }
 
@@ -4172,10 +4282,10 @@ app.get('/', (c) => {
                 if (!input.dataset.aiProv || !input.dataset.aiDate) return;
                 const date = input.dataset.aiDate;
                 const prov = input.dataset.aiProv;
-                const newAmt = parseInt(input.value) || 0;
+                const newAmt = parseMoneyInput(input.value);
                 const bucket = __aiUsageByDate[date];
                 const prevAmt = bucket && bucket[prov] ? bucket[prov].total : 0;
-                if (newAmt === prevAmt) return;
+                if (Math.abs(newAmt - prevAmt) < 0.005) return;
                 upsertAiUsageCell(date, prov, newAmt);
             }, true);
 
@@ -4452,7 +4562,7 @@ app.get('/', (c) => {
             const id = document.getElementById('budget-edit-id').value;
             const category = document.getElementById('budget-category-input').value.trim();
             const description = document.getElementById('budget-description-input').value.trim();
-            const amount = parseInt(document.getElementById('budget-amount-input').value) || 0;
+            const amount = parseMoneyInput(document.getElementById('budget-amount-input').value);
             const budgetDate = document.getElementById('budget-date-input').value;
             const paymentType = document.getElementById('budget-payment-type-input').dataset.value || 'onetime';
             const carryOver = document.getElementById('budget-carry-over-input').checked ? 1 : 0;
