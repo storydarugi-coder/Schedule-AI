@@ -1011,6 +1011,108 @@ app.delete('/api/budgets/:id', async (c) => {
 })
 
 // =========================
+// AI 사용량 API (Claude / Gemini 일자별 실사용 기록)
+// 충전(budgets.수시결제)과 별도로 실제 소비량만 기록한다.
+// =========================
+
+async function ensureAiUsageTable(db: any) {
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS ai_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usage_date TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        amount INTEGER NOT NULL DEFAULT 0,
+        note TEXT NOT NULL DEFAULT '',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+  } catch (e) {}
+}
+
+function normalizeAiUsageProvider(v: any): string | null {
+  if (v === null || v === undefined) return null
+  const s = String(v).toLowerCase().trim()
+  if (s === 'claude') return 'claude'
+  if (s === 'gemini') return 'gemini'
+  return null
+}
+
+// 월별 AI 사용 내역 조회
+app.get('/api/ai-usage/:year/:month', async (c) => {
+  const db = c.env.DB
+  await ensureAiUsageTable(db)
+  const year = parseInt(c.req.param('year'))
+  const month = parseInt(c.req.param('month'))
+  if (!year || !month) return c.json({ error: 'year/month 필수' }, 400)
+
+  const yStr = String(year)
+  const mStr = String(month).padStart(2, '0')
+
+  const result = await db.prepare(`
+    SELECT * FROM ai_usage
+    WHERE substr(usage_date, 1, 4) = ? AND substr(usage_date, 6, 2) = ?
+    ORDER BY usage_date, id
+  `).bind(yStr, mStr).all()
+
+  return c.json(result.results)
+})
+
+// AI 사용 내역 추가
+app.post('/api/ai-usage', async (c) => {
+  const db = c.env.DB
+  await ensureAiUsageTable(db)
+  const { usage_date, provider, amount, note } = await c.req.json()
+
+  if (!usage_date) return c.json({ error: 'usage_date 필수 (YYYY-MM-DD)' }, 400)
+  const prov = normalizeAiUsageProvider(provider)
+  if (!prov) return c.json({ error: "provider 는 'claude' 또는 'gemini'" }, 400)
+  const amt = Math.max(0, parseInt(amount) || 0)
+
+  const result = await db.prepare(
+    'INSERT INTO ai_usage (usage_date, provider, amount, note) VALUES (?, ?, ?, ?)'
+  ).bind(usage_date, prov, amt, (note || '').toString()).run()
+
+  return c.json({ success: true, id: result.meta.last_row_id })
+})
+
+// AI 사용 내역 수정
+app.put('/api/ai-usage/:id', async (c) => {
+  const db = c.env.DB
+  await ensureAiUsageTable(db)
+  const id = parseInt(c.req.param('id'))
+  if (!id || isNaN(id)) return c.json({ error: 'Invalid id' }, 400)
+  const data = await c.req.json()
+
+  const fields: string[] = []
+  const values: any[] = []
+  if (data.usage_date !== undefined) { fields.push('usage_date = ?'); values.push(String(data.usage_date)) }
+  if (data.provider !== undefined) {
+    const prov = normalizeAiUsageProvider(data.provider)
+    if (!prov) return c.json({ error: "provider 는 'claude' 또는 'gemini'" }, 400)
+    fields.push('provider = ?'); values.push(prov)
+  }
+  if (data.amount !== undefined) { fields.push('amount = ?'); values.push(Math.max(0, parseInt(data.amount) || 0)) }
+  if (data.note !== undefined) { fields.push('note = ?'); values.push((data.note || '').toString()) }
+
+  if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400)
+
+  values.push(id)
+  await db.prepare(`UPDATE ai_usage SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run()
+  return c.json({ success: true })
+})
+
+// AI 사용 내역 삭제
+app.delete('/api/ai-usage/:id', async (c) => {
+  const db = c.env.DB
+  await ensureAiUsageTable(db)
+  const id = parseInt(c.req.param('id'))
+  if (!id || isNaN(id)) return c.json({ error: 'Invalid id' }, 400)
+  await db.prepare('DELETE FROM ai_usage WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
+// =========================
 // 연차/휴가 관리 API
 // =========================
 
@@ -1252,12 +1354,12 @@ app.get('/', (c) => {
                     </div>
                 </div>
 
-                <!-- AI 사용 현황 (수시결제 기반 Claude / Gemini 일자별 집계) -->
-                <div id="budget-ai-usage" class="mb-4 bg-gradient-to-br from-indigo-50 to-violet-50 border border-indigo-200 rounded-xl p-4 hidden">
+                <!-- AI 사용 현황 (Claude / Gemini 일자별 실사용량 — 충전과 별개) -->
+                <div id="budget-ai-usage" class="mb-4 bg-gradient-to-br from-indigo-50 to-violet-50 border border-indigo-200 rounded-xl p-4">
                     <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
                         <h3 class="text-sm font-bold text-slate-800">
                             <i class="fas fa-chart-line mr-1.5 text-indigo-600"></i>AI 사용 현황
-                            <span class="text-[11px] text-slate-500 font-medium ml-1">(수시결제 기반, 일자별)</span>
+                            <span class="text-[11px] text-slate-500 font-medium ml-1">(일자별 실사용량 · 충전과 별개)</span>
                         </h3>
                         <div class="flex items-center gap-3 text-xs">
                             <span class="inline-flex items-center gap-1 text-slate-700">
@@ -1273,11 +1375,33 @@ app.get('/', (c) => {
                     <div class="border border-indigo-100 rounded-lg overflow-hidden bg-white">
                         <div class="grid grid-cols-12 gap-2 bg-indigo-50/60 px-3 py-1.5 text-[11px] font-semibold text-slate-600">
                             <div class="col-span-3">날짜</div>
-                            <div class="col-span-4 text-right">Claude</div>
-                            <div class="col-span-4 text-right">Gemini</div>
-                            <div class="col-span-1 text-right">합계</div>
+                            <div class="col-span-3 text-right">Claude</div>
+                            <div class="col-span-3 text-right">Gemini</div>
+                            <div class="col-span-2 text-right">합계</div>
+                            <div class="col-span-1 text-right">관리</div>
+                        </div>
+                        <!-- 신규 입력 행 -->
+                        <div class="grid grid-cols-12 gap-2 px-3 py-2 items-center bg-amber-50/40 border-b border-amber-100">
+                            <div class="col-span-3">
+                                <input type="date" id="ai-add-date" class="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:border-indigo-400 focus:outline-none">
+                            </div>
+                            <div class="col-span-3">
+                                <input type="number" id="ai-add-claude" min="0" step="1" placeholder="Claude $" class="w-full border border-slate-200 rounded px-2 py-1 text-xs text-right focus:border-orange-400 focus:outline-none tabular-nums">
+                            </div>
+                            <div class="col-span-3">
+                                <input type="number" id="ai-add-gemini" min="0" step="1" placeholder="Gemini $" class="w-full border border-slate-200 rounded px-2 py-1 text-xs text-right focus:border-sky-400 focus:outline-none tabular-nums">
+                            </div>
+                            <div class="col-span-2"></div>
+                            <div class="col-span-1 flex justify-end">
+                                <button id="ai-add-btn" class="text-[11px] font-semibold bg-indigo-500 hover:bg-indigo-600 text-white rounded px-2 py-1 shadow-sm">
+                                    <i class="fas fa-plus mr-0.5"></i>추가
+                                </button>
+                            </div>
                         </div>
                         <div id="budget-ai-usage-list" class="divide-y divide-indigo-50 text-xs tabular-nums"></div>
+                        <div id="budget-ai-usage-empty" class="text-center text-slate-400 text-xs py-4 hidden">
+                            아직 입력된 AI 사용 내역이 없습니다. 위 입력창에서 날짜와 금액을 적어주세요.
+                        </div>
                     </div>
                 </div>
 
@@ -1343,19 +1467,19 @@ app.get('/', (c) => {
                         <input type="text" id="budget-description-input" placeholder="상세 내용" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-emerald-400 focus:outline-none">
                     </div>
                     <div class="mb-3">
-                        <label class="block text-sm font-medium text-gray-700 mb-2">AI 제공자 (선택)</label>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">AI 충전 구분 (선택)</label>
                         <div id="budget-ai-provider-input" class="flex gap-2" data-value="">
                             <button type="button" data-ap="" class="flex-1 py-2 rounded-lg border-2 text-xs font-semibold transition-colors">
                                 <i class="fas fa-ban mr-1"></i>해당 없음
                             </button>
                             <button type="button" data-ap="claude" class="flex-1 py-2 rounded-lg border-2 text-xs font-semibold transition-colors">
-                                <i class="fas fa-robot mr-1"></i>Claude
+                                <i class="fas fa-robot mr-1"></i>Claude 충전
                             </button>
                             <button type="button" data-ap="gemini" class="flex-1 py-2 rounded-lg border-2 text-xs font-semibold transition-colors">
-                                <i class="fas fa-gem mr-1"></i>Gemini
+                                <i class="fas fa-gem mr-1"></i>Gemini 충전
                             </button>
                         </div>
-                        <div class="text-[11px] text-slate-500 mt-1">AI 크레딧 사용액은 "AI 사용 현황" 패널에서 일자별로 집계됩니다.</div>
+                        <div class="text-[11px] text-slate-500 mt-1">Claude/Gemini 크레딧 충전 내역을 구분할 때 사용. 실제 일자별 사용량은 상단 "AI 사용 현황"에서 별도로 기록합니다.</div>
                     </div>
                     <div class="mb-4">
                         <label class="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
@@ -3802,20 +3926,22 @@ app.get('/', (c) => {
             const month = parseInt(document.getElementById('budget-month').value);
             if (!year || !month) return;
             try {
-                // 당월 + 전월 조회 (전월 대비 비교용)
-                const [curRes, prevRes] = await Promise.all([
+                // 당월 + 전월 예산 + 당월 AI 사용량
+                const [curRes, prevRes, aiRes] = await Promise.all([
                     axios.get(\`/api/budgets/\${year}/\${month}\`),
                     (function() {
                         let py = year, pm = month - 1;
                         if (pm < 1) { pm = 12; py = year - 1; }
                         return axios.get(\`/api/budgets/\${py}/\${pm}\`);
-                    })()
+                    })(),
+                    axios.get(\`/api/ai-usage/\${year}/\${month}\`).catch(() => ({ data: [] }))
                 ]);
                 __budgetCache = curRes.data || [];
                 const prev = prevRes.data || [];
+                const aiUsage = aiRes.data || [];
 
                 renderBudgetSummary(__budgetCache, prev);
-                renderAiUsage(__budgetCache, year, month);
+                renderAiUsage(aiUsage, year, month);
                 renderBudgetList(__budgetCache);
             } catch (error) {
                 console.error('예산 로드 실패', error);
@@ -3823,76 +3949,95 @@ app.get('/', (c) => {
         }
         window.loadBudgets = loadBudgets;
 
-        // 항목에서 AI 제공자 판별 — ai_provider 컬럼이 우선, 없으면 카테고리/내용에서 추정
-        function detectAiProvider(b) {
-            const raw = (b && b.ai_provider ? String(b.ai_provider) : '').toLowerCase();
-            if (raw === 'claude' || raw === 'gemini') return raw;
-            const hay = \`\${b.category || ''} \${b.description || ''}\`.toLowerCase();
-            if (hay.includes('claude')) return 'claude';
-            if (hay.includes('gemini')) return 'gemini';
-            return null;
-        }
+        // AI 사용 현황 — 예산(충전)과 별개, 일자별 실사용량만 기록
+        // __aiUsageByDate: { 'YYYY-MM-DD': { claude: { total, ids }, gemini: { total, ids } } }
+        let __aiUsageByDate = {};
+        let __aiUsageYear = 0, __aiUsageMonth = 0;
 
-        // 수시결제로 등록된 Claude / Gemini 사용 금액을 일자별로 집계해 표시
         function renderAiUsage(items, year, month) {
-            const panel = document.getElementById('budget-ai-usage');
             const listEl = document.getElementById('budget-ai-usage-list');
+            const emptyEl = document.getElementById('budget-ai-usage-empty');
             const claudeTotEl = document.getElementById('budget-ai-claude-total');
             const geminiTotEl = document.getElementById('budget-ai-gemini-total');
-            if (!panel || !listEl) return;
+            if (!listEl) return;
 
-            // 수시결제(onetime)이면서 Claude/Gemini 로 식별되는 항목만 집계
-            const aiItems = (items || []).filter(b => {
-                if (budgetPaymentType(b) !== 'onetime') return false;
-                return detectAiProvider(b) !== null;
-            });
+            __aiUsageYear = year;
+            __aiUsageMonth = month;
 
-            if (aiItems.length === 0) {
-                panel.classList.add('hidden');
-                listEl.innerHTML = '';
-                claudeTotEl.textContent = '$0';
-                geminiTotEl.textContent = '$0';
-                return;
-            }
-            panel.classList.remove('hidden');
-
-            // 날짜별로 그룹화: { 'YYYY-MM-DD': { claude, gemini } }
             const byDate = {};
             let claudeTotal = 0, geminiTotal = 0;
-            const ymStr = \`\${year}-\${String(month).padStart(2, '0')}\`;
-            for (const b of aiItems) {
-                const prov = detectAiProvider(b);
-                const amount = Number(b.amount || 0);
-                // 결제일이 없으면 당월 1일로 간주
-                const dateKey = b.budget_date || \`\${ymStr}-01\`;
-                if (!byDate[dateKey]) byDate[dateKey] = { claude: 0, gemini: 0 };
-                byDate[dateKey][prov] += amount;
+            for (const u of (items || [])) {
+                const prov = (u.provider || '').toLowerCase();
+                if (prov !== 'claude' && prov !== 'gemini') continue;
+                const amount = Number(u.amount || 0);
+                const dateKey = u.usage_date;
+                if (!dateKey) continue;
+                if (!byDate[dateKey]) byDate[dateKey] = {
+                    claude: { total: 0, ids: [] },
+                    gemini: { total: 0, ids: [] }
+                };
+                byDate[dateKey][prov].total += amount;
+                byDate[dateKey][prov].ids.push(u.id);
                 if (prov === 'claude') claudeTotal += amount;
-                else if (prov === 'gemini') geminiTotal += amount;
+                else geminiTotal += amount;
             }
+            __aiUsageByDate = byDate;
 
             claudeTotEl.textContent = formatMoney(claudeTotal);
             geminiTotEl.textContent = formatMoney(geminiTotal);
 
-            // 날짜 오름차순
+            // 신규 입력 행 기본 날짜 = 현재 선택된 월의 오늘 (없으면 해당 월 1일)
+            const addDateEl = document.getElementById('ai-add-date');
+            const ymStr = \`\${year}-\${String(month).padStart(2, '0')}\`;
+            if (addDateEl) {
+                const cur = addDateEl.value || '';
+                const curYm = cur.slice(0, 7);
+                if (!cur || curYm !== ymStr) {
+                    const now = new Date();
+                    const today = now.getDate();
+                    const lastDay = new Date(year, month, 0).getDate();
+                    const day = String(Math.min(today, lastDay)).padStart(2, '0');
+                    addDateEl.value = \`\${ymStr}-\${day}\`;
+                }
+            }
+
             const sortedDates = Object.keys(byDate).sort();
+            if (sortedDates.length === 0) {
+                listEl.innerHTML = '';
+                if (emptyEl) emptyEl.classList.remove('hidden');
+                return;
+            }
+            if (emptyEl) emptyEl.classList.add('hidden');
+
             let html = '';
             for (const d of sortedDates) {
                 const v = byDate[d];
-                const sum = (v.claude || 0) + (v.gemini || 0);
+                const sum = (v.claude.total || 0) + (v.gemini.total || 0);
                 const dateLabel = d.slice(5).replace('-', '/');
-                const claudeCell = v.claude > 0
-                    ? \`<span class="text-orange-700 font-semibold">\${formatMoney(v.claude)}</span>\`
-                    : '<span class="text-slate-300">—</span>';
-                const geminiCell = v.gemini > 0
-                    ? \`<span class="text-sky-700 font-semibold">\${formatMoney(v.gemini)}</span>\`
-                    : '<span class="text-slate-300">—</span>';
+                const claudeVal = v.claude.total > 0 ? v.claude.total : '';
+                const geminiVal = v.gemini.total > 0 ? v.gemini.total : '';
                 html += \`
-                    <div class="grid grid-cols-12 gap-2 px-3 py-1.5 items-center hover:bg-indigo-50/40">
+                    <div class="grid grid-cols-12 gap-2 px-3 py-1.5 items-center hover:bg-indigo-50/40" data-ai-row="\${d}">
                         <div class="col-span-3 text-slate-700">\${dateLabel}</div>
-                        <div class="col-span-4 text-right">\${claudeCell}</div>
-                        <div class="col-span-4 text-right">\${geminiCell}</div>
-                        <div class="col-span-1 text-right font-bold text-slate-800">\${formatMoney(sum)}</div>
+                        <div class="col-span-3">
+                            <input type="number" min="0" step="1" value="\${claudeVal}"
+                                data-ai-prov="claude" data-ai-date="\${d}"
+                                class="w-full border border-transparent hover:border-orange-200 focus:border-orange-400 rounded px-2 py-0.5 text-right text-orange-700 font-semibold focus:outline-none bg-transparent tabular-nums"
+                                placeholder="—">
+                        </div>
+                        <div class="col-span-3">
+                            <input type="number" min="0" step="1" value="\${geminiVal}"
+                                data-ai-prov="gemini" data-ai-date="\${d}"
+                                class="w-full border border-transparent hover:border-sky-200 focus:border-sky-400 rounded px-2 py-0.5 text-right text-sky-700 font-semibold focus:outline-none bg-transparent tabular-nums"
+                                placeholder="—">
+                        </div>
+                        <div class="col-span-2 text-right font-bold text-slate-800">\${formatMoney(sum)}</div>
+                        <div class="col-span-1 flex justify-end">
+                            <button data-ai-action="delete" data-ai-date="\${d}" title="이 날짜 삭제"
+                                class="w-6 h-6 flex items-center justify-center rounded text-rose-500 hover:bg-rose-100">
+                                <i class="fas fa-times text-xs"></i>
+                            </button>
+                        </div>
                     </div>
                 \`;
             }
@@ -3900,13 +4045,156 @@ app.get('/', (c) => {
             html += \`
                 <div class="grid grid-cols-12 gap-2 px-3 py-1.5 items-center bg-indigo-50/70 font-bold">
                     <div class="col-span-3 text-slate-700">합계</div>
-                    <div class="col-span-4 text-right text-orange-700">\${formatMoney(claudeTotal)}</div>
-                    <div class="col-span-4 text-right text-sky-700">\${formatMoney(geminiTotal)}</div>
-                    <div class="col-span-1 text-right text-slate-800">\${formatMoney(claudeTotal + geminiTotal)}</div>
+                    <div class="col-span-3 text-right text-orange-700">\${formatMoney(claudeTotal)}</div>
+                    <div class="col-span-3 text-right text-sky-700">\${formatMoney(geminiTotal)}</div>
+                    <div class="col-span-2 text-right text-slate-800">\${formatMoney(claudeTotal + geminiTotal)}</div>
+                    <div class="col-span-1"></div>
                 </div>
             \`;
             listEl.innerHTML = html;
         }
+
+        // 특정 (날짜, 제공자) 의 사용량 갱신 — 기존 N건은 합쳐서 1건으로 재저장, 0이면 삭제
+        async function upsertAiUsageCell(date, provider, amount) {
+            if (!date || (provider !== 'claude' && provider !== 'gemini')) return;
+            const amt = Math.max(0, Math.floor(Number(amount) || 0));
+            const bucket = __aiUsageByDate[date];
+            const existingIds = bucket && bucket[provider] ? [...bucket[provider].ids] : [];
+
+            try {
+                if (existingIds.length === 0 && amt === 0) return;
+                if (existingIds.length > 0 && amt > 0) {
+                    const [keepId, ...restIds] = existingIds;
+                    await axios.put(\`/api/ai-usage/\${keepId}\`, {
+                        usage_date: date, provider, amount: amt
+                    });
+                    for (const rid of restIds) {
+                        await axios.delete(\`/api/ai-usage/\${rid}\`);
+                    }
+                } else if (existingIds.length === 0 && amt > 0) {
+                    await axios.post('/api/ai-usage', {
+                        usage_date: date, provider, amount: amt
+                    });
+                } else if (existingIds.length > 0 && amt === 0) {
+                    for (const rid of existingIds) {
+                        await axios.delete(\`/api/ai-usage/\${rid}\`);
+                    }
+                }
+                await loadBudgets();
+            } catch (error) {
+                alert('저장 실패: ' + (error.response?.data?.error || error.message));
+                await loadBudgets();
+            }
+        }
+
+        // 특정 날짜 행 전체 삭제 (Claude + Gemini 모두)
+        async function deleteAiUsageRow(date) {
+            const bucket = __aiUsageByDate[date];
+            if (!bucket) return;
+            const allIds = [...(bucket.claude.ids || []), ...(bucket.gemini.ids || [])];
+            if (allIds.length === 0) return;
+            const label = date.slice(5).replace('-', '/');
+            if (!confirm(\`\${label} 의 AI 사용 내역을 모두 삭제하시겠습니까?\`)) return;
+            try {
+                for (const rid of allIds) {
+                    await axios.delete(\`/api/ai-usage/\${rid}\`);
+                }
+                await loadBudgets();
+            } catch (error) {
+                alert('삭제 실패: ' + (error.response?.data?.error || error.message));
+                await loadBudgets();
+            }
+        }
+
+        // 신규 AI 사용 입력 — 날짜 + Claude/Gemini 금액
+        async function addAiUsageEntry() {
+            const date = document.getElementById('ai-add-date').value;
+            const claude = parseInt(document.getElementById('ai-add-claude').value) || 0;
+            const gemini = parseInt(document.getElementById('ai-add-gemini').value) || 0;
+            if (!date) { alert('날짜를 선택해주세요'); return; }
+            if (claude <= 0 && gemini <= 0) { alert('Claude 또는 Gemini 사용 금액을 입력해주세요'); return; }
+
+            const [y, m] = date.split('-');
+            const year = parseInt(y);
+            const month = parseInt(m);
+            try {
+                // 같은 날짜에 이미 기록이 있으면 더하는 게 아니라 기존 것과 합쳐서 업데이트 — upsert 사용
+                // 먼저 이번 달 기록을 다시 가져와 bucket 을 최신으로 만든 뒤 업서트
+                const latest = await axios.get(\`/api/ai-usage/\${year}/\${month}\`);
+                const items = latest.data || [];
+                const bucket = { claude: { total: 0, ids: [] }, gemini: { total: 0, ids: [] } };
+                for (const u of items) {
+                    if (u.usage_date !== date) continue;
+                    const p = (u.provider || '').toLowerCase();
+                    if (p !== 'claude' && p !== 'gemini') continue;
+                    bucket[p].total += Number(u.amount || 0);
+                    bucket[p].ids.push(u.id);
+                }
+                __aiUsageByDate[date] = bucket;
+
+                if (claude > 0) {
+                    await upsertAiUsageCell(date, 'claude', bucket.claude.total + claude);
+                }
+                if (gemini > 0) {
+                    await upsertAiUsageCell(date, 'gemini', bucket.gemini.total + gemini);
+                }
+
+                document.getElementById('ai-add-claude').value = '';
+                document.getElementById('ai-add-gemini').value = '';
+
+                // 입력한 날짜의 월로 탭 이동 (현재 보고 있는 달과 다를 수 있음)
+                document.getElementById('budget-year').value = String(year);
+                document.getElementById('budget-month').value = String(month);
+                await loadBudgets();
+            } catch (error) {
+                alert('추가 실패: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        // AI 사용 패널 이벤트 바인딩 (1회만)
+        function bindAiUsagePanel() {
+            const panel = document.getElementById('budget-ai-usage');
+            const addBtn = document.getElementById('ai-add-btn');
+            if (!panel || !addBtn) { setTimeout(bindAiUsagePanel, 100); return; }
+
+            addBtn.addEventListener('click', addAiUsageEntry);
+            ['ai-add-date', 'ai-add-claude', 'ai-add-gemini'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); addAiUsageEntry(); }
+                });
+            });
+
+            // 기존 행의 셀 편집 — blur 에 저장
+            panel.addEventListener('blur', (e) => {
+                const input = e.target;
+                if (!(input instanceof HTMLInputElement)) return;
+                if (!input.dataset.aiProv || !input.dataset.aiDate) return;
+                const date = input.dataset.aiDate;
+                const prov = input.dataset.aiProv;
+                const newAmt = parseInt(input.value) || 0;
+                const bucket = __aiUsageByDate[date];
+                const prevAmt = bucket && bucket[prov] ? bucket[prov].total : 0;
+                if (newAmt === prevAmt) return;
+                upsertAiUsageCell(date, prov, newAmt);
+            }, true);
+
+            panel.addEventListener('keydown', (e) => {
+                const input = e.target;
+                if (!(input instanceof HTMLInputElement)) return;
+                if (!input.dataset.aiProv) return;
+                if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+            });
+
+            panel.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-ai-action]');
+                if (!btn) return;
+                if (btn.dataset.aiAction === 'delete') {
+                    deleteAiUsageRow(btn.dataset.aiDate);
+                }
+            });
+        }
+        bindAiUsagePanel();
 
         function renderBudgetSummary(cur, prev) {
             // 지출만 집계 (수입 개념은 사용하지 않음)
@@ -3981,9 +4269,9 @@ app.get('/', (c) => {
                     : '';
                 const ap = (b.ai_provider || '').toLowerCase();
                 const aiBadge = ap === 'claude'
-                    ? '<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5 ml-1" title="Claude 사용"><i class="fas fa-robot"></i>Claude</span>'
+                    ? '<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5 ml-1" title="Claude 충전"><i class="fas fa-robot"></i>Claude</span>'
                     : (ap === 'gemini'
-                        ? '<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5 ml-1" title="Gemini 사용"><i class="fas fa-gem"></i>Gemini</span>'
+                        ? '<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5 ml-1" title="Gemini 충전"><i class="fas fa-gem"></i>Gemini</span>'
                         : '');
                 html += \`
                     <div class="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm hover:bg-slate-50">
