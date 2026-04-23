@@ -1273,7 +1273,7 @@ app.get('/', (c) => {
                     <i class="fas fa-brain mr-3"></i>
                     Schedule-AI
                 </h1>
-                <p class="text-white text-opacity-90">AI 기반 스마트 업무 스케줄 관리 시스템 <span class="text-[10px] text-white/60 ml-2">v2026.04.23-gpt-unpaid</span></p>
+                <p class="text-white text-opacity-90">AI 기반 스마트 업무 스케줄 관리 시스템 <span class="text-[10px] text-white/60 ml-2">v2026.04.23-unpaid-panel</span></p>
             </div>
         </header>
 
@@ -1397,7 +1397,7 @@ app.get('/', (c) => {
                     </div>
                     <button type="button" id="budget-unpaid-card"
                         class="text-left bg-red-50 border border-red-200 rounded-lg p-4 hover:bg-red-100 hover:border-red-300 transition-colors"
-                        title="결제 필요 항목만 보기">
+                        title="결제 필요 내역 패널로 이동">
                         <div class="text-xs text-red-700 font-semibold mb-1"><i class="fas fa-hourglass-half mr-1"></i>결제 필요
                             <span id="budget-unpaid-count" class="ml-1 text-[10px] font-bold text-white bg-red-500 rounded-full px-1.5 py-0.5">0</span>
                         </div>
@@ -1496,12 +1496,64 @@ app.get('/', (c) => {
                     </div>
                 </div>
 
+                <!-- 결제 필요 내역 (is_paid = 0 인 예산 항목을 별도 패널로 정리) -->
+                <div id="budget-unpaid-panel" class="mb-4 bg-gradient-to-br from-red-50 to-orange-50 border border-red-200 rounded-xl p-4">
+                    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+                        <h3 class="text-sm font-bold text-slate-800">
+                            <i class="fas fa-hourglass-half mr-1.5 text-red-600"></i>결제 필요 내역
+                            <span class="text-[11px] text-slate-500 font-medium ml-1">(아직 결제하지 않은 항목 — 결제 후 "완료" 버튼)</span>
+                        </h3>
+                        <div class="flex items-center gap-3 text-xs">
+                            <span class="inline-flex items-center gap-1 text-slate-700">
+                                <span class="w-2.5 h-2.5 rounded-full bg-red-500"></span>
+                                <span id="budget-unpaid-panel-count" class="font-bold tabular-nums">0</span>건
+                            </span>
+                            <span class="inline-flex items-center gap-1 text-slate-700">
+                                합계 <span id="budget-unpaid-panel-sum" class="font-bold tabular-nums text-red-700">$0.00</span>
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border border-red-100 rounded-lg overflow-hidden bg-white">
+                        <div class="grid grid-cols-12 gap-2 bg-red-50/60 px-3 py-1.5 text-[11px] font-semibold text-slate-600">
+                            <div class="col-span-2">결제일</div>
+                            <div class="col-span-2">카테고리</div>
+                            <div class="col-span-4">내용</div>
+                            <div class="col-span-2 text-right">금액</div>
+                            <div class="col-span-2 text-right">관리</div>
+                        </div>
+                        <!-- 신규 "결제 필요" 입력 행 -->
+                        <div class="grid grid-cols-12 gap-2 px-3 py-2 items-center bg-amber-50/40 border-b border-amber-100">
+                            <div class="col-span-2">
+                                <input type="date" id="unpaid-add-date" class="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:border-red-400 focus:outline-none">
+                            </div>
+                            <div class="col-span-2">
+                                <input type="text" id="unpaid-add-category" placeholder="카테고리" class="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:border-red-400 focus:outline-none">
+                            </div>
+                            <div class="col-span-4">
+                                <input type="text" id="unpaid-add-description" placeholder="상세 내용" class="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:border-red-400 focus:outline-none">
+                            </div>
+                            <div class="col-span-2">
+                                <input type="number" id="unpaid-add-amount" min="0" step="0.01" placeholder="$" class="w-full border border-slate-200 rounded px-2 py-1 text-xs text-right focus:border-red-400 focus:outline-none tabular-nums">
+                            </div>
+                            <div class="col-span-2 flex justify-end">
+                                <button id="unpaid-add-btn" class="text-[11px] font-semibold bg-red-500 hover:bg-red-600 text-white rounded px-2 py-1 shadow-sm">
+                                    <i class="fas fa-plus mr-0.5"></i>추가
+                                </button>
+                            </div>
+                        </div>
+                        <div id="budget-unpaid-list" class="divide-y divide-red-50 text-xs"></div>
+                        <div id="budget-unpaid-empty" class="text-center text-slate-400 text-xs py-4 hidden">
+                            결제가 필요한 항목이 없습니다. 위 입력창에서 새로 추가하거나, 기존 예산 항목을 "결제 필요"로 등록하면 이 목록에 표시됩니다.
+                        </div>
+                    </div>
+                </div>
+
                 <!-- 필터 탭 -->
-                <div class="flex gap-1 mb-3 border-b border-slate-200 flex-wrap">
+                <div class="flex gap-1 mb-3 border-b border-slate-200">
                     <button data-budget-filter="all" class="budget-filter-tab px-4 py-2 text-sm font-semibold border-b-2 border-emerald-500 text-emerald-700">전체</button>
                     <button data-budget-filter="recurring" class="budget-filter-tab px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-slate-500 hover:text-blue-600"><i class="fas fa-sync-alt mr-1"></i>정기결제</button>
                     <button data-budget-filter="onetime" class="budget-filter-tab px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-slate-500 hover:text-amber-600"><i class="fas fa-credit-card mr-1"></i>수시결제</button>
-                    <button data-budget-filter="unpaid" class="budget-filter-tab px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-slate-500 hover:text-red-600"><i class="fas fa-hourglass-half mr-1"></i>결제 필요</button>
                 </div>
 
                 <!-- 예산 항목 목록 -->
@@ -4058,6 +4110,7 @@ app.get('/', (c) => {
                 renderBudgetSummary(__budgetCache, prev);
                 renderAiUsage(aiUsage, year, month);
                 renderAiBalance(balRes.data);
+                renderUnpaidPanel(__budgetCache, year, month);
                 renderBudgetList(__budgetCache);
             } catch (error) {
                 console.error('예산 로드 실패', error);
@@ -4094,6 +4147,152 @@ app.get('/', (c) => {
                 gptRemainEl.className = 'tabular-nums font-bold ' + (bal < 0 ? 'text-rose-600' : 'text-emerald-600');
             }
         }
+
+        // 결제 필요 내역 패널 — is_paid = 0 인 예산 항목만 표시한다.
+        function renderUnpaidPanel(items, year, month) {
+            const listEl = document.getElementById('budget-unpaid-list');
+            const emptyEl = document.getElementById('budget-unpaid-empty');
+            const sumEl = document.getElementById('budget-unpaid-panel-sum');
+            const cntEl = document.getElementById('budget-unpaid-panel-count');
+            if (!listEl) return;
+
+            const unpaid = (items || []).filter(b => !isBudgetPaid(b));
+            // 결제일 오름차순 (없으면 맨 뒤)
+            const sorted = [...unpaid].sort((a, b) => {
+                const da = a.budget_date || '9999-12-31';
+                const db = b.budget_date || '9999-12-31';
+                return da.localeCompare(db);
+            });
+            const total = unpaid.reduce((acc, b) => acc + (b.amount || 0), 0);
+            if (sumEl) sumEl.textContent = formatMoney(total);
+            if (cntEl) cntEl.textContent = String(unpaid.length);
+
+            // 입력 행 기본 날짜 = 현재 선택된 월의 오늘
+            const addDateEl = document.getElementById('unpaid-add-date');
+            const ymStr = \`\${year}-\${String(month).padStart(2, '0')}\`;
+            if (addDateEl) {
+                const cur = addDateEl.value || '';
+                const curYm = cur.slice(0, 7);
+                if (!cur || curYm !== ymStr) {
+                    const now = new Date();
+                    const today = now.getDate();
+                    const lastDay = new Date(year, month, 0).getDate();
+                    const day = String(Math.min(today, lastDay)).padStart(2, '0');
+                    addDateEl.value = \`\${ymStr}-\${day}\`;
+                }
+            }
+
+            if (sorted.length === 0) {
+                listEl.innerHTML = '';
+                if (emptyEl) emptyEl.classList.remove('hidden');
+                return;
+            }
+            if (emptyEl) emptyEl.classList.add('hidden');
+
+            function esc(s) {
+                return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            }
+
+            let html = '';
+            for (const b of sorted) {
+                const dateStr = b.budget_date ? b.budget_date.slice(5).replace('-', '/') : '—';
+                const pt = budgetPaymentType(b);
+                const typeBadge = pt === 'recurring'
+                    ? '<span class="inline-flex items-center gap-1 text-[10px] font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded px-1 py-0.5 ml-1" title="정기결제"><i class="fas fa-sync-alt"></i></span>'
+                    : '';
+                html += \`
+                    <div class="grid grid-cols-12 gap-2 px-3 py-2 items-center hover:bg-red-50/40">
+                        <div class="col-span-2 text-slate-700 tabular-nums">\${dateStr}</div>
+                        <div class="col-span-2 text-slate-700 truncate" title="\${esc(b.category)}">\${esc(b.category) || '—'}\${typeBadge}</div>
+                        <div class="col-span-4 text-slate-700 truncate" title="\${esc(b.description)}">\${esc(b.description) || '—'}</div>
+                        <div class="col-span-2 text-right font-bold tabular-nums text-red-700">\${formatMoney(b.amount)}</div>
+                        <div class="col-span-2 flex justify-end gap-1">
+                            <button data-unpaid-action="pay" data-id="\${b.id}" title="결제 완료로 표시"
+                                class="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-green-500 hover:bg-green-600 rounded px-2 py-1 shadow-sm">
+                                <i class="fas fa-check"></i>완료
+                            </button>
+                            <button data-unpaid-action="edit" data-id="\${b.id}" title="수정"
+                                class="w-7 h-7 flex items-center justify-center rounded-md text-indigo-600 hover:bg-indigo-100">
+                                <i class="fas fa-pen text-xs"></i>
+                            </button>
+                        </div>
+                    </div>
+                \`;
+            }
+            listEl.innerHTML = html;
+        }
+
+        // 결제 필요 항목 → 결제 완료 처리
+        async function markBudgetPaid(id) {
+            try {
+                await axios.put(\`/api/budgets/\${id}\`, { is_paid: 1 });
+                const item = __budgetCache.find(x => x.id === id);
+                if (item) item.is_paid = 1;
+                await loadBudgets();
+            } catch (error) {
+                alert('결제 완료 처리 실패: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        // 신규 결제 필요 항목 추가 — 수시결제 · is_paid=0 · 이월 off 로 생성
+        async function addUnpaidEntry() {
+            const date = document.getElementById('unpaid-add-date').value;
+            const category = document.getElementById('unpaid-add-category').value.trim();
+            const description = document.getElementById('unpaid-add-description').value.trim();
+            const amount = parseMoneyInput(document.getElementById('unpaid-add-amount').value);
+            if (!date) { alert('결제일을 선택해주세요'); return; }
+            if (!category && !description) { alert('카테고리 또는 내용 중 하나는 입력해주세요'); return; }
+            if (amount <= 0) { alert('금액을 입력해주세요'); return; }
+
+            const [y, m] = date.split('-');
+            const year = parseInt(y);
+            const month = parseInt(m);
+            try {
+                await axios.post('/api/budgets', {
+                    year, month, type: 'expense',
+                    category, description, amount,
+                    budget_date: date,
+                    payment_type: 'onetime',
+                    carry_over: 0,
+                    is_paid: 0,
+                    ai_provider: null
+                });
+                document.getElementById('unpaid-add-category').value = '';
+                document.getElementById('unpaid-add-description').value = '';
+                document.getElementById('unpaid-add-amount').value = '';
+                // 해당 달로 이동 후 reload
+                document.getElementById('budget-year').value = String(year);
+                document.getElementById('budget-month').value = String(month);
+                await loadBudgets();
+            } catch (error) {
+                alert('추가 실패: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        function bindUnpaidPanel() {
+            const panel = document.getElementById('budget-unpaid-panel');
+            const addBtn = document.getElementById('unpaid-add-btn');
+            if (!panel || !addBtn) { setTimeout(bindUnpaidPanel, 100); return; }
+            if (panel.__bound) return;
+            panel.__bound = true;
+
+            addBtn.addEventListener('click', addUnpaidEntry);
+            ['unpaid-add-date', 'unpaid-add-category', 'unpaid-add-description', 'unpaid-add-amount'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); addUnpaidEntry(); }
+                });
+            });
+
+            panel.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-unpaid-action]');
+                if (!btn) return;
+                const id = parseInt(btn.dataset.id);
+                if (btn.dataset.unpaidAction === 'pay') markBudgetPaid(id);
+                else if (btn.dataset.unpaidAction === 'edit') openEditBudgetModal(id);
+            });
+        }
+        bindUnpaidPanel();
 
         // AI 사용 현황 — 예산(충전)과 별개, 일자별 실사용량만 기록
         // __aiUsageByDate: { 'YYYY-MM-DD': { claude: { total, ids }, gpt: { total, ids } } }
@@ -4391,20 +4590,15 @@ app.get('/', (c) => {
             // 필터 적용
             const filtered = (items || []).filter(b => {
                 if (__budgetFilter === 'all') return true;
-                if (__budgetFilter === 'unpaid') return !isBudgetPaid(b);
                 return budgetPaymentType(b) === __budgetFilter;
             });
 
             if (filtered.length === 0) {
                 list.innerHTML = '';
                 empty.classList.remove('hidden');
-                const emptyMsg = {
-                    all: '등록된 예산 항목이 없습니다. 상단 "항목 추가"로 시작해보세요.',
-                    recurring: '등록된 정기결제가 없습니다.',
-                    onetime: '등록된 수시결제가 없습니다.',
-                    unpaid: '결제가 필요한 항목이 없습니다. 모두 결제 완료 상태입니다.'
-                };
-                empty.textContent = emptyMsg[__budgetFilter] || emptyMsg.all;
+                empty.textContent = __budgetFilter === 'all'
+                    ? '등록된 예산 항목이 없습니다. 상단 "항목 추가"로 시작해보세요.'
+                    : (__budgetFilter === 'recurring' ? '등록된 정기결제가 없습니다.' : '등록된 수시결제가 없습니다.');
                 return;
             }
             empty.classList.add('hidden');
@@ -4436,19 +4630,13 @@ app.get('/', (c) => {
                     : ((ap === 'gpt' || ap === 'gemini')
                         ? '<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5 ml-1" title="GPT 충전"><i class="fas fa-bolt"></i>GPT</span>'
                         : '');
-                const paid = isBudgetPaid(b);
-                const paidBadge = paid
-                    ? \`<button data-action="toggle-paid" data-id="\${b.id}" data-paid="1" title="클릭하여 '결제 필요'로 되돌리기" class="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 bg-green-50 border border-green-200 rounded px-2 py-0.5 hover:bg-green-100"><i class="fas fa-check-circle"></i>결제완료</button>\`
-                    : \`<button data-action="toggle-paid" data-id="\${b.id}" data-paid="0" title="클릭하여 '결제 완료'로 표시" class="inline-flex items-center gap-1 text-[11px] font-semibold text-red-700 bg-red-50 border border-red-200 rounded px-2 py-0.5 hover:bg-red-100"><i class="fas fa-hourglass-half"></i>결제필요</button>\`;
-                const rowClass = paid ? 'opacity-70' : '';
-                const amountClass = paid ? 'text-slate-500 line-through' : 'text-rose-700';
                 html += \`
-                    <div class="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm hover:bg-slate-50 \${rowClass}">
+                    <div class="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm hover:bg-slate-50">
                         <div class="col-span-2 text-slate-700 tabular-nums">\${dateStr}</div>
-                        <div class="col-span-2 flex flex-wrap gap-1 items-center">\${badge}\${paidBadge}\${carryBadge}</div>
+                        <div class="col-span-2">\${badge}\${carryBadge}</div>
                         <div class="col-span-2 text-slate-700 truncate" title="\${esc(b.category)}">\${esc(b.category) || '—'}\${aiBadge}</div>
                         <div class="col-span-3 text-slate-700 truncate" title="\${esc(b.description)}">\${esc(b.description) || '—'}</div>
-                        <div class="col-span-2 text-right font-bold tabular-nums \${amountClass}">-\${formatMoney(b.amount)}</div>
+                        <div class="col-span-2 text-right font-bold tabular-nums text-rose-700">-\${formatMoney(b.amount)}</div>
                         <div class="col-span-1 flex justify-end gap-1">
                             <button data-action="edit" data-id="\${b.id}" title="수정" class="w-7 h-7 flex items-center justify-center rounded-md text-indigo-600 hover:bg-indigo-100">
                                 <i class="fas fa-pen text-xs"></i>
@@ -4469,37 +4657,20 @@ app.get('/', (c) => {
                     const id = parseInt(btn.dataset.id);
                     if (btn.dataset.action === 'edit') openEditBudgetModal(id);
                     else if (btn.dataset.action === 'delete') deleteBudget(id);
-                    else if (btn.dataset.action === 'toggle-paid') toggleBudgetPaid(id, btn.dataset.paid !== '1');
                 });
                 list.__budgetBound = true;
             }
         }
 
-        // 결제 상태 토글 — 이월(carry-over) 행의 경우에도 원본 id 를 직접 업데이트한다.
-        async function toggleBudgetPaid(id, nextPaid) {
-            try {
-                await axios.put(\`/api/budgets/\${id}\`, { is_paid: nextPaid ? 1 : 0 });
-                // 캐시 즉시 반영 (깜빡임 방지)
-                const item = __budgetCache.find(x => x.id === id);
-                if (item) item.is_paid = nextPaid ? 1 : 0;
-                renderBudgetSummary(__budgetCache, []);
-                renderBudgetList(__budgetCache);
-                // 지난달 대비 계산은 loadBudgets 에서 prev 를 다시 가져와야 정확 — 비동기로 갱신
-                loadBudgets();
-            } catch (error) {
-                alert('결제 상태 변경 실패: ' + (error.response?.data?.error || error.message));
-            }
-        }
-
-        // 결제 필요 요약 카드 클릭 → 결제 필요 탭으로 이동
+        // 결제 필요 요약 카드 클릭 → 결제 필요 패널로 스크롤
         function bindUnpaidCard() {
             const card = document.getElementById('budget-unpaid-card');
             if (!card) { setTimeout(bindUnpaidCard, 100); return; }
             if (card.__bound) return;
             card.__bound = true;
             card.addEventListener('click', () => {
-                const tab = document.querySelector('[data-budget-filter="unpaid"]');
-                if (tab) tab.click();
+                const panel = document.getElementById('budget-unpaid-panel');
+                if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
             });
         }
         bindUnpaidCard();
@@ -4515,9 +4686,7 @@ app.get('/', (c) => {
                     tabs.forEach(t => {
                         const f = t.dataset.budgetFilter;
                         const active = f === __budgetFilter;
-                        const color = f === 'recurring' ? 'blue'
-                            : (f === 'onetime' ? 'amber'
-                            : (f === 'unpaid' ? 'red' : 'emerald'));
+                        const color = f === 'recurring' ? 'blue' : (f === 'onetime' ? 'amber' : 'emerald');
                         if (active) {
                             t.className = \`budget-filter-tab px-4 py-2 text-sm font-semibold border-b-2 border-\${color}-500 text-\${color}-700\`;
                         } else {
