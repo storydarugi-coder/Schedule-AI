@@ -844,6 +844,7 @@ async function ensureBudgetsTable(db: any) {
         stop_year INTEGER,
         stop_month INTEGER,
         ai_provider TEXT,
+        is_paid INTEGER NOT NULL DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `).run()
@@ -864,18 +865,26 @@ async function ensureBudgetsTable(db: any) {
   try {
     await db.prepare(`ALTER TABLE budgets ADD COLUMN ai_provider TEXT`).run()
   } catch (e) {}
+  try {
+    await db.prepare(`ALTER TABLE budgets ADD COLUMN is_paid INTEGER NOT NULL DEFAULT 0`).run()
+  } catch (e) {}
+  // 기존 'gemini' 데이터를 'gpt' 로 마이그레이션 (리네이밍)
+  try {
+    await db.prepare(`UPDATE budgets SET ai_provider = 'gpt' WHERE ai_provider = 'gemini'`).run()
+  } catch (e) {}
 }
 
 function normalizePaymentType(v: any): string {
   return v === 'recurring' ? 'recurring' : 'onetime'
 }
 
-// AI 제공자 정규화: 'claude' | 'gemini' | null
+// AI 제공자 정규화: 'claude' | 'gpt' | null
+// 구 데이터/구 클라이언트 호환을 위해 'gemini' 입력도 'gpt' 로 변환한다.
 function normalizeAiProvider(v: any): string | null {
   if (v === null || v === undefined || v === '') return null
   const s = String(v).toLowerCase().trim()
   if (s === 'claude') return 'claude'
-  if (s === 'gemini') return 'gemini'
+  if (s === 'gpt' || s === 'gemini') return 'gpt'
   return null
 }
 
@@ -916,7 +925,7 @@ app.get('/api/budgets/:year/:month', async (c) => {
 app.post('/api/budgets', async (c) => {
   const db = c.env.DB
   await ensureBudgetsTable(db)
-  const { year, month, type, category, description, amount, hospital_id, budget_date, payment_type, carry_over, ai_provider } = await c.req.json()
+  const { year, month, type, category, description, amount, hospital_id, budget_date, payment_type, carry_over, ai_provider, is_paid } = await c.req.json()
 
   if (!year || !month) {
     return c.json({ error: 'year, month 필수' }, 400)
@@ -926,10 +935,11 @@ app.post('/api/budgets', async (c) => {
   const pt = normalizePaymentType(payment_type)
   const co = carry_over === 0 || carry_over === false ? 0 : 1
   const ap = normalizeAiProvider(ai_provider)
+  const paid = is_paid === 1 || is_paid === true ? 1 : 0
 
   const result = await db.prepare(`
-    INSERT INTO budgets (year, month, type, category, description, amount, hospital_id, budget_date, payment_type, carry_over, ai_provider)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO budgets (year, month, type, category, description, amount, hospital_id, budget_date, payment_type, carry_over, ai_provider, is_paid)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     year, month, t,
     category || '',
@@ -939,7 +949,8 @@ app.post('/api/budgets', async (c) => {
     budget_date || null,
     pt,
     co,
-    ap
+    ap,
+    paid
   ).run()
 
   return c.json({ success: true, id: result.meta.last_row_id })
@@ -968,6 +979,7 @@ app.put('/api/budgets/:id', async (c) => {
   if (data.stop_year !== undefined) { fields.push('stop_year = ?'); values.push(data.stop_year === null ? null : parseInt(data.stop_year)) }
   if (data.stop_month !== undefined) { fields.push('stop_month = ?'); values.push(data.stop_month === null ? null : parseInt(data.stop_month)) }
   if (data.ai_provider !== undefined) { fields.push('ai_provider = ?'); values.push(normalizeAiProvider(data.ai_provider)) }
+  if (data.is_paid !== undefined) { fields.push('is_paid = ?'); values.push(data.is_paid === 1 || data.is_paid === true ? 1 : 0) }
 
   if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400)
 
@@ -1011,7 +1023,7 @@ app.delete('/api/budgets/:id', async (c) => {
 })
 
 // =========================
-// AI 사용량 API (Claude / Gemini 일자별 실사용 기록)
+// AI 사용량 API (Claude / GPT 일자별 실사용 기록)
 // 충전(budgets.수시결제)과 별도로 실제 소비량만 기록한다.
 // =========================
 
@@ -1034,7 +1046,7 @@ function normalizeAiUsageProvider(v: any): string | null {
   if (v === null || v === undefined) return null
   const s = String(v).toLowerCase().trim()
   if (s === 'claude') return 'claude'
-  if (s === 'gemini') return 'gemini'
+  if (s === 'gpt' || s === 'gemini') return 'gpt'
   return null
 }
 
@@ -1073,7 +1085,7 @@ app.post('/api/ai-usage', async (c) => {
 
   if (!usage_date) return c.json({ error: 'usage_date 필수 (YYYY-MM-DD)' }, 400)
   const prov = normalizeAiUsageProvider(provider)
-  if (!prov) return c.json({ error: "provider 는 'claude' 또는 'gemini'" }, 400)
+  if (!prov) return c.json({ error: "provider 는 'claude' 또는 'gpt'" }, 400)
   const amt = parseMoneyAmount(amount)
 
   const result = await db.prepare(
@@ -1096,7 +1108,7 @@ app.put('/api/ai-usage/:id', async (c) => {
   if (data.usage_date !== undefined) { fields.push('usage_date = ?'); values.push(String(data.usage_date)) }
   if (data.provider !== undefined) {
     const prov = normalizeAiUsageProvider(data.provider)
-    if (!prov) return c.json({ error: "provider 는 'claude' 또는 'gemini'" }, 400)
+    if (!prov) return c.json({ error: "provider 는 'claude' 또는 'gpt'" }, 400)
     fields.push('provider = ?'); values.push(prov)
   }
   if (data.amount !== undefined) { fields.push('amount = ?'); values.push(parseMoneyAmount(data.amount)) }
@@ -1119,9 +1131,10 @@ app.delete('/api/ai-usage/:id', async (c) => {
   return c.json({ success: true })
 })
 
-// Claude / Gemini 전체 누적 잔액 — (충전 총합) - (사용 총합)
-// 충전: budgets.ai_provider = 'claude' | 'gemini' (수시결제, 이월 등 무관하게 원본 1회만 집계)
-// 사용: ai_usage.provider = 'claude' | 'gemini'
+// Claude / GPT 전체 누적 잔액 — (충전 총합) - (사용 총합)
+// 충전: budgets.ai_provider = 'claude' | 'gpt' (수시결제, 이월 등 무관하게 원본 1회만 집계)
+// 사용: ai_usage.provider = 'claude' | 'gpt'
+// 구버전 'gemini' 데이터도 함께 집계한다 (마이그레이션 중 잔존분 대비).
 app.get('/api/ai-balance', async (c) => {
   const db = c.env.DB
   await ensureBudgetsTable(db)
@@ -1129,21 +1142,21 @@ app.get('/api/ai-balance', async (c) => {
 
   const row: any = await db.prepare(`
     SELECT
-      (SELECT COALESCE(SUM(amount), 0) FROM budgets WHERE ai_provider = 'claude') AS claude_topup,
-      (SELECT COALESCE(SUM(amount), 0) FROM ai_usage WHERE provider = 'claude') AS claude_usage,
-      (SELECT COALESCE(SUM(amount), 0) FROM budgets WHERE ai_provider = 'gemini') AS gemini_topup,
-      (SELECT COALESCE(SUM(amount), 0) FROM ai_usage WHERE provider = 'gemini') AS gemini_usage
+      (SELECT COALESCE(SUM(amount), 0) FROM budgets WHERE ai_provider = 'claude')              AS claude_topup,
+      (SELECT COALESCE(SUM(amount), 0) FROM ai_usage WHERE provider = 'claude')                AS claude_usage,
+      (SELECT COALESCE(SUM(amount), 0) FROM budgets WHERE ai_provider IN ('gpt','gemini'))     AS gpt_topup,
+      (SELECT COALESCE(SUM(amount), 0) FROM ai_usage WHERE provider IN ('gpt','gemini'))       AS gpt_usage
   `).first()
 
   const ct = Number(row?.claude_topup || 0)
   const cu = Number(row?.claude_usage || 0)
-  const gt = Number(row?.gemini_topup || 0)
-  const gu = Number(row?.gemini_usage || 0)
+  const gt = Number(row?.gpt_topup || 0)
+  const gu = Number(row?.gpt_usage || 0)
   const round = (n: number) => Math.round(n * 100) / 100
 
   return c.json({
     claude: { topup: round(ct), usage: round(cu), balance: round(ct - cu) },
-    gemini: { topup: round(gt), usage: round(gu), balance: round(gt - gu) }
+    gpt:    { topup: round(gt), usage: round(gu), balance: round(gt - gu) }
   })
 })
 
@@ -1260,7 +1273,7 @@ app.get('/', (c) => {
                     <i class="fas fa-brain mr-3"></i>
                     Schedule-AI
                 </h1>
-                <p class="text-white text-opacity-90">AI 기반 스마트 업무 스케줄 관리 시스템 <span class="text-[10px] text-white/60 ml-2">v2026.04.15-toggle</span></p>
+                <p class="text-white text-opacity-90">AI 기반 스마트 업무 스케줄 관리 시스템 <span class="text-[10px] text-white/60 ml-2">v2026.04.23-gpt-unpaid</span></p>
             </div>
         </header>
 
@@ -1369,7 +1382,7 @@ app.get('/', (c) => {
                 </div>
 
                 <!-- 월별 요약 카드 -->
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
                     <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
                         <div class="text-xs text-blue-700 font-semibold mb-1"><i class="fas fa-sync-alt mr-1"></i>정기결제</div>
                         <div id="budget-recurring" class="text-xl font-bold text-blue-700 tabular-nums">$0</div>
@@ -1382,6 +1395,14 @@ app.get('/', (c) => {
                         <div class="text-xs text-rose-700 font-semibold mb-1"><i class="fas fa-coins mr-1"></i>이번 달 합계</div>
                         <div id="budget-expense" class="text-xl font-bold text-rose-700 tabular-nums">$0</div>
                     </div>
+                    <button type="button" id="budget-unpaid-card"
+                        class="text-left bg-red-50 border border-red-200 rounded-lg p-4 hover:bg-red-100 hover:border-red-300 transition-colors"
+                        title="결제 필요 항목만 보기">
+                        <div class="text-xs text-red-700 font-semibold mb-1"><i class="fas fa-hourglass-half mr-1"></i>결제 필요
+                            <span id="budget-unpaid-count" class="ml-1 text-[10px] font-bold text-white bg-red-500 rounded-full px-1.5 py-0.5">0</span>
+                        </div>
+                        <div id="budget-unpaid" class="text-xl font-bold text-red-700 tabular-nums">$0</div>
+                    </button>
                     <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
                         <div class="text-xs text-slate-600 font-semibold mb-1"><i class="fas fa-chart-line mr-1"></i>지난 달 대비</div>
                         <div id="budget-compare" class="text-xl font-bold text-slate-700 tabular-nums">—</div>
@@ -1389,7 +1410,7 @@ app.get('/', (c) => {
                     </div>
                 </div>
 
-                <!-- AI 사용 현황 (Claude / Gemini 일자별 실사용량 — 충전과 별개) -->
+                <!-- AI 사용 현황 (Claude / GPT 일자별 실사용량 — 충전과 별개) -->
                 <div id="budget-ai-usage" class="mb-4 bg-gradient-to-br from-indigo-50 to-violet-50 border border-indigo-200 rounded-xl p-4">
                     <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
                         <h3 class="text-sm font-bold text-slate-800">
@@ -1403,7 +1424,7 @@ app.get('/', (c) => {
                             </span>
                             <span class="inline-flex items-center gap-1 text-slate-700">
                                 <span class="w-2.5 h-2.5 rounded-full bg-sky-500"></span>
-                                Gemini <span class="text-[11px] text-slate-500">이번 달</span> <span id="budget-ai-gemini-total" class="font-bold tabular-nums">$0.00</span>
+                                GPT <span class="text-[11px] text-slate-500">이번 달</span> <span id="budget-ai-gpt-total" class="font-bold tabular-nums">$0.00</span>
                             </span>
                         </div>
                     </div>
@@ -1428,16 +1449,16 @@ app.get('/', (c) => {
                         <div class="bg-white border border-sky-200 rounded-lg px-3 py-2">
                             <div class="flex items-center justify-between gap-2">
                                 <div class="text-[11px] font-semibold text-sky-700">
-                                    <i class="fas fa-gem mr-1"></i>Gemini <span class="text-slate-400 font-normal">누적</span>
+                                    <i class="fas fa-bolt mr-1"></i>GPT <span class="text-slate-400 font-normal">누적</span>
                                 </div>
                                 <div class="text-sm">
-                                    잔액 <span id="ai-balance-gemini-remain" class="tabular-nums font-bold text-emerald-600">$0.00</span>
+                                    잔액 <span id="ai-balance-gpt-remain" class="tabular-nums font-bold text-emerald-600">$0.00</span>
                                 </div>
                             </div>
                             <div class="text-[11px] text-slate-500 mt-0.5">
-                                충전 <span id="ai-balance-gemini-topup" class="tabular-nums font-semibold text-slate-700">$0.00</span>
+                                충전 <span id="ai-balance-gpt-topup" class="tabular-nums font-semibold text-slate-700">$0.00</span>
                                 <span class="mx-1 text-slate-300">·</span>
-                                사용 <span id="ai-balance-gemini-usage" class="tabular-nums font-semibold text-sky-700">$0.00</span>
+                                사용 <span id="ai-balance-gpt-usage" class="tabular-nums font-semibold text-sky-700">$0.00</span>
                             </div>
                         </div>
                     </div>
@@ -1446,7 +1467,7 @@ app.get('/', (c) => {
                         <div class="grid grid-cols-12 gap-2 bg-indigo-50/60 px-3 py-1.5 text-[11px] font-semibold text-slate-600">
                             <div class="col-span-3">날짜</div>
                             <div class="col-span-3 text-right">Claude</div>
-                            <div class="col-span-3 text-right">Gemini</div>
+                            <div class="col-span-3 text-right">GPT</div>
                             <div class="col-span-2 text-right">합계</div>
                             <div class="col-span-1 text-right">관리</div>
                         </div>
@@ -1459,7 +1480,7 @@ app.get('/', (c) => {
                                 <input type="number" id="ai-add-claude" min="0" step="0.01" placeholder="Claude $" class="w-full border border-slate-200 rounded px-2 py-1 text-xs text-right focus:border-orange-400 focus:outline-none tabular-nums">
                             </div>
                             <div class="col-span-3">
-                                <input type="number" id="ai-add-gemini" min="0" step="0.01" placeholder="Gemini $" class="w-full border border-slate-200 rounded px-2 py-1 text-xs text-right focus:border-sky-400 focus:outline-none tabular-nums">
+                                <input type="number" id="ai-add-gpt" min="0" step="0.01" placeholder="GPT $" class="w-full border border-slate-200 rounded px-2 py-1 text-xs text-right focus:border-sky-400 focus:outline-none tabular-nums">
                             </div>
                             <div class="col-span-2"></div>
                             <div class="col-span-1 flex justify-end">
@@ -1476,10 +1497,11 @@ app.get('/', (c) => {
                 </div>
 
                 <!-- 필터 탭 -->
-                <div class="flex gap-1 mb-3 border-b border-slate-200">
+                <div class="flex gap-1 mb-3 border-b border-slate-200 flex-wrap">
                     <button data-budget-filter="all" class="budget-filter-tab px-4 py-2 text-sm font-semibold border-b-2 border-emerald-500 text-emerald-700">전체</button>
                     <button data-budget-filter="recurring" class="budget-filter-tab px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-slate-500 hover:text-blue-600"><i class="fas fa-sync-alt mr-1"></i>정기결제</button>
                     <button data-budget-filter="onetime" class="budget-filter-tab px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-slate-500 hover:text-amber-600"><i class="fas fa-credit-card mr-1"></i>수시결제</button>
+                    <button data-budget-filter="unpaid" class="budget-filter-tab px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-slate-500 hover:text-red-600"><i class="fas fa-hourglass-half mr-1"></i>결제 필요</button>
                 </div>
 
                 <!-- 예산 항목 목록 -->
@@ -1545,18 +1567,25 @@ app.get('/', (c) => {
                             <button type="button" data-ap="claude" class="flex-1 py-2 rounded-lg border-2 text-xs font-semibold transition-colors">
                                 <i class="fas fa-robot mr-1"></i>Claude 충전
                             </button>
-                            <button type="button" data-ap="gemini" class="flex-1 py-2 rounded-lg border-2 text-xs font-semibold transition-colors">
-                                <i class="fas fa-gem mr-1"></i>Gemini 충전
+                            <button type="button" data-ap="gpt" class="flex-1 py-2 rounded-lg border-2 text-xs font-semibold transition-colors">
+                                <i class="fas fa-bolt mr-1"></i>GPT 충전
                             </button>
                         </div>
-                        <div class="text-[11px] text-slate-500 mt-1">Claude/Gemini 크레딧 충전 내역을 구분할 때 사용. 실제 일자별 사용량은 상단 "AI 사용 현황"에서 별도로 기록합니다.</div>
+                        <div class="text-[11px] text-slate-500 mt-1">Claude/GPT 크레딧 충전 내역을 구분할 때 사용. 실제 일자별 사용량은 상단 "AI 사용 현황"에서 별도로 기록합니다.</div>
                     </div>
-                    <div class="mb-4">
+                    <div class="mb-3">
                         <label class="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
                             <input type="checkbox" id="budget-carry-over-input" checked class="w-4 h-4 accent-emerald-500">
                             <span>다음 달부터도 자동 표시 (이월)</span>
                         </label>
                         <div class="text-[11px] text-slate-500 mt-1 pl-6">체크를 해제하면 이 달에만 표시됩니다.</div>
+                    </div>
+                    <div class="mb-4">
+                        <label class="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                            <input type="checkbox" id="budget-is-paid-input" class="w-4 h-4 accent-green-500">
+                            <span>결제 완료</span>
+                        </label>
+                        <div class="text-[11px] text-slate-500 mt-1 pl-6">체크하지 않으면 "결제 필요" 목록에 올라옵니다.</div>
                     </div>
                     <div class="flex justify-end gap-2">
                         <button onclick="closeBudgetModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">취소</button>
@@ -4000,6 +4029,12 @@ app.get('/', (c) => {
             return b && b.payment_type === 'recurring' ? 'recurring' : 'onetime';
         }
 
+        // 결제 완료 여부 — 1 또는 true 면 결제 완료로 간주
+        function isBudgetPaid(b) {
+            if (!b) return false;
+            return b.is_paid === 1 || b.is_paid === true;
+        }
+
         async function loadBudgets() {
             const year = parseInt(document.getElementById('budget-year').value);
             const month = parseInt(document.getElementById('budget-month').value);
@@ -4030,18 +4065,19 @@ app.get('/', (c) => {
         }
         window.loadBudgets = loadBudgets;
 
-        // 누적 Claude / Gemini 충전·사용·잔액 표시
+        // 누적 Claude / GPT 충전·사용·잔액 표시
         function renderAiBalance(data) {
             const safeNum = (x) => Number(x) || 0;
             const c = (data && data.claude) || { topup: 0, usage: 0, balance: 0 };
-            const g = (data && data.gemini) || { topup: 0, usage: 0, balance: 0 };
+            // 구버전 'gemini' 응답도 GPT 로 취급 (점진적 마이그레이션 호환)
+            const g = (data && (data.gpt || data.gemini)) || { topup: 0, usage: 0, balance: 0 };
 
             const claudeTopupEl = document.getElementById('ai-balance-claude-topup');
             const claudeUsageEl = document.getElementById('ai-balance-claude-usage');
             const claudeRemainEl = document.getElementById('ai-balance-claude-remain');
-            const geminiTopupEl = document.getElementById('ai-balance-gemini-topup');
-            const geminiUsageEl = document.getElementById('ai-balance-gemini-usage');
-            const geminiRemainEl = document.getElementById('ai-balance-gemini-remain');
+            const gptTopupEl = document.getElementById('ai-balance-gpt-topup');
+            const gptUsageEl = document.getElementById('ai-balance-gpt-usage');
+            const gptRemainEl = document.getElementById('ai-balance-gpt-remain');
 
             if (claudeTopupEl) claudeTopupEl.textContent = formatMoney(safeNum(c.topup));
             if (claudeUsageEl) claudeUsageEl.textContent = formatMoney(safeNum(c.usage));
@@ -4050,51 +4086,59 @@ app.get('/', (c) => {
                 claudeRemainEl.textContent = formatMoney(bal);
                 claudeRemainEl.className = 'tabular-nums font-bold ' + (bal < 0 ? 'text-rose-600' : 'text-emerald-600');
             }
-            if (geminiTopupEl) geminiTopupEl.textContent = formatMoney(safeNum(g.topup));
-            if (geminiUsageEl) geminiUsageEl.textContent = formatMoney(safeNum(g.usage));
-            if (geminiRemainEl) {
+            if (gptTopupEl) gptTopupEl.textContent = formatMoney(safeNum(g.topup));
+            if (gptUsageEl) gptUsageEl.textContent = formatMoney(safeNum(g.usage));
+            if (gptRemainEl) {
                 const bal = safeNum(g.balance);
-                geminiRemainEl.textContent = formatMoney(bal);
-                geminiRemainEl.className = 'tabular-nums font-bold ' + (bal < 0 ? 'text-rose-600' : 'text-emerald-600');
+                gptRemainEl.textContent = formatMoney(bal);
+                gptRemainEl.className = 'tabular-nums font-bold ' + (bal < 0 ? 'text-rose-600' : 'text-emerald-600');
             }
         }
 
         // AI 사용 현황 — 예산(충전)과 별개, 일자별 실사용량만 기록
-        // __aiUsageByDate: { 'YYYY-MM-DD': { claude: { total, ids }, gemini: { total, ids } } }
+        // __aiUsageByDate: { 'YYYY-MM-DD': { claude: { total, ids }, gpt: { total, ids } } }
         let __aiUsageByDate = {};
         let __aiUsageYear = 0, __aiUsageMonth = 0;
+
+        // 구버전 'gemini' 데이터를 GPT 로 취급해 단일 키로 통일한다.
+        function normalizeUsageProvider(p) {
+            const s = (p || '').toLowerCase();
+            if (s === 'claude') return 'claude';
+            if (s === 'gpt' || s === 'gemini') return 'gpt';
+            return '';
+        }
 
         function renderAiUsage(items, year, month) {
             const listEl = document.getElementById('budget-ai-usage-list');
             const emptyEl = document.getElementById('budget-ai-usage-empty');
             const claudeTotEl = document.getElementById('budget-ai-claude-total');
-            const geminiTotEl = document.getElementById('budget-ai-gemini-total');
+            const gptTotEl = document.getElementById('budget-ai-gpt-total');
             if (!listEl) return;
 
             __aiUsageYear = year;
             __aiUsageMonth = month;
 
             const byDate = {};
-            let claudeTotal = 0, geminiTotal = 0;
+            let claudeTotal = 0, gptTotal = 0;
             for (const u of (items || [])) {
-                const prov = (u.provider || '').toLowerCase();
-                if (prov !== 'claude' && prov !== 'gemini') continue;
+                const prov = normalizeUsageProvider(u.provider);
+                if (!prov) continue;
                 const amount = Number(u.amount || 0);
                 const dateKey = u.usage_date;
                 if (!dateKey) continue;
                 if (!byDate[dateKey]) byDate[dateKey] = {
                     claude: { total: 0, ids: [] },
-                    gemini: { total: 0, ids: [] }
+                    gpt: { total: 0, ids: [] }
                 };
                 byDate[dateKey][prov].total += amount;
                 byDate[dateKey][prov].ids.push(u.id);
                 if (prov === 'claude') claudeTotal += amount;
-                else geminiTotal += amount;
+                else gptTotal += amount;
             }
             __aiUsageByDate = byDate;
 
             claudeTotEl.textContent = formatMoney(claudeTotal);
-            geminiTotEl.textContent = formatMoney(geminiTotal);
+            gptTotEl.textContent = formatMoney(gptTotal);
 
             // 신규 입력 행 기본 날짜 = 현재 선택된 월의 오늘 (없으면 해당 월 1일)
             const addDateEl = document.getElementById('ai-add-date');
@@ -4122,10 +4166,10 @@ app.get('/', (c) => {
             let html = '';
             for (const d of sortedDates) {
                 const v = byDate[d];
-                const sum = (v.claude.total || 0) + (v.gemini.total || 0);
+                const sum = (v.claude.total || 0) + (v.gpt.total || 0);
                 const dateLabel = d.slice(5).replace('-', '/');
                 const claudeVal = v.claude.total > 0 ? v.claude.total : '';
-                const geminiVal = v.gemini.total > 0 ? v.gemini.total : '';
+                const gptVal = v.gpt.total > 0 ? v.gpt.total : '';
                 html += \`
                     <div class="grid grid-cols-12 gap-2 px-3 py-1.5 items-center hover:bg-indigo-50/40" data-ai-row="\${d}">
                         <div class="col-span-3 text-slate-700">\${dateLabel}</div>
@@ -4136,8 +4180,8 @@ app.get('/', (c) => {
                                 placeholder="—">
                         </div>
                         <div class="col-span-3">
-                            <input type="number" min="0" step="0.01" value="\${geminiVal}"
-                                data-ai-prov="gemini" data-ai-date="\${d}"
+                            <input type="number" min="0" step="0.01" value="\${gptVal}"
+                                data-ai-prov="gpt" data-ai-date="\${d}"
                                 class="w-full border border-transparent hover:border-sky-200 focus:border-sky-400 rounded px-2 py-0.5 text-right text-sky-700 font-semibold focus:outline-none bg-transparent tabular-nums"
                                 placeholder="—">
                         </div>
@@ -4156,8 +4200,8 @@ app.get('/', (c) => {
                 <div class="grid grid-cols-12 gap-2 px-3 py-1.5 items-center bg-indigo-50/70 font-bold">
                     <div class="col-span-3 text-slate-700">합계</div>
                     <div class="col-span-3 text-right text-orange-700">\${formatMoney(claudeTotal)}</div>
-                    <div class="col-span-3 text-right text-sky-700">\${formatMoney(geminiTotal)}</div>
-                    <div class="col-span-2 text-right text-slate-800">\${formatMoney(claudeTotal + geminiTotal)}</div>
+                    <div class="col-span-3 text-right text-sky-700">\${formatMoney(gptTotal)}</div>
+                    <div class="col-span-2 text-right text-slate-800">\${formatMoney(claudeTotal + gptTotal)}</div>
                     <div class="col-span-1"></div>
                 </div>
             \`;
@@ -4166,7 +4210,7 @@ app.get('/', (c) => {
 
         // 특정 (날짜, 제공자) 의 사용량 갱신 — 기존 N건은 합쳐서 1건으로 재저장, 0이면 삭제
         async function upsertAiUsageCell(date, provider, amount) {
-            if (!date || (provider !== 'claude' && provider !== 'gemini')) return;
+            if (!date || (provider !== 'claude' && provider !== 'gpt')) return;
             const amt = parseMoneyInput(amount);
             const bucket = __aiUsageByDate[date];
             const existingIds = bucket && bucket[provider] ? [...bucket[provider].ids] : [];
@@ -4197,11 +4241,11 @@ app.get('/', (c) => {
             }
         }
 
-        // 특정 날짜 행 전체 삭제 (Claude + Gemini 모두)
+        // 특정 날짜 행 전체 삭제 (Claude + GPT 모두)
         async function deleteAiUsageRow(date) {
             const bucket = __aiUsageByDate[date];
             if (!bucket) return;
-            const allIds = [...(bucket.claude.ids || []), ...(bucket.gemini.ids || [])];
+            const allIds = [...(bucket.claude.ids || []), ...(bucket.gpt.ids || [])];
             if (allIds.length === 0) return;
             const label = date.slice(5).replace('-', '/');
             if (!confirm(\`\${label} 의 AI 사용 내역을 모두 삭제하시겠습니까?\`)) return;
@@ -4216,13 +4260,13 @@ app.get('/', (c) => {
             }
         }
 
-        // 신규 AI 사용 입력 — 날짜 + Claude/Gemini 금액
+        // 신규 AI 사용 입력 — 날짜 + Claude/GPT 금액
         async function addAiUsageEntry() {
             const date = document.getElementById('ai-add-date').value;
             const claude = parseMoneyInput(document.getElementById('ai-add-claude').value);
-            const gemini = parseMoneyInput(document.getElementById('ai-add-gemini').value);
+            const gpt = parseMoneyInput(document.getElementById('ai-add-gpt').value);
             if (!date) { alert('날짜를 선택해주세요'); return; }
-            if (claude <= 0 && gemini <= 0) { alert('Claude 또는 Gemini 사용 금액을 입력해주세요'); return; }
+            if (claude <= 0 && gpt <= 0) { alert('Claude 또는 GPT 사용 금액을 입력해주세요'); return; }
 
             const [y, m] = date.split('-');
             const year = parseInt(y);
@@ -4232,11 +4276,11 @@ app.get('/', (c) => {
                 // 먼저 이번 달 기록을 다시 가져와 bucket 을 최신으로 만든 뒤 업서트
                 const latest = await axios.get(\`/api/ai-usage/\${year}/\${month}\`);
                 const items = latest.data || [];
-                const bucket = { claude: { total: 0, ids: [] }, gemini: { total: 0, ids: [] } };
+                const bucket = { claude: { total: 0, ids: [] }, gpt: { total: 0, ids: [] } };
                 for (const u of items) {
                     if (u.usage_date !== date) continue;
-                    const p = (u.provider || '').toLowerCase();
-                    if (p !== 'claude' && p !== 'gemini') continue;
+                    const p = normalizeUsageProvider(u.provider);
+                    if (!p) continue;
                     bucket[p].total += Number(u.amount || 0);
                     bucket[p].ids.push(u.id);
                 }
@@ -4245,12 +4289,12 @@ app.get('/', (c) => {
                 if (claude > 0) {
                     await upsertAiUsageCell(date, 'claude', bucket.claude.total + claude);
                 }
-                if (gemini > 0) {
-                    await upsertAiUsageCell(date, 'gemini', bucket.gemini.total + gemini);
+                if (gpt > 0) {
+                    await upsertAiUsageCell(date, 'gpt', bucket.gpt.total + gpt);
                 }
 
                 document.getElementById('ai-add-claude').value = '';
-                document.getElementById('ai-add-gemini').value = '';
+                document.getElementById('ai-add-gpt').value = '';
 
                 // 입력한 날짜의 월로 탭 이동 (현재 보고 있는 달과 다를 수 있음)
                 document.getElementById('budget-year').value = String(year);
@@ -4268,7 +4312,7 @@ app.get('/', (c) => {
             if (!panel || !addBtn) { setTimeout(bindAiUsagePanel, 100); return; }
 
             addBtn.addEventListener('click', addAiUsageEntry);
-            ['ai-add-date', 'ai-add-claude', 'ai-add-gemini'].forEach(id => {
+            ['ai-add-date', 'ai-add-claude', 'ai-add-gpt'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.addEventListener('keydown', (e) => {
                     if (e.key === 'Enter') { e.preventDefault(); addAiUsageEntry(); }
@@ -4312,10 +4356,14 @@ app.get('/', (c) => {
             const prevExpense = prev.reduce((acc, b) => acc + (b.amount || 0), 0);
             const recurring = cur.filter(b => budgetPaymentType(b) === 'recurring').reduce((acc, b) => acc + (b.amount || 0), 0);
             const onetime = cur.filter(b => budgetPaymentType(b) === 'onetime').reduce((acc, b) => acc + (b.amount || 0), 0);
+            const unpaidItems = cur.filter(b => !isBudgetPaid(b));
+            const unpaid = unpaidItems.reduce((acc, b) => acc + (b.amount || 0), 0);
 
             document.getElementById('budget-recurring').textContent = formatMoney(recurring);
             document.getElementById('budget-onetime').textContent = formatMoney(onetime);
             document.getElementById('budget-expense').textContent = formatMoney(expense);
+            document.getElementById('budget-unpaid').textContent = formatMoney(unpaid);
+            document.getElementById('budget-unpaid-count').textContent = String(unpaidItems.length);
 
             const compareEl = document.getElementById('budget-compare');
             const compareSub = document.getElementById('budget-compare-sub');
@@ -4343,15 +4391,20 @@ app.get('/', (c) => {
             // 필터 적용
             const filtered = (items || []).filter(b => {
                 if (__budgetFilter === 'all') return true;
+                if (__budgetFilter === 'unpaid') return !isBudgetPaid(b);
                 return budgetPaymentType(b) === __budgetFilter;
             });
 
             if (filtered.length === 0) {
                 list.innerHTML = '';
                 empty.classList.remove('hidden');
-                empty.textContent = __budgetFilter === 'all'
-                    ? '등록된 예산 항목이 없습니다. 상단 "항목 추가"로 시작해보세요.'
-                    : (__budgetFilter === 'recurring' ? '등록된 정기결제가 없습니다.' : '등록된 수시결제가 없습니다.');
+                const emptyMsg = {
+                    all: '등록된 예산 항목이 없습니다. 상단 "항목 추가"로 시작해보세요.',
+                    recurring: '등록된 정기결제가 없습니다.',
+                    onetime: '등록된 수시결제가 없습니다.',
+                    unpaid: '결제가 필요한 항목이 없습니다. 모두 결제 완료 상태입니다.'
+                };
+                empty.textContent = emptyMsg[__budgetFilter] || emptyMsg.all;
                 return;
             }
             empty.classList.add('hidden');
@@ -4380,16 +4433,22 @@ app.get('/', (c) => {
                 const ap = (b.ai_provider || '').toLowerCase();
                 const aiBadge = ap === 'claude'
                     ? '<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5 ml-1" title="Claude 충전"><i class="fas fa-robot"></i>Claude</span>'
-                    : (ap === 'gemini'
-                        ? '<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5 ml-1" title="Gemini 충전"><i class="fas fa-gem"></i>Gemini</span>'
+                    : ((ap === 'gpt' || ap === 'gemini')
+                        ? '<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5 ml-1" title="GPT 충전"><i class="fas fa-bolt"></i>GPT</span>'
                         : '');
+                const paid = isBudgetPaid(b);
+                const paidBadge = paid
+                    ? \`<button data-action="toggle-paid" data-id="\${b.id}" data-paid="1" title="클릭하여 '결제 필요'로 되돌리기" class="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 bg-green-50 border border-green-200 rounded px-2 py-0.5 hover:bg-green-100"><i class="fas fa-check-circle"></i>결제완료</button>\`
+                    : \`<button data-action="toggle-paid" data-id="\${b.id}" data-paid="0" title="클릭하여 '결제 완료'로 표시" class="inline-flex items-center gap-1 text-[11px] font-semibold text-red-700 bg-red-50 border border-red-200 rounded px-2 py-0.5 hover:bg-red-100"><i class="fas fa-hourglass-half"></i>결제필요</button>\`;
+                const rowClass = paid ? 'opacity-70' : '';
+                const amountClass = paid ? 'text-slate-500 line-through' : 'text-rose-700';
                 html += \`
-                    <div class="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm hover:bg-slate-50">
+                    <div class="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm hover:bg-slate-50 \${rowClass}">
                         <div class="col-span-2 text-slate-700 tabular-nums">\${dateStr}</div>
-                        <div class="col-span-2">\${badge}\${carryBadge}</div>
+                        <div class="col-span-2 flex flex-wrap gap-1 items-center">\${badge}\${paidBadge}\${carryBadge}</div>
                         <div class="col-span-2 text-slate-700 truncate" title="\${esc(b.category)}">\${esc(b.category) || '—'}\${aiBadge}</div>
                         <div class="col-span-3 text-slate-700 truncate" title="\${esc(b.description)}">\${esc(b.description) || '—'}</div>
-                        <div class="col-span-2 text-right font-bold tabular-nums text-rose-700">-\${formatMoney(b.amount)}</div>
+                        <div class="col-span-2 text-right font-bold tabular-nums \${amountClass}">-\${formatMoney(b.amount)}</div>
                         <div class="col-span-1 flex justify-end gap-1">
                             <button data-action="edit" data-id="\${b.id}" title="수정" class="w-7 h-7 flex items-center justify-center rounded-md text-indigo-600 hover:bg-indigo-100">
                                 <i class="fas fa-pen text-xs"></i>
@@ -4410,10 +4469,40 @@ app.get('/', (c) => {
                     const id = parseInt(btn.dataset.id);
                     if (btn.dataset.action === 'edit') openEditBudgetModal(id);
                     else if (btn.dataset.action === 'delete') deleteBudget(id);
+                    else if (btn.dataset.action === 'toggle-paid') toggleBudgetPaid(id, btn.dataset.paid !== '1');
                 });
                 list.__budgetBound = true;
             }
         }
+
+        // 결제 상태 토글 — 이월(carry-over) 행의 경우에도 원본 id 를 직접 업데이트한다.
+        async function toggleBudgetPaid(id, nextPaid) {
+            try {
+                await axios.put(\`/api/budgets/\${id}\`, { is_paid: nextPaid ? 1 : 0 });
+                // 캐시 즉시 반영 (깜빡임 방지)
+                const item = __budgetCache.find(x => x.id === id);
+                if (item) item.is_paid = nextPaid ? 1 : 0;
+                renderBudgetSummary(__budgetCache, []);
+                renderBudgetList(__budgetCache);
+                // 지난달 대비 계산은 loadBudgets 에서 prev 를 다시 가져와야 정확 — 비동기로 갱신
+                loadBudgets();
+            } catch (error) {
+                alert('결제 상태 변경 실패: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        // 결제 필요 요약 카드 클릭 → 결제 필요 탭으로 이동
+        function bindUnpaidCard() {
+            const card = document.getElementById('budget-unpaid-card');
+            if (!card) { setTimeout(bindUnpaidCard, 100); return; }
+            if (card.__bound) return;
+            card.__bound = true;
+            card.addEventListener('click', () => {
+                const tab = document.querySelector('[data-budget-filter="unpaid"]');
+                if (tab) tab.click();
+            });
+        }
+        bindUnpaidCard();
 
         // 결제 유형 필터 탭 바인딩
         function bindBudgetFilterTabs() {
@@ -4426,7 +4515,9 @@ app.get('/', (c) => {
                     tabs.forEach(t => {
                         const f = t.dataset.budgetFilter;
                         const active = f === __budgetFilter;
-                        const color = f === 'recurring' ? 'blue' : (f === 'onetime' ? 'amber' : 'emerald');
+                        const color = f === 'recurring' ? 'blue'
+                            : (f === 'onetime' ? 'amber'
+                            : (f === 'unpaid' ? 'red' : 'emerald'));
                         if (active) {
                             t.className = \`budget-filter-tab px-4 py-2 text-sm font-semibold border-b-2 border-\${color}-500 text-\${color}-700\`;
                         } else {
@@ -4472,12 +4563,14 @@ app.get('/', (c) => {
         function setBudgetAiProviderButton(ap) {
             const container = document.getElementById('budget-ai-provider-input');
             if (!container) return;
-            const val = (ap === 'claude' || ap === 'gemini') ? ap : '';
+            // 'gemini' 는 레거시 값 — GPT 로 정규화
+            const norm = (ap === 'gemini' ? 'gpt' : ap);
+            const val = (norm === 'claude' || norm === 'gpt') ? norm : '';
             container.dataset.value = val;
             Array.from(container.querySelectorAll('button')).forEach(btn => {
                 const v = btn.dataset.ap || '';
                 const active = v === val;
-                const color = v === 'claude' ? 'orange' : (v === 'gemini' ? 'sky' : 'slate');
+                const color = v === 'claude' ? 'orange' : (v === 'gpt' ? 'sky' : 'slate');
                 if (active) {
                     btn.className = \`flex-1 py-2 rounded-lg border-2 text-xs font-semibold transition-colors bg-\${color}-500 border-\${color}-500 text-white\`;
                 } else {
@@ -4525,7 +4618,9 @@ app.get('/', (c) => {
             document.getElementById('budget-amount-input').value = '0';
             // 두 유형 모두 기본으로 다음달 자동 이월
             document.getElementById('budget-carry-over-input').checked = true;
-            // 현재 필터에 맞춰 기본 유형 설정 (전체일 땐 수시결제 기본)
+            // 새 항목은 기본 "결제 필요" (미결제) 상태
+            document.getElementById('budget-is-paid-input').checked = false;
+            // 현재 필터에 맞춰 기본 유형 설정 (전체/결제필요일 땐 수시결제 기본)
             setBudgetPaymentTypeButton(__budgetFilter === 'recurring' ? 'recurring' : 'onetime');
             // AI 제공자 기본값 — 미지정
             setBudgetAiProviderButton('');
@@ -4549,6 +4644,7 @@ app.get('/', (c) => {
             document.getElementById('budget-amount-input').value = String(b.amount || 0);
             document.getElementById('budget-date-input').value = b.budget_date || '';
             document.getElementById('budget-carry-over-input').checked = b.carry_over === 0 || b.carry_over === false ? false : true;
+            document.getElementById('budget-is-paid-input').checked = isBudgetPaid(b);
             setBudgetPaymentTypeButton(budgetPaymentType(b));
             setBudgetAiProviderButton((b.ai_provider || '').toLowerCase());
             document.getElementById('budget-modal').classList.remove('hidden');
@@ -4566,8 +4662,9 @@ app.get('/', (c) => {
             const budgetDate = document.getElementById('budget-date-input').value;
             const paymentType = document.getElementById('budget-payment-type-input').dataset.value || 'onetime';
             const carryOver = document.getElementById('budget-carry-over-input').checked ? 1 : 0;
+            const isPaid = document.getElementById('budget-is-paid-input').checked ? 1 : 0;
             const aiProviderRaw = document.getElementById('budget-ai-provider-input').dataset.value || '';
-            const aiProvider = (aiProviderRaw === 'claude' || aiProviderRaw === 'gemini') ? aiProviderRaw : null;
+            const aiProvider = (aiProviderRaw === 'claude' || aiProviderRaw === 'gpt') ? aiProviderRaw : null;
 
             if (!category && !description) {
                 alert('카테고리나 내용 중 하나는 입력해주세요');
@@ -4597,6 +4694,7 @@ app.get('/', (c) => {
                         budget_date: budgetDate || null,
                         payment_type: paymentType,
                         carry_over: carryOver,
+                        is_paid: isPaid,
                         ai_provider: aiProvider,
                         // carry_over 재활성화 시 stop 해제
                         stop_year: carryOver ? null : undefined,
@@ -4608,6 +4706,7 @@ app.get('/', (c) => {
                         budget_date: budgetDate || null,
                         payment_type: paymentType,
                         carry_over: carryOver,
+                        is_paid: isPaid,
                         ai_provider: aiProvider
                     });
                 }
