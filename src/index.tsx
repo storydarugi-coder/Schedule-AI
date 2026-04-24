@@ -1534,7 +1534,7 @@ app.get('/', (c) => {
                             </span>
                             <span class="inline-flex items-center gap-1 text-slate-700">
                                 <span class="w-2.5 h-2.5 rounded-full bg-red-500"></span>
-                                <span id="budget-unpaid-panel-count" class="font-bold tabular-nums">0</span>건
+                                승인 완료 <span id="budget-unpaid-approved-count" class="font-bold tabular-nums">0</span>건
                             </span>
                             <span class="inline-flex items-center gap-1 text-slate-700">
                                 합계 <span id="budget-unpaid-panel-sum" class="font-bold tabular-nums text-red-700">$0.00</span>
@@ -4192,12 +4192,13 @@ app.get('/', (c) => {
             const listEl = document.getElementById('budget-unpaid-list');
             const emptyEl = document.getElementById('budget-unpaid-empty');
             const sumEl = document.getElementById('budget-unpaid-panel-sum');
-            const cntEl = document.getElementById('budget-unpaid-panel-count');
+            const approvedCntEl = document.getElementById('budget-unpaid-approved-count');
             const pendingCntEl = document.getElementById('budget-unpaid-pending-count');
             if (!listEl) return;
 
             const unpaid = (items || []).filter(b => !isBudgetPaid(b));
             const pendingCount = unpaid.filter(b => !isBudgetApproved(b)).length;
+            const approvedCount = unpaid.length - pendingCount;
             const sorted = [...unpaid].sort((a, b) => {
                 const pa = isBudgetApproved(a) ? 1 : 0;
                 const pb = isBudgetApproved(b) ? 1 : 0;
@@ -4208,8 +4209,8 @@ app.get('/', (c) => {
             });
             const total = unpaid.reduce((acc, b) => acc + (b.amount || 0), 0);
             if (sumEl) sumEl.textContent = formatMoney(total);
-            if (cntEl) cntEl.textContent = String(unpaid.length);
             if (pendingCntEl) pendingCntEl.textContent = String(pendingCount);
+            if (approvedCntEl) approvedCntEl.textContent = String(approvedCount);
 
             // 입력 행 기본 날짜 = 현재 선택된 월의 오늘
             const addDateEl = document.getElementById('unpaid-add-date');
