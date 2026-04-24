@@ -1404,7 +1404,7 @@ app.get('/', (c) => {
                 </div>
 
                 <!-- 월별 요약 카드 -->
-                <div class="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
                     <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
                         <div class="text-xs text-blue-700 font-semibold mb-1"><i class="fas fa-sync-alt mr-1"></i>정기결제</div>
                         <div id="budget-recurring" class="text-xl font-bold text-blue-700 tabular-nums">$0</div>
@@ -1417,14 +1417,6 @@ app.get('/', (c) => {
                         <div class="text-xs text-rose-700 font-semibold mb-1"><i class="fas fa-coins mr-1"></i>이번 달 합계</div>
                         <div id="budget-expense" class="text-xl font-bold text-rose-700 tabular-nums">$0</div>
                     </div>
-                    <button type="button" id="budget-pending-card"
-                        class="text-left bg-yellow-50 border border-yellow-200 rounded-lg p-4 hover:bg-yellow-100 hover:border-yellow-300 transition-colors"
-                        title="승인 대기 내역 패널로 이동">
-                        <div class="text-xs text-yellow-800 font-semibold mb-1"><i class="fas fa-user-check mr-1"></i>승인 대기
-                            <span id="budget-pending-count" class="ml-1 text-[10px] font-bold text-white bg-yellow-500 rounded-full px-1.5 py-0.5">0</span>
-                        </div>
-                        <div id="budget-pending" class="text-xl font-bold text-yellow-700 tabular-nums">$0</div>
-                    </button>
                     <button type="button" id="budget-unpaid-card"
                         class="text-left bg-red-50 border border-red-200 rounded-lg p-4 hover:bg-red-100 hover:border-red-300 transition-colors"
                         title="결제 필요 내역 패널로 이동">
@@ -1526,68 +1518,20 @@ app.get('/', (c) => {
                     </div>
                 </div>
 
-                <!-- 승인 대기 내역 (approval_status = 'pending' 인 예산 항목) -->
-                <!-- 직원이 등록하면 여기에 먼저 쌓이고, 대표님이 "승인"하면 결제 필요 패널로 이동한다. -->
-                <div id="budget-pending-panel" class="mb-4 bg-gradient-to-br from-yellow-50 to-amber-50 border border-yellow-200 rounded-xl p-4">
-                    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-                        <h3 class="text-sm font-bold text-slate-800">
-                            <i class="fas fa-user-check mr-1.5 text-yellow-600"></i>승인 대기 내역
-                            <span class="text-[11px] text-slate-500 font-medium ml-1">(대표님 승인 필요 — 승인 후 "결제 필요" 목록으로 이동)</span>
-                        </h3>
-                        <div class="flex items-center gap-3 text-xs">
-                            <span class="inline-flex items-center gap-1 text-slate-700">
-                                <span class="w-2.5 h-2.5 rounded-full bg-yellow-500"></span>
-                                <span id="budget-pending-panel-count" class="font-bold tabular-nums">0</span>건
-                            </span>
-                            <span class="inline-flex items-center gap-1 text-slate-700">
-                                합계 <span id="budget-pending-panel-sum" class="font-bold tabular-nums text-yellow-700">$0.00</span>
-                            </span>
-                        </div>
-                    </div>
-
-                    <div class="border border-yellow-100 rounded-lg overflow-hidden bg-white">
-                        <div class="grid grid-cols-12 gap-2 bg-yellow-50/60 px-3 py-1.5 text-[11px] font-semibold text-slate-600">
-                            <div class="col-span-2">결제일</div>
-                            <div class="col-span-2">카테고리</div>
-                            <div class="col-span-3">내용</div>
-                            <div class="col-span-2 text-right">금액</div>
-                            <div class="col-span-3 text-right">관리</div>
-                        </div>
-                        <!-- 신규 "결제 요청" 입력 행 (직원이 등록) -->
-                        <div class="grid grid-cols-12 gap-2 px-3 py-2 items-center bg-amber-50/40 border-b border-amber-100">
-                            <div class="col-span-2">
-                                <input type="date" id="pending-add-date" class="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:border-yellow-400 focus:outline-none">
-                            </div>
-                            <div class="col-span-2">
-                                <input type="text" id="pending-add-category" placeholder="카테고리" class="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:border-yellow-400 focus:outline-none">
-                            </div>
-                            <div class="col-span-3">
-                                <input type="text" id="pending-add-description" placeholder="상세 내용" class="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:border-yellow-400 focus:outline-none">
-                            </div>
-                            <div class="col-span-2">
-                                <input type="number" id="pending-add-amount" min="0" step="0.01" placeholder="$" class="w-full border border-slate-200 rounded px-2 py-1 text-xs text-right focus:border-yellow-400 focus:outline-none tabular-nums">
-                            </div>
-                            <div class="col-span-3 flex justify-end">
-                                <button id="pending-add-btn" class="text-[11px] font-semibold bg-yellow-500 hover:bg-yellow-600 text-white rounded px-2 py-1 shadow-sm">
-                                    <i class="fas fa-plus mr-0.5"></i>결제 요청
-                                </button>
-                            </div>
-                        </div>
-                        <div id="budget-pending-list" class="divide-y divide-yellow-50 text-xs"></div>
-                        <div id="budget-pending-empty" class="text-center text-slate-400 text-xs py-4 hidden">
-                            승인 대기 중인 항목이 없습니다. 위 입력창에서 결제 요청을 등록해주세요.
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 결제 필요 내역 (approval_status = 'approved' AND is_paid = 0) -->
+                <!-- 결제 필요 내역 (is_paid = 0 인 항목)
+                     · 대표님 승인 대기: "승인" 버튼 — 눌러야 결제 허락이 떨어진 것
+                     · 승인 완료 & 미결제: "완료" 버튼 — 결제 후 체크 -->
                 <div id="budget-unpaid-panel" class="mb-4 bg-gradient-to-br from-red-50 to-orange-50 border border-red-200 rounded-xl p-4">
                     <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
                         <h3 class="text-sm font-bold text-slate-800">
                             <i class="fas fa-hourglass-half mr-1.5 text-red-600"></i>결제 필요 내역
-                            <span class="text-[11px] text-slate-500 font-medium ml-1">(승인 완료 · 결제 후 "완료" 버튼)</span>
+                            <span class="text-[11px] text-slate-500 font-medium ml-1">(대표님 "승인" → 결제 후 "완료")</span>
                         </h3>
                         <div class="flex items-center gap-3 text-xs">
+                            <span class="inline-flex items-center gap-1 text-slate-700">
+                                <span class="w-2.5 h-2.5 rounded-full bg-yellow-400"></span>
+                                승인 대기 <span id="budget-unpaid-pending-count" class="font-bold tabular-nums">0</span>건
+                            </span>
                             <span class="inline-flex items-center gap-1 text-slate-700">
                                 <span class="w-2.5 h-2.5 rounded-full bg-red-500"></span>
                                 <span id="budget-unpaid-panel-count" class="font-bold tabular-nums">0</span>건
@@ -1606,9 +1550,29 @@ app.get('/', (c) => {
                             <div class="col-span-2 text-right">금액</div>
                             <div class="col-span-2 text-right">관리</div>
                         </div>
+                        <!-- 신규 "결제 필요" 입력 행 (직원이 등록 → 승인 대기 상태로 들어감) -->
+                        <div class="grid grid-cols-12 gap-2 px-3 py-2 items-center bg-amber-50/40 border-b border-amber-100">
+                            <div class="col-span-2">
+                                <input type="date" id="unpaid-add-date" class="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:border-red-400 focus:outline-none">
+                            </div>
+                            <div class="col-span-2">
+                                <input type="text" id="unpaid-add-category" placeholder="카테고리" class="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:border-red-400 focus:outline-none">
+                            </div>
+                            <div class="col-span-4">
+                                <input type="text" id="unpaid-add-description" placeholder="상세 내용" class="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:border-red-400 focus:outline-none">
+                            </div>
+                            <div class="col-span-2">
+                                <input type="number" id="unpaid-add-amount" min="0" step="0.01" placeholder="$" class="w-full border border-slate-200 rounded px-2 py-1 text-xs text-right focus:border-red-400 focus:outline-none tabular-nums">
+                            </div>
+                            <div class="col-span-2 flex justify-end">
+                                <button id="unpaid-add-btn" class="text-[11px] font-semibold bg-red-500 hover:bg-red-600 text-white rounded px-2 py-1 shadow-sm">
+                                    <i class="fas fa-plus mr-0.5"></i>추가
+                                </button>
+                            </div>
+                        </div>
                         <div id="budget-unpaid-list" class="divide-y divide-red-50 text-xs"></div>
                         <div id="budget-unpaid-empty" class="text-center text-slate-400 text-xs py-4 hidden">
-                            결제가 필요한 항목이 없습니다. 위 "승인 대기 내역" 패널에서 결제 요청을 등록하고 대표님 승인을 받으면 이 목록에 표시됩니다.
+                            결제가 필요한 항목이 없습니다. 위 입력창에서 새 결제 요청을 등록하거나, 기존 예산 항목을 "결제 필요"로 등록하면 이 목록에 표시됩니다.
                         </div>
                     </div>
                 </div>
@@ -4181,7 +4145,6 @@ app.get('/', (c) => {
                 renderBudgetSummary(__budgetCache, prev);
                 renderAiUsage(aiUsage, year, month);
                 renderAiBalance(balRes.data);
-                renderPendingPanel(__budgetCache, year, month);
                 renderUnpaidPanel(__budgetCache, year, month);
                 renderBudgetList(__budgetCache);
             } catch (error) {
@@ -4220,32 +4183,36 @@ app.get('/', (c) => {
             }
         }
 
-        function escBudget(s) {
-            return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        }
-
-        // 승인 대기 내역 패널 — approval_status = 'pending' 인 예산 항목만 표시한다.
-        // 직원이 입력 행으로 새 결제 요청을 등록하면 여기로 들어오고, 대표님이 "승인"을 누르면
-        // 결제 필요 내역 패널로 이동한다.
-        function renderPendingPanel(items, year, month) {
-            const listEl = document.getElementById('budget-pending-list');
-            const emptyEl = document.getElementById('budget-pending-empty');
-            const sumEl = document.getElementById('budget-pending-panel-sum');
-            const cntEl = document.getElementById('budget-pending-panel-count');
+        // 결제 필요 내역 패널 — is_paid = 0 인 항목 전부를 표시한다.
+        // 한 패널 안에서 두 단계를 관리:
+        //   1) 대표님 승인 대기 (approval_status !== 'approved') — 노란 배경 · "승인" 버튼
+        //   2) 승인 완료 & 미결제 — 기본 배경 · "완료" 버튼
+        // 승인 대기 항목이 먼저 오도록 정렬, 그 안에서는 결제일 오름차순.
+        function renderUnpaidPanel(items, year, month) {
+            const listEl = document.getElementById('budget-unpaid-list');
+            const emptyEl = document.getElementById('budget-unpaid-empty');
+            const sumEl = document.getElementById('budget-unpaid-panel-sum');
+            const cntEl = document.getElementById('budget-unpaid-panel-count');
+            const pendingCntEl = document.getElementById('budget-unpaid-pending-count');
             if (!listEl) return;
 
-            const pending = (items || []).filter(b => !isBudgetApproved(b));
-            const sorted = [...pending].sort((a, b) => {
+            const unpaid = (items || []).filter(b => !isBudgetPaid(b));
+            const pendingCount = unpaid.filter(b => !isBudgetApproved(b)).length;
+            const sorted = [...unpaid].sort((a, b) => {
+                const pa = isBudgetApproved(a) ? 1 : 0;
+                const pb = isBudgetApproved(b) ? 1 : 0;
+                if (pa !== pb) return pa - pb; // 승인 대기 먼저
                 const da = a.budget_date || '9999-12-31';
                 const db = b.budget_date || '9999-12-31';
                 return da.localeCompare(db);
             });
-            const total = pending.reduce((acc, b) => acc + (b.amount || 0), 0);
+            const total = unpaid.reduce((acc, b) => acc + (b.amount || 0), 0);
             if (sumEl) sumEl.textContent = formatMoney(total);
-            if (cntEl) cntEl.textContent = String(pending.length);
+            if (cntEl) cntEl.textContent = String(unpaid.length);
+            if (pendingCntEl) pendingCntEl.textContent = String(pendingCount);
 
             // 입력 행 기본 날짜 = 현재 선택된 월의 오늘
-            const addDateEl = document.getElementById('pending-add-date');
+            const addDateEl = document.getElementById('unpaid-add-date');
             const ymStr = \`\${year}-\${String(month).padStart(2, '0')}\`;
             if (addDateEl) {
                 const cur = addDateEl.value || '';
@@ -4266,63 +4233,9 @@ app.get('/', (c) => {
             }
             if (emptyEl) emptyEl.classList.add('hidden');
 
-            let html = '';
-            for (const b of sorted) {
-                const dateStr = b.budget_date ? b.budget_date.slice(5).replace('-', '/') : '—';
-                const pt = budgetPaymentType(b);
-                const typeBadge = pt === 'recurring'
-                    ? '<span class="inline-flex items-center gap-1 text-[10px] font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded px-1 py-0.5 ml-1" title="정기결제"><i class="fas fa-sync-alt"></i></span>'
-                    : '';
-                html += \`
-                    <div class="grid grid-cols-12 gap-2 px-3 py-2 items-center hover:bg-yellow-50/40">
-                        <div class="col-span-2 text-slate-700 tabular-nums">\${dateStr}</div>
-                        <div class="col-span-2 text-slate-700 truncate" title="\${escBudget(b.category)}">\${escBudget(b.category) || '—'}\${typeBadge}</div>
-                        <div class="col-span-3 text-slate-700 truncate" title="\${escBudget(b.description)}">\${escBudget(b.description) || '—'}</div>
-                        <div class="col-span-2 text-right font-bold tabular-nums text-yellow-700">\${formatMoney(b.amount)}</div>
-                        <div class="col-span-3 flex justify-end gap-1">
-                            <button data-pending-action="approve" data-id="\${b.id}" title="대표님 승인 — 결제 필요 목록으로 이동"
-                                class="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-emerald-500 hover:bg-emerald-600 rounded px-2 py-1 shadow-sm">
-                                <i class="fas fa-user-check"></i>승인
-                            </button>
-                            <button data-pending-action="edit" data-id="\${b.id}" title="수정"
-                                class="w-7 h-7 flex items-center justify-center rounded-md text-indigo-600 hover:bg-indigo-100">
-                                <i class="fas fa-pen text-xs"></i>
-                            </button>
-                            <button data-pending-action="delete" data-id="\${b.id}" title="삭제"
-                                class="w-7 h-7 flex items-center justify-center rounded-md text-rose-600 hover:bg-rose-100">
-                                <i class="fas fa-trash text-xs"></i>
-                            </button>
-                        </div>
-                    </div>
-                \`;
+            function esc(s) {
+                return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             }
-            listEl.innerHTML = html;
-        }
-
-        // 결제 필요 내역 패널 — 승인 완료 & 미결제 항목만 표시한다.
-        function renderUnpaidPanel(items, year, month) {
-            const listEl = document.getElementById('budget-unpaid-list');
-            const emptyEl = document.getElementById('budget-unpaid-empty');
-            const sumEl = document.getElementById('budget-unpaid-panel-sum');
-            const cntEl = document.getElementById('budget-unpaid-panel-count');
-            if (!listEl) return;
-
-            const unpaid = (items || []).filter(b => isBudgetApproved(b) && !isBudgetPaid(b));
-            const sorted = [...unpaid].sort((a, b) => {
-                const da = a.budget_date || '9999-12-31';
-                const db = b.budget_date || '9999-12-31';
-                return da.localeCompare(db);
-            });
-            const total = unpaid.reduce((acc, b) => acc + (b.amount || 0), 0);
-            if (sumEl) sumEl.textContent = formatMoney(total);
-            if (cntEl) cntEl.textContent = String(unpaid.length);
-
-            if (sorted.length === 0) {
-                listEl.innerHTML = '';
-                if (emptyEl) emptyEl.classList.remove('hidden');
-                return;
-            }
-            if (emptyEl) emptyEl.classList.add('hidden');
 
             let html = '';
             for (const b of sorted) {
@@ -4331,17 +4244,29 @@ app.get('/', (c) => {
                 const typeBadge = pt === 'recurring'
                     ? '<span class="inline-flex items-center gap-1 text-[10px] font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded px-1 py-0.5 ml-1" title="정기결제"><i class="fas fa-sync-alt"></i></span>'
                     : '';
+                const approved = isBudgetApproved(b);
+                const rowBg = approved ? 'hover:bg-red-50/40' : 'bg-yellow-50/60 hover:bg-yellow-100/60';
+                const pendingBadge = approved
+                    ? ''
+                    : '<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-yellow-800 bg-yellow-100 border border-yellow-300 rounded px-1.5 py-0.5 ml-1" title="대표님 승인 대기 중"><i class="fas fa-user-clock"></i>승인 대기</span>';
+                const amountColor = approved ? 'text-red-700' : 'text-yellow-800';
+                const actionBtn = approved
+                    ? \`<button data-unpaid-action="pay" data-id="\${b.id}" title="결제 완료로 표시"
+                           class="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-green-500 hover:bg-green-600 rounded px-2 py-1 shadow-sm">
+                           <i class="fas fa-check"></i>완료
+                       </button>\`
+                    : \`<button data-unpaid-action="approve" data-id="\${b.id}" title="대표님 승인 — 결제 허가"
+                           class="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-emerald-500 hover:bg-emerald-600 rounded px-2 py-1 shadow-sm">
+                           <i class="fas fa-user-check"></i>승인
+                       </button>\`;
                 html += \`
-                    <div class="grid grid-cols-12 gap-2 px-3 py-2 items-center hover:bg-red-50/40">
+                    <div class="grid grid-cols-12 gap-2 px-3 py-2 items-center \${rowBg}">
                         <div class="col-span-2 text-slate-700 tabular-nums">\${dateStr}</div>
-                        <div class="col-span-2 text-slate-700 truncate" title="\${escBudget(b.category)}">\${escBudget(b.category) || '—'}\${typeBadge}</div>
-                        <div class="col-span-4 text-slate-700 truncate" title="\${escBudget(b.description)}">\${escBudget(b.description) || '—'}</div>
-                        <div class="col-span-2 text-right font-bold tabular-nums text-red-700">\${formatMoney(b.amount)}</div>
+                        <div class="col-span-2 text-slate-700 truncate" title="\${esc(b.category)}">\${esc(b.category) || '—'}\${typeBadge}</div>
+                        <div class="col-span-4 text-slate-700 truncate" title="\${esc(b.description)}">\${esc(b.description) || '—'}\${pendingBadge}</div>
+                        <div class="col-span-2 text-right font-bold tabular-nums \${amountColor}">\${formatMoney(b.amount)}</div>
                         <div class="col-span-2 flex justify-end gap-1">
-                            <button data-unpaid-action="pay" data-id="\${b.id}" title="결제 완료로 표시"
-                                class="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-green-500 hover:bg-green-600 rounded px-2 py-1 shadow-sm">
-                                <i class="fas fa-check"></i>완료
-                            </button>
+                            \${actionBtn}
                             <button data-unpaid-action="edit" data-id="\${b.id}" title="수정"
                                 class="w-7 h-7 flex items-center justify-center rounded-md text-indigo-600 hover:bg-indigo-100">
                                 <i class="fas fa-pen text-xs"></i>
@@ -4365,7 +4290,7 @@ app.get('/', (c) => {
             }
         }
 
-        // 승인 대기 항목 → 승인 처리 (결제 필요 목록으로 이동)
+        // 승인 대기 항목 → 대표님 승인 처리 (같은 패널에서 버튼이 "완료"로 바뀜)
         async function markBudgetApproved(id) {
             try {
                 await axios.put(\`/api/budgets/\${id}\`, { approval_status: 'approved' });
@@ -4377,12 +4302,12 @@ app.get('/', (c) => {
             }
         }
 
-        // 신규 결제 요청 등록 — 수시결제 · is_paid=0 · approval_status='pending' · 이월 off
-        async function addPendingEntry() {
-            const date = document.getElementById('pending-add-date').value;
-            const category = document.getElementById('pending-add-category').value.trim();
-            const description = document.getElementById('pending-add-description').value.trim();
-            const amount = parseMoneyInput(document.getElementById('pending-add-amount').value);
+        // 신규 결제 요청 등록 — 수시결제 · is_paid=0 · approval_status='pending' (승인 대기) · 이월 off
+        async function addUnpaidEntry() {
+            const date = document.getElementById('unpaid-add-date').value;
+            const category = document.getElementById('unpaid-add-category').value.trim();
+            const description = document.getElementById('unpaid-add-description').value.trim();
+            const amount = parseMoneyInput(document.getElementById('unpaid-add-amount').value);
             if (!date) { alert('결제일을 선택해주세요'); return; }
             if (!category && !description) { alert('카테고리 또는 내용 중 하나는 입력해주세요'); return; }
             if (amount <= 0) { alert('금액을 입력해주세요'); return; }
@@ -4401,9 +4326,9 @@ app.get('/', (c) => {
                     approval_status: 'pending',
                     ai_provider: null
                 });
-                document.getElementById('pending-add-category').value = '';
-                document.getElementById('pending-add-description').value = '';
-                document.getElementById('pending-add-amount').value = '';
+                document.getElementById('unpaid-add-category').value = '';
+                document.getElementById('unpaid-add-description').value = '';
+                document.getElementById('unpaid-add-amount').value = '';
                 document.getElementById('budget-year').value = String(year);
                 document.getElementById('budget-month').value = String(month);
                 await loadBudgets();
@@ -4412,45 +4337,29 @@ app.get('/', (c) => {
             }
         }
 
-        function bindPendingPanel() {
-            const panel = document.getElementById('budget-pending-panel');
-            const addBtn = document.getElementById('pending-add-btn');
-            if (!panel || !addBtn) { setTimeout(bindPendingPanel, 100); return; }
-            if (panel.__bound) return;
-            panel.__bound = true;
-
-            addBtn.addEventListener('click', addPendingEntry);
-            ['pending-add-date', 'pending-add-category', 'pending-add-description', 'pending-add-amount'].forEach(id => {
-                const el = document.getElementById(id);
-                if (el) el.addEventListener('keydown', (e) => {
-                    if (e.key === 'Enter') { e.preventDefault(); addPendingEntry(); }
-                });
-            });
-
-            panel.addEventListener('click', (e) => {
-                const btn = e.target.closest('button[data-pending-action]');
-                if (!btn) return;
-                const id = parseInt(btn.dataset.id);
-                const action = btn.dataset.pendingAction;
-                if (action === 'approve') markBudgetApproved(id);
-                else if (action === 'edit') openEditBudgetModal(id);
-                else if (action === 'delete') deleteBudget(id);
-            });
-        }
-        bindPendingPanel();
-
         function bindUnpaidPanel() {
             const panel = document.getElementById('budget-unpaid-panel');
-            if (!panel) { setTimeout(bindUnpaidPanel, 100); return; }
+            const addBtn = document.getElementById('unpaid-add-btn');
+            if (!panel || !addBtn) { setTimeout(bindUnpaidPanel, 100); return; }
             if (panel.__bound) return;
             panel.__bound = true;
+
+            addBtn.addEventListener('click', addUnpaidEntry);
+            ['unpaid-add-date', 'unpaid-add-category', 'unpaid-add-description', 'unpaid-add-amount'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); addUnpaidEntry(); }
+                });
+            });
 
             panel.addEventListener('click', (e) => {
                 const btn = e.target.closest('button[data-unpaid-action]');
                 if (!btn) return;
                 const id = parseInt(btn.dataset.id);
-                if (btn.dataset.unpaidAction === 'pay') markBudgetPaid(id);
-                else if (btn.dataset.unpaidAction === 'edit') openEditBudgetModal(id);
+                const action = btn.dataset.unpaidAction;
+                if (action === 'pay') markBudgetPaid(id);
+                else if (action === 'approve') markBudgetApproved(id);
+                else if (action === 'edit') openEditBudgetModal(id);
             });
         }
         bindUnpaidPanel();
@@ -4716,17 +4625,13 @@ app.get('/', (c) => {
             const prevExpense = prev.reduce((acc, b) => acc + (b.amount || 0), 0);
             const recurring = cur.filter(b => budgetPaymentType(b) === 'recurring').reduce((acc, b) => acc + (b.amount || 0), 0);
             const onetime = cur.filter(b => budgetPaymentType(b) === 'onetime').reduce((acc, b) => acc + (b.amount || 0), 0);
-            const pendingItems = cur.filter(b => !isBudgetApproved(b));
-            const pending = pendingItems.reduce((acc, b) => acc + (b.amount || 0), 0);
-            // 결제 필요 = 승인됐지만 아직 결제 안한 항목
-            const unpaidItems = cur.filter(b => isBudgetApproved(b) && !isBudgetPaid(b));
+            // 결제 필요 = 미결제 항목 전체 (승인 대기 + 승인 완료) — 한 패널에서 관리
+            const unpaidItems = cur.filter(b => !isBudgetPaid(b));
             const unpaid = unpaidItems.reduce((acc, b) => acc + (b.amount || 0), 0);
 
             document.getElementById('budget-recurring').textContent = formatMoney(recurring);
             document.getElementById('budget-onetime').textContent = formatMoney(onetime);
             document.getElementById('budget-expense').textContent = formatMoney(expense);
-            document.getElementById('budget-pending').textContent = formatMoney(pending);
-            document.getElementById('budget-pending-count').textContent = String(pendingItems.length);
             document.getElementById('budget-unpaid').textContent = formatMoney(unpaid);
             document.getElementById('budget-unpaid-count').textContent = String(unpaidItems.length);
 
@@ -4796,15 +4701,12 @@ app.get('/', (c) => {
                     : ((ap === 'gpt' || ap === 'gemini')
                         ? '<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5 ml-1" title="GPT 충전"><i class="fas fa-bolt"></i>GPT</span>'
                         : '');
-                const approvalBadge = isBudgetApproved(b)
-                    ? ''
-                    : '<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-yellow-800 bg-yellow-50 border border-yellow-300 rounded px-1.5 py-0.5 ml-1" title="대표님 승인 대기 중"><i class="fas fa-user-clock"></i>승인 대기</span>';
                 html += \`
                     <div class="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm hover:bg-slate-50">
                         <div class="col-span-2 text-slate-700 tabular-nums">\${dateStr}</div>
                         <div class="col-span-2">\${badge}\${carryBadge}</div>
                         <div class="col-span-2 text-slate-700 truncate" title="\${esc(b.category)}">\${esc(b.category) || '—'}\${aiBadge}</div>
-                        <div class="col-span-3 text-slate-700 truncate" title="\${esc(b.description)}">\${esc(b.description) || '—'}\${approvalBadge}</div>
+                        <div class="col-span-3 text-slate-700 truncate" title="\${esc(b.description)}">\${esc(b.description) || '—'}</div>
                         <div class="col-span-2 text-right font-bold tabular-nums text-rose-700">-\${formatMoney(b.amount)}</div>
                         <div class="col-span-1 flex justify-end gap-1">
                             <button data-action="edit" data-id="\${b.id}" title="수정" class="w-7 h-7 flex items-center justify-center rounded-md text-indigo-600 hover:bg-indigo-100">
@@ -4831,19 +4733,18 @@ app.get('/', (c) => {
             }
         }
 
-        // 요약 카드 클릭 → 해당 패널로 스크롤
-        function bindSummaryCard(cardId, panelId) {
-            const card = document.getElementById(cardId);
-            if (!card) { setTimeout(() => bindSummaryCard(cardId, panelId), 100); return; }
+        // 결제 필요 요약 카드 클릭 → 결제 필요 패널로 스크롤
+        function bindUnpaidCard() {
+            const card = document.getElementById('budget-unpaid-card');
+            if (!card) { setTimeout(bindUnpaidCard, 100); return; }
             if (card.__bound) return;
             card.__bound = true;
             card.addEventListener('click', () => {
-                const panel = document.getElementById(panelId);
+                const panel = document.getElementById('budget-unpaid-panel');
                 if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
             });
         }
-        bindSummaryCard('budget-pending-card', 'budget-pending-panel');
-        bindSummaryCard('budget-unpaid-card', 'budget-unpaid-panel');
+        bindUnpaidCard();
 
         // 결제 유형 필터 탭 바인딩
         function bindBudgetFilterTabs() {
