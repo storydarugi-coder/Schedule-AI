@@ -1419,8 +1419,8 @@ app.get('/', (c) => {
                     </div>
                     <button type="button" id="budget-unpaid-card"
                         class="text-left bg-red-50 border border-red-200 rounded-lg p-4 hover:bg-red-100 hover:border-red-300 transition-colors"
-                        title="결제 필요 내역 패널로 이동">
-                        <div class="text-xs text-red-700 font-semibold mb-1"><i class="fas fa-hourglass-half mr-1"></i>결제 필요
+                        title="결제 승인 전 패널로 이동">
+                        <div class="text-xs text-red-700 font-semibold mb-1"><i class="fas fa-hourglass-half mr-1"></i>결제 승인 전
                             <span id="budget-unpaid-count" class="ml-1 text-[10px] font-bold text-white bg-red-500 rounded-full px-1.5 py-0.5">0</span>
                         </div>
                         <div id="budget-unpaid" class="text-xl font-bold text-red-700 tabular-nums">$0</div>
@@ -1518,13 +1518,13 @@ app.get('/', (c) => {
                     </div>
                 </div>
 
-                <!-- 결제 필요 내역 (is_paid = 0 인 항목)
+                <!-- 결제 승인 전 (is_paid = 0 인 항목)
                      · 대표님 승인 대기: "승인" 버튼 — 눌러야 결제 허락이 떨어진 것
                      · 승인 완료 & 미결제: "완료" 버튼 — 결제 후 체크 -->
                 <div id="budget-unpaid-panel" class="mb-4 bg-gradient-to-br from-red-50 to-orange-50 border border-red-200 rounded-xl p-4">
                     <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
                         <h3 class="text-sm font-bold text-slate-800">
-                            <i class="fas fa-hourglass-half mr-1.5 text-red-600"></i>결제 필요 내역
+                            <i class="fas fa-hourglass-half mr-1.5 text-red-600"></i>결제 승인 전
                             <span class="text-[11px] text-slate-500 font-medium ml-1">(대표님 "승인" → 결제 후 "완료")</span>
                         </h3>
                         <div class="flex items-center gap-3 text-xs">
@@ -1550,7 +1550,7 @@ app.get('/', (c) => {
                             <div class="col-span-2 text-right">금액</div>
                             <div class="col-span-2 text-right">관리</div>
                         </div>
-                        <!-- 신규 "결제 필요" 입력 행 (직원이 등록 → 승인 대기 상태로 들어감) -->
+                        <!-- 신규 결제 요청 입력 행 (직원이 등록 → 승인 대기 상태로 들어감) -->
                         <div class="grid grid-cols-12 gap-2 px-3 py-2 items-center bg-amber-50/40 border-b border-amber-100">
                             <div class="col-span-2">
                                 <input type="date" id="unpaid-add-date" class="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:border-red-400 focus:outline-none">
@@ -1572,7 +1572,7 @@ app.get('/', (c) => {
                         </div>
                         <div id="budget-unpaid-list" class="divide-y divide-red-50 text-xs"></div>
                         <div id="budget-unpaid-empty" class="text-center text-slate-400 text-xs py-4 hidden">
-                            결제가 필요한 항목이 없습니다. 위 입력창에서 새 결제 요청을 등록하거나, 기존 예산 항목을 "결제 필요"로 등록하면 이 목록에 표시됩니다.
+                            승인 전·결제 전 항목이 없습니다. 위 입력창에서 새 결제 요청을 등록해주세요.
                         </div>
                     </div>
                 </div>
@@ -1665,7 +1665,7 @@ app.get('/', (c) => {
                             <input type="checkbox" id="budget-is-paid-input" class="w-4 h-4 accent-green-500">
                             <span>결제 완료</span>
                         </label>
-                        <div class="text-[11px] text-slate-500 mt-1 pl-6">체크하지 않으면 "결제 필요" 목록에 올라옵니다.</div>
+                        <div class="text-[11px] text-slate-500 mt-1 pl-6">체크하지 않으면 "결제 승인 전" 목록에 올라옵니다.</div>
                     </div>
                     <div class="flex justify-end gap-2">
                         <button onclick="closeBudgetModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">취소</button>
@@ -4183,7 +4183,7 @@ app.get('/', (c) => {
             }
         }
 
-        // 결제 필요 내역 패널 — is_paid = 0 인 항목 전부를 표시한다.
+        // 결제 승인 전 패널 — is_paid = 0 인 항목 전부를 표시한다.
         // 한 패널 안에서 두 단계를 관리:
         //   1) 대표님 승인 대기 (approval_status !== 'approved') — 노란 배경 · "승인" 버튼
         //   2) 승인 완료 & 미결제 — 기본 배경 · "완료" 버튼
@@ -4254,6 +4254,10 @@ app.get('/', (c) => {
                     ? \`<button data-unpaid-action="pay" data-id="\${b.id}" title="결제 완료로 표시"
                            class="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-green-500 hover:bg-green-600 rounded px-2 py-1 shadow-sm">
                            <i class="fas fa-check"></i>완료
+                       </button>
+                       <button data-unpaid-action="unapprove" data-id="\${b.id}" title="승인 취소 — 승인 대기 상태로 되돌리기"
+                           class="w-7 h-7 flex items-center justify-center rounded-md text-amber-700 hover:bg-amber-100">
+                           <i class="fas fa-rotate-left text-xs"></i>
                        </button>\`
                     : \`<button data-unpaid-action="approve" data-id="\${b.id}" title="대표님 승인 — 결제 허가"
                            class="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-emerald-500 hover:bg-emerald-600 rounded px-2 py-1 shadow-sm">
@@ -4299,6 +4303,20 @@ app.get('/', (c) => {
                 await loadBudgets();
             } catch (error) {
                 alert('승인 처리 실패: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        // 승인 완료 항목 → 승인 대기 상태로 되돌리기 (실수로 승인한 경우 복구용)
+        async function markBudgetPending(id) {
+            const item = __budgetCache.find(x => x.id === id);
+            const label = item ? (item.category || item.description || '해당 항목') : '해당 항목';
+            if (!confirm(\`"\${label}"을(를) 승인 대기 상태로 되돌릴까요?\`)) return;
+            try {
+                await axios.put(\`/api/budgets/\${id}\`, { approval_status: 'pending' });
+                if (item) item.approval_status = 'pending';
+                await loadBudgets();
+            } catch (error) {
+                alert('승인 취소 실패: ' + (error.response?.data?.error || error.message));
             }
         }
 
@@ -4359,6 +4377,7 @@ app.get('/', (c) => {
                 const action = btn.dataset.unpaidAction;
                 if (action === 'pay') markBudgetPaid(id);
                 else if (action === 'approve') markBudgetApproved(id);
+                else if (action === 'unapprove') markBudgetPending(id);
                 else if (action === 'edit') openEditBudgetModal(id);
             });
         }
@@ -4658,8 +4677,9 @@ app.get('/', (c) => {
             const list = document.getElementById('budget-list');
             const empty = document.getElementById('budget-empty');
 
-            // 필터 적용
+            // 결제 완료된 항목만 — 아직 결제 안 한 건 위 "결제 승인 전" 패널에서 별도 관리
             const filtered = (items || []).filter(b => {
+                if (!isBudgetPaid(b)) return false;
                 if (__budgetFilter === 'all') return true;
                 return budgetPaymentType(b) === __budgetFilter;
             });
@@ -4668,8 +4688,8 @@ app.get('/', (c) => {
                 list.innerHTML = '';
                 empty.classList.remove('hidden');
                 empty.textContent = __budgetFilter === 'all'
-                    ? '등록된 예산 항목이 없습니다. 상단 "항목 추가"로 시작해보세요.'
-                    : (__budgetFilter === 'recurring' ? '등록된 정기결제가 없습니다.' : '등록된 수시결제가 없습니다.');
+                    ? '결제 완료된 항목이 없습니다. "결제 승인 전" 패널에서 결제가 끝나면 이곳에 기록됩니다.'
+                    : (__budgetFilter === 'recurring' ? '결제 완료된 정기결제가 없습니다.' : '결제 완료된 수시결제가 없습니다.');
                 return;
             }
             empty.classList.add('hidden');
