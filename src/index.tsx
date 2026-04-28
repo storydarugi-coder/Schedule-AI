@@ -1133,6 +1133,8 @@ async function ensureAiUsageTable(db: any) {
       )
     `).run()
   } catch (e) {}
+  // 자동 동기화 vs 수동 입력 구분 — 자동 동기화는 'auto'만 덮어쓰고 'manual'은 보존
+  try { await db.prepare(`ALTER TABLE ai_usage ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'`).run() } catch (e) {}
 }
 
 function normalizeAiUsageProvider(v: any): string | null {
@@ -1222,6 +1224,165 @@ app.delete('/api/ai-usage/:id', async (c) => {
   if (!id || isNaN(id)) return c.json({ error: 'Invalid id' }, 400)
   await db.prepare('DELETE FROM ai_usage WHERE id = ?').bind(id).run()
   return c.json({ success: true })
+})
+
+// =========================
+// AI 사용량 자동 동기화 (Anthropic / OpenAI Admin API → ai_usage 테이블)
+// 같은 날짜·제공자의 source='auto' 행만 덮어쓰고 'manual' 행은 보존한다.
+// =========================
+
+// Anthropic Cost Report API — 일자별 비용 합계
+async function fetchAnthropicCostsByDay(apiKey: string, startISO: string, endExclusiveISO: string) {
+  const aggregated = new Map<string, number>()
+  let nextPage: string | null = null
+  do {
+    const params = new URLSearchParams({
+      starting_at: startISO,
+      ending_at: endExclusiveISO,
+      bucket_width: '1d',
+    })
+    if (nextPage) params.set('page', nextPage)
+    const url = `https://api.anthropic.com/v1/organizations/cost_report?${params.toString()}`
+    const res = await fetch(url, {
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+    })
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '')
+      throw new Error(`Anthropic ${res.status}: ${txt.slice(0, 300)}`)
+    }
+    const data: any = await res.json()
+    for (const bucket of (data.data || [])) {
+      const dateStr = String(bucket.starting_at || '').slice(0, 10) // YYYY-MM-DD
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) continue
+      let total = 0
+      for (const r of (bucket.results || [])) {
+        const amt = parseFloat(r.amount ?? '0')
+        if (isFinite(amt)) total += amt
+      }
+      aggregated.set(dateStr, (aggregated.get(dateStr) || 0) + total)
+    }
+    nextPage = data.has_more ? (data.next_page || null) : null
+  } while (nextPage)
+  return aggregated
+}
+
+// OpenAI Costs API — 일자별 비용 합계
+async function fetchOpenAICostsByDay(apiKey: string, startUnix: number, endExclusiveUnix: number) {
+  const aggregated = new Map<string, number>()
+  let nextPage: string | null = null
+  do {
+    const params = new URLSearchParams({
+      start_time: String(startUnix),
+      end_time: String(endExclusiveUnix),
+      bucket_width: '1d',
+      limit: '180',
+    })
+    if (nextPage) params.set('page', nextPage)
+    const url = `https://api.openai.com/v1/organization/costs?${params.toString()}`
+    const res = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+      },
+    })
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '')
+      throw new Error(`OpenAI ${res.status}: ${txt.slice(0, 300)}`)
+    }
+    const data: any = await res.json()
+    for (const bucket of (data.data || [])) {
+      const t = Number(bucket.start_time || 0)
+      if (!t) continue
+      const dateStr = new Date(t * 1000).toISOString().slice(0, 10)
+      let total = 0
+      for (const r of (bucket.results || [])) {
+        const amt = r?.amount?.value
+        const n = parseFloat(amt ?? 0)
+        if (isFinite(n)) total += n
+      }
+      aggregated.set(dateStr, (aggregated.get(dateStr) || 0) + total)
+    }
+    nextPage = data.has_more ? (data.next_page || null) : null
+  } while (nextPage)
+  return aggregated
+}
+
+// 같은 (provider, usage_date)의 auto 행 모두 삭제 후 새로 INSERT (manual 행은 건드리지 않음)
+async function upsertAutoUsage(db: any, provider: string, byDay: Map<string, number>) {
+  if (byDay.size === 0) return 0
+  const stmts: any[] = []
+  for (const [date, amount] of byDay) {
+    const amt = Math.round(Math.max(0, amount) * 100) / 100
+    stmts.push(db.prepare(
+      'DELETE FROM ai_usage WHERE provider = ? AND usage_date = ? AND source = ?'
+    ).bind(provider, date, 'auto'))
+    stmts.push(db.prepare(
+      'INSERT INTO ai_usage (usage_date, provider, amount, note, source) VALUES (?, ?, ?, ?, ?)'
+    ).bind(date, provider, amt, 'auto-sync', 'auto'))
+  }
+  await db.batch(stmts)
+  return byDay.size
+}
+
+// 동기화 엔드포인트 — UI 버튼 / GitHub Actions cron 양쪽에서 호출 가능
+// SYNC_TOKEN 이 설정돼 있으면 Authorization: Bearer <token> 필수.
+// body: { days?: number = 7 } — 오늘 기준 과거 N일치 가져옴 (최대 90)
+app.post('/api/admin/sync-ai-usage', async (c) => {
+  const db = c.env.DB
+  await ensureAiUsageTable(db)
+
+  const expected = c.env.SYNC_TOKEN
+  if (expected) {
+    const auth = c.req.header('Authorization') || ''
+    const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : ''
+    if (token !== expected) return c.json({ error: 'Unauthorized' }, 401)
+  }
+
+  const body = await c.req.json().catch(() => ({} as any))
+  const days = Math.max(1, Math.min(90, parseInt(body?.days) || 7))
+
+  const now = new Date()
+  // 오늘(UTC) 자정을 endExclusive 로 — 어제까지의 확정 데이터만 가져온다
+  const endExclusive = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+  const start = new Date(endExclusive.getTime() - days * 86400000)
+
+  const result = {
+    range: { start: start.toISOString().slice(0, 10), end_exclusive: endExclusive.toISOString().slice(0, 10) },
+    claude: { synced_days: 0, skipped: false, error: null as string | null },
+    gpt:    { synced_days: 0, skipped: false, error: null as string | null },
+  }
+
+  if (c.env.ANTHROPIC_ADMIN_KEY) {
+    try {
+      const map = await fetchAnthropicCostsByDay(c.env.ANTHROPIC_ADMIN_KEY, start.toISOString(), endExclusive.toISOString())
+      result.claude.synced_days = await upsertAutoUsage(db, 'claude', map)
+    } catch (e: any) {
+      result.claude.error = String(e?.message || e)
+    }
+  } else {
+    result.claude.skipped = true
+    result.claude.error = 'ANTHROPIC_ADMIN_KEY 가 설정되지 않았습니다'
+  }
+
+  if (c.env.OPENAI_ADMIN_KEY) {
+    try {
+      const map = await fetchOpenAICostsByDay(
+        c.env.OPENAI_ADMIN_KEY,
+        Math.floor(start.getTime() / 1000),
+        Math.floor(endExclusive.getTime() / 1000)
+      )
+      result.gpt.synced_days = await upsertAutoUsage(db, 'gpt', map)
+    } catch (e: any) {
+      result.gpt.error = String(e?.message || e)
+    }
+  } else {
+    result.gpt.skipped = true
+    result.gpt.error = 'OPENAI_ADMIN_KEY 가 설정되지 않았습니다'
+  }
+
+  return c.json({ success: true, ...result })
 })
 
 // Claude / GPT 전체 누적 잔액 — (충전 총합) - (사용 총합)
@@ -1519,6 +1680,9 @@ app.get('/', (c) => {
                                 <span class="w-2.5 h-2.5 rounded-full bg-sky-500"></span>
                                 GPT <span class="text-[11px] text-slate-500">이번 달</span> <span id="budget-ai-gpt-total" class="font-bold tabular-nums">$0.00</span>
                             </span>
+                            <button id="ai-usage-sync-btn" onclick="syncAiUsage()" title="Anthropic / OpenAI Admin API에서 최근 7일치 사용량을 가져와 자동 입력합니다 (수동 입력 항목은 보존)" class="inline-flex items-center gap-1 bg-white border border-indigo-300 text-indigo-600 hover:bg-indigo-50 rounded-md px-2 py-1 font-semibold shadow-sm text-[11px]">
+                                <i class="fas fa-sync"></i>지금 동기화
+                            </button>
                         </div>
                     </div>
 
@@ -4828,6 +4992,34 @@ app.get('/', (c) => {
             if (s === 'gpt' || s === 'gemini') return 'gpt';
             return '';
         }
+
+        // Anthropic + OpenAI Admin API에서 최근 7일치 사용량을 가져와 ai_usage 테이블에 자동 반영
+        window.syncAiUsage = async function() {
+            const btn = document.getElementById('ai-usage-sync-btn');
+            const orig = btn ? btn.innerHTML : '';
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>동기화 중...';
+            }
+            try {
+                const res = await axios.post('/api/admin/sync-ai-usage', { days: 7 });
+                const r = res.data || {};
+                const messages = [];
+                if (r.claude?.error) messages.push('Claude: ' + r.claude.error);
+                else messages.push(\`Claude: \${r.claude?.synced_days || 0}일 반영\`);
+                if (r.gpt?.error) messages.push('GPT: ' + r.gpt.error);
+                else messages.push(\`GPT: \${r.gpt?.synced_days || 0}일 반영\`);
+                alert('AI 사용량 동기화 결과\\n\\n' + messages.join('\\n'));
+                await loadBudgets();
+            } catch (error) {
+                alert('동기화 실패: ' + (error.response?.data?.error || error.message));
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = orig;
+                }
+            }
+        };
 
         function renderAiUsage(items, year, month) {
             const listEl = document.getElementById('budget-ai-usage-list');
