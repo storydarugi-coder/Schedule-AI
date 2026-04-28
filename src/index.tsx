@@ -2937,9 +2937,9 @@ app.get('/', (c) => {
                 }
                 const statusLabel = allDone
                     ? '<span class="text-[11px] font-semibold text-emerald-600"><i class="fas fa-check mr-1"></i>완료됨</span>'
-                    : (hasSubtasks
+                    : (pct > 0
                         ? \`<span class="text-[11px] font-medium text-slate-500">진행 중 · \${pct}%</span>\`
-                        : '<span class="text-[11px] font-medium text-slate-500">진행 예정</span>');
+                        : '<span class="text-[11px] font-medium text-slate-500">진행 예정 · 0%</span>');
 
                 const subtaskBadge = hasSubtasks
                     ? \`<span class="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 rounded-full px-2 py-0.5 ml-1" title="하위 작업 \${sDone}/\${sTotal} 완료">
@@ -2947,11 +2947,9 @@ app.get('/', (c) => {
                        </span>\`
                     : '';
 
-                const subtaskBar = hasSubtasks
-                    ? \`<div class="mt-2 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                const subtaskBar = \`<div class="mt-2 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                             <div class="h-full \${progressBarColor(step)} transition-all duration-300" style="width: \${pct}%"></div>
-                       </div>\`
-                    : '';
+                       </div>\`;
 
                 html += \`
                     <div class="group border \${rowClasses} rounded-lg p-3 transition-all cursor-pointer" data-task-card="\${t.id}" title="클릭하면 상세보기 (하위 작업 관리)">
