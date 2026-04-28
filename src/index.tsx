@@ -497,6 +497,17 @@ async function ensureTasksTable(db: any) {
       )
     `).run()
   } catch (e) {}
+  // 간트차트용 — 시작일(YYYY-MM-DD) / 작업일수(일)
+  try { await db.prepare(`ALTER TABLE tasks ADD COLUMN start_date TEXT DEFAULT NULL`).run() } catch (e) {}
+  try { await db.prepare(`ALTER TABLE tasks ADD COLUMN duration_days INTEGER NOT NULL DEFAULT 1`).run() } catch (e) {}
+  // 기존 데이터 백필 — start_date 없으면 해당 월 1일로 채움 (한 번만 실행됨)
+  try {
+    await db.prepare(`
+      UPDATE tasks
+      SET start_date = printf('%04d-%02d-01', year, month)
+      WHERE start_date IS NULL OR start_date = ''
+    `).run()
+  } catch (e) {}
 }
 
 // 월별 작업 목록
@@ -537,7 +548,7 @@ app.get('/api/tasks/:year/:month', async (c) => {
 app.post('/api/tasks', async (c) => {
   const db = c.env.DB
   await ensureTasksTable(db)
-  const { name, hospital_id, year, month, progress } = await c.req.json()
+  const { name, hospital_id, year, month, progress, start_date, duration_days } = await c.req.json()
 
   if (!name || !year || !month) {
     return c.json({ error: 'name, year, month 필수' }, 400)
@@ -548,16 +559,24 @@ app.post('/api/tasks', async (c) => {
   ).bind(year, month).first()
   const orderIndex = ((lastOrder?.max_order as number) ?? -1) + 1
 
+  // 시작일 미지정 시 해당 월 1일로 기본값
+  const sd = (typeof start_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(start_date))
+    ? start_date
+    : `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-01`
+  const dur = Math.max(1, parseInt(duration_days) || 1)
+
   const result = await db.prepare(`
-    INSERT INTO tasks (name, hospital_id, year, month, progress, order_index)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (name, hospital_id, year, month, progress, order_index, start_date, duration_days)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     name,
     hospital_id || null,
     year,
     month,
     Math.max(0, Math.min(4, parseInt(progress) || 0)),
-    orderIndex
+    orderIndex,
+    sd,
+    dur
   ).run()
 
   return c.json({ success: true, id: result.meta.last_row_id })
@@ -577,6 +596,14 @@ app.put('/api/tasks/:id', async (c) => {
   if (data.progress !== undefined) {
     const p = Math.max(0, Math.min(4, parseInt(data.progress) || 0))
     fields.push('progress = ?'); values.push(p)
+  }
+  if (data.start_date !== undefined) {
+    const sd = (typeof data.start_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.start_date)) ? data.start_date : null
+    fields.push('start_date = ?'); values.push(sd)
+  }
+  if (data.duration_days !== undefined) {
+    const dur = Math.max(1, parseInt(data.duration_days) || 1)
+    fields.push('duration_days = ?'); values.push(dur)
   }
 
   if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400)
@@ -1687,6 +1714,10 @@ app.get('/', (c) => {
                         <span id="stats-overall-badge" class="text-sm font-semibold px-3 py-1 rounded-full bg-indigo-50 text-indigo-700">전체 0/0 · 0%</span>
                     </div>
                     <div class="flex gap-2 items-center">
+                        <div id="task-view-toggle" class="inline-flex rounded-lg border border-slate-300 overflow-hidden text-sm" data-view="gantt">
+                            <button type="button" data-view="gantt" class="px-3 py-2 font-semibold transition-colors"><i class="fas fa-chart-bar mr-1"></i>간트</button>
+                            <button type="button" data-view="cards" class="px-3 py-2 font-semibold transition-colors border-l border-slate-300"><i class="fas fa-th-large mr-1"></i>카드</button>
+                        </div>
                         <label class="text-sm text-gray-600">병원:</label>
                         <select id="stats-hospital" onchange="renderTasks()" class="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none">
                             <option value="all">전체</option>
@@ -1696,8 +1727,9 @@ app.get('/', (c) => {
                         </button>
                     </div>
                 </div>
-                <div id="stats-grid" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div id="stats-grid" class="grid grid-cols-1 md:grid-cols-2 gap-3 hidden">
                 </div>
+                <div id="gantt-grid" class="overflow-x-auto"></div>
                 <div id="stats-empty" class="text-center text-slate-400 text-sm py-6 hidden">
                     아직 작업이 없습니다. 상단의 "작업 추가" 버튼으로 추가해주세요.
                 </div>
@@ -1726,6 +1758,19 @@ app.get('/', (c) => {
                             <button type="button" data-p="0" class="flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors"><i class="far fa-circle mr-1.5"></i>진행 예정</button>
                             <button type="button" data-p="4" class="flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors"><i class="fas fa-check-circle mr-1.5"></i>완료</button>
                         </div>
+                    </div>
+                    <div class="mb-4 grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">시작일</label>
+                            <input type="date" id="task-start-date-input" class="w-full border-2 border-slate-200 rounded-lg px-3 py-2 focus:border-indigo-400 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">작업일수</label>
+                            <input type="number" min="1" step="1" id="task-duration-input" value="1" class="w-full border-2 border-slate-200 rounded-lg px-3 py-2 focus:border-indigo-400 focus:outline-none tabular-nums">
+                        </div>
+                    </div>
+                    <div class="mb-4 text-xs text-slate-500">
+                        종료일: <span id="task-end-date-preview" class="font-semibold text-slate-700">—</span>
                     </div>
                     <div class="flex justify-end gap-2">
                         <button onclick="closeTaskModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">취소</button>
@@ -2810,8 +2855,12 @@ app.get('/', (c) => {
             return 'bg-slate-300';
         }
 
+        // 활성 뷰 상태 — 'gantt' 또는 'cards' (기본 간트)
+        let __taskView = 'gantt';
+
         function renderTasks() {
             const statsGrid = document.getElementById('stats-grid');
+            const ganttGrid = document.getElementById('gantt-grid');
             const overallBadge = document.getElementById('stats-overall-badge');
             const emptyEl = document.getElementById('stats-empty');
 
@@ -2841,8 +2890,31 @@ app.get('/', (c) => {
             }).length;
             overallBadge.textContent = \`전체 \${doneCount}/\${total} · \${overall}%\`;
 
+            // 토글 버튼 활성 상태
+            const toggleEl = document.getElementById('task-view-toggle');
+            if (toggleEl) {
+                toggleEl.dataset.view = __taskView;
+                Array.from(toggleEl.querySelectorAll('button')).forEach(b => {
+                    if (b.dataset.view === __taskView) {
+                        b.className = 'px-3 py-2 font-semibold transition-colors bg-indigo-500 text-white' + (b.previousElementSibling ? ' border-l border-indigo-500' : '');
+                    } else {
+                        b.className = 'px-3 py-2 font-semibold transition-colors bg-white text-slate-600 hover:bg-slate-50' + (b.previousElementSibling ? ' border-l border-slate-300' : '');
+                    }
+                });
+            }
+
+            // 뷰별 표시/숨김
+            if (__taskView === 'cards') {
+                statsGrid.classList.remove('hidden');
+                ganttGrid.classList.add('hidden');
+            } else {
+                statsGrid.classList.add('hidden');
+                ganttGrid.classList.remove('hidden');
+            }
+
             if (total === 0) {
                 statsGrid.innerHTML = '';
+                ganttGrid.innerHTML = '';
                 emptyEl.classList.remove('hidden');
                 return;
             }
@@ -2890,6 +2962,12 @@ app.get('/', (c) => {
                 if (!bucketFirstIndex.has(bkt)) bucketFirstIndex.set(bkt, idx);
                 bucketLastIndex.set(bkt, idx);
             });
+
+            // 간트 뷰 렌더링
+            if (__taskView === 'gantt') {
+                renderGantt(sorted, taskDisplayPct);
+                return;
+            }
 
             let html = '';
             for (let idx = 0; idx < sorted.length; idx++) {
@@ -3024,6 +3102,150 @@ app.get('/', (c) => {
             }
         }
         window.renderTasks = renderTasks;
+
+        // =========================
+        // 간트차트 렌더링 — 선택된 월 1일~말일 기준 일 단위 막대
+        // =========================
+        function renderGantt(sorted, taskDisplayPct) {
+            const gantt = document.getElementById('gantt-grid');
+            const year = parseInt(document.getElementById('calendar-year').value);
+            const month = parseInt(document.getElementById('calendar-month').value);
+            const daysInMonth = new Date(year, month, 0).getDate();
+            const monthStartMs = Date.UTC(year, month - 1, 1);
+
+            const dayWidth = 28; // px per day
+            const nameColWidth = 220;
+            const minBarWidth = nameColWidth + daysInMonth * dayWidth;
+
+            // 오늘 날짜 마커 위치 (이번 달이 아닐 수도 있음)
+            const today = new Date();
+            const todayInMonth = (today.getFullYear() === year && (today.getMonth() + 1) === month);
+            const todayCol = todayInMonth ? today.getDate() : 0;
+
+            function escAttr(str) {
+                return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            }
+            function escText(str) {
+                return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            }
+
+            // 날짜 헤더
+            let headerCols = '';
+            for (let d = 1; d <= daysInMonth; d++) {
+                const dt = new Date(year, month - 1, d);
+                const dow = dt.getDay();
+                const isWeekend = (dow === 0 || dow === 6);
+                const cls = isWeekend ? 'bg-slate-50 text-slate-400' : 'text-slate-500';
+                const todayCls = (d === todayCol) ? ' ring-1 ring-indigo-300 bg-indigo-50 text-indigo-700' : '';
+                headerCols += \`<div class="text-[10px] text-center py-2 border-r border-slate-100 \${cls}\${todayCls}">\${d}</div>\`;
+            }
+
+            let rowsHtml = '';
+            for (const t of sorted) {
+                const pct = taskDisplayPct(t);
+                const step = Math.max(0, Math.min(4, t.progress || 0));
+                const sTotal = Number(t.subtask_total || 0);
+                const sDone = Number(t.subtask_done || 0);
+                const allDone = sTotal > 0 ? (sDone >= sTotal) : ((t.progress || 0) >= 4);
+                const nameClass = allDone ? 'text-slate-500 line-through' : 'text-slate-800';
+                const fallbackStart = \`\${String(t.year).padStart(4, '0')}-\${String(t.month).padStart(2, '0')}-01\`;
+                const sd = (typeof t.start_date === 'string' && /^\\d{4}-\\d{2}-\\d{2}$/.test(t.start_date)) ? t.start_date : fallbackStart;
+                const dur = Math.max(1, parseInt(t.duration_days) || 1);
+                const [sy, sm, sdy] = sd.split('-').map(n => parseInt(n));
+                const taskStartMs = Date.UTC(sy, sm - 1, sdy);
+                const taskEndMs = taskStartMs + (dur - 1) * 86400000;
+                const monthEndMs = Date.UTC(year, month - 1, daysInMonth);
+
+                // 작업 카드 시각화 — 시작/끝 컬럼 (이번 달 범위로 클립)
+                let bar = '';
+                let outOfMonth = false;
+                if (taskEndMs < monthStartMs || taskStartMs > monthEndMs) {
+                    outOfMonth = true;
+                } else {
+                    const clipStartMs = Math.max(taskStartMs, monthStartMs);
+                    const clipEndMs = Math.min(taskEndMs, monthEndMs);
+                    const startDay = Math.round((clipStartMs - monthStartMs) / 86400000) + 1; // 1-indexed
+                    const endDay = Math.round((clipEndMs - monthStartMs) / 86400000) + 1;
+                    const span = endDay - startDay + 1;
+                    const left = (startDay - 1) * dayWidth;
+                    const width = span * dayWidth;
+                    const color = progressBarColor(step);
+                    bar = \`<div class="absolute top-1.5 h-5 rounded bg-slate-200 overflow-hidden cursor-pointer hover:ring-2 hover:ring-indigo-300" data-task-card="\${t.id}" style="left: \${left}px; width: \${width}px;" title="\${escAttr(t.name)} · \${pct}%">
+                        <div class="h-full \${color}" style="width: \${pct}%"></div>
+                        <div class="absolute inset-0 px-2 text-[10px] leading-5 font-semibold text-slate-700 truncate">\${pct}%</div>
+                       </div>\`;
+                }
+
+                // 주말 배경 (행마다 반복)
+                let weekendBg = '';
+                for (let d = 1; d <= daysInMonth; d++) {
+                    const dt = new Date(year, month - 1, d);
+                    const dow = dt.getDay();
+                    if (dow === 0 || dow === 6) {
+                        weekendBg += \`<div class="absolute inset-y-0 bg-slate-50" style="left: \${(d - 1) * dayWidth}px; width: \${dayWidth}px;"></div>\`;
+                    }
+                }
+
+                // 오늘 표시 라인
+                const todayLine = todayCol > 0
+                    ? \`<div class="absolute inset-y-0 border-l-2 border-indigo-300" style="left: \${(todayCol - 1) * dayWidth + dayWidth / 2}px;"></div>\`
+                    : '';
+
+                const dateLabel = \`\${sd} · \${dur}일\` + (outOfMonth ? ' (이번 달 범위 밖)' : '');
+                const hospitalLabel = t.hospital_name ? \` · \${escText(t.hospital_name)}\` : '';
+
+                rowsHtml += \`
+                    <div class="flex border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                        <div class="flex-shrink-0 px-3 py-2 truncate cursor-pointer" data-task-card="\${t.id}" style="width: \${nameColWidth}px;" title="\${escAttr(t.name)} · \${dateLabel}">
+                            <div class="text-sm font-semibold truncate \${nameClass}">\${escText(t.name)}</div>
+                            <div class="text-[10px] text-slate-500 truncate">\${dateLabel}\${hospitalLabel}</div>
+                        </div>
+                        <div class="relative flex-shrink-0 h-8 border-l border-slate-100" style="width: \${daysInMonth * dayWidth}px;">
+                            \${weekendBg}
+                            \${todayLine}
+                            \${bar}
+                        </div>
+                    </div>
+                \`;
+            }
+
+            const html = \`
+                <div style="min-width: \${minBarWidth}px;">
+                    <div class="flex border-b-2 border-slate-200 bg-white sticky top-0 z-10">
+                        <div class="flex-shrink-0 px-3 py-2 text-xs font-semibold text-slate-500 border-r border-slate-200" style="width: \${nameColWidth}px;">작업 (\${year}-\${String(month).padStart(2, '0')})</div>
+                        <div class="flex-shrink-0 grid" style="width: \${daysInMonth * dayWidth}px; grid-template-columns: repeat(\${daysInMonth}, \${dayWidth}px);">
+                            \${headerCols}
+                        </div>
+                    </div>
+                    \${rowsHtml}
+                </div>
+            \`;
+            gantt.innerHTML = html;
+
+            // 클릭 → 상세 모달 (1회 바인딩)
+            if (!gantt.__ganttBound) {
+                gantt.addEventListener('click', function(e) {
+                    const card = e.target.closest('[data-task-card]');
+                    if (!card) return;
+                    const id = parseInt(card.dataset.taskCard);
+                    if (id) openTaskDetailModal(id);
+                });
+                gantt.__ganttBound = true;
+            }
+        }
+
+        // 뷰 토글 바인딩
+        function bindTaskViewToggle() {
+            const toggle = document.getElementById('task-view-toggle');
+            if (!toggle) { setTimeout(bindTaskViewToggle, 50); return; }
+            toggle.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-view]');
+                if (!btn) return;
+                __taskView = btn.dataset.view === 'cards' ? 'cards' : 'gantt';
+                renderTasks();
+            });
+        }
+        bindTaskViewToggle();
 
         // =========================
         // 작업 상세 모달 (카드 클릭 — 하위 작업 관리)
@@ -3428,12 +3650,38 @@ app.get('/', (c) => {
             });
         }
 
+        // YYYY-MM-DD 더하기 (UTC 기준 안전 계산)
+        function addDaysISO(iso, days) {
+            if (!iso || !/^\\d{4}-\\d{2}-\\d{2}$/.test(iso)) return '';
+            const [y, m, d] = iso.split('-').map(n => parseInt(n));
+            const dt = new Date(Date.UTC(y, m - 1, d));
+            dt.setUTCDate(dt.getUTCDate() + days);
+            const yy = dt.getUTCFullYear();
+            const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+            const dd = String(dt.getUTCDate()).padStart(2, '0');
+            return \`\${yy}-\${mm}-\${dd}\`;
+        }
+
+        function refreshTaskEndDatePreview() {
+            const sd = document.getElementById('task-start-date-input').value;
+            const dur = Math.max(1, parseInt(document.getElementById('task-duration-input').value) || 1);
+            const end = sd ? addDaysISO(sd, dur - 1) : '';
+            document.getElementById('task-end-date-preview').textContent = end || '—';
+        }
+
         window.openAddTaskModal = function() {
             document.getElementById('task-modal-title').innerHTML = '<i class="fas fa-plus-circle text-indigo-500 mr-2"></i>작업 추가';
             document.getElementById('task-edit-id').value = '';
             document.getElementById('task-name-input').value = '';
             document.getElementById('task-hospital-input').value = '';
             setProgressButton(0);
+            // 기본 시작일 = 현재 선택된 연/월의 1일
+            const y = parseInt(document.getElementById('calendar-year').value);
+            const m = parseInt(document.getElementById('calendar-month').value);
+            const defaultStart = \`\${String(y).padStart(4, '0')}-\${String(m).padStart(2, '0')}-01\`;
+            document.getElementById('task-start-date-input').value = defaultStart;
+            document.getElementById('task-duration-input').value = '1';
+            refreshTaskEndDatePreview();
             document.getElementById('task-modal').classList.remove('hidden');
             setTimeout(() => document.getElementById('task-name-input').focus(), 50);
         };
@@ -3447,6 +3695,10 @@ app.get('/', (c) => {
             document.getElementById('task-hospital-input').value = t.hospital_id || '';
             // 진척률은 진행 예정(0) / 완료(4) 둘 중 하나로 정규화
             setProgressButton((t.progress || 0) >= 4 ? 4 : 0);
+            const fallbackStart = \`\${String(t.year).padStart(4, '0')}-\${String(t.month).padStart(2, '0')}-01\`;
+            document.getElementById('task-start-date-input').value = t.start_date || fallbackStart;
+            document.getElementById('task-duration-input').value = String(Math.max(1, parseInt(t.duration_days) || 1));
+            refreshTaskEndDatePreview();
             document.getElementById('task-modal').classList.remove('hidden');
         };
 
@@ -3459,6 +3711,8 @@ app.get('/', (c) => {
             const name = document.getElementById('task-name-input').value.trim();
             const hospitalId = document.getElementById('task-hospital-input').value;
             const progress = parseInt(document.getElementById('task-progress-input').dataset.value || '0');
+            const startDate = document.getElementById('task-start-date-input').value;
+            const durationDays = Math.max(1, parseInt(document.getElementById('task-duration-input').value) || 1);
             if (!name) { alert('작업 이름을 입력해주세요'); return; }
 
             const year = parseInt(document.getElementById('calendar-year').value);
@@ -3468,12 +3722,16 @@ app.get('/', (c) => {
                 if (id) {
                     await axios.put(\`/api/tasks/\${id}\`, {
                         name, progress,
-                        hospital_id: hospitalId ? parseInt(hospitalId) : null
+                        hospital_id: hospitalId ? parseInt(hospitalId) : null,
+                        start_date: startDate || null,
+                        duration_days: durationDays
                     });
                 } else {
                     await axios.post('/api/tasks', {
                         name, progress, year, month,
-                        hospital_id: hospitalId ? parseInt(hospitalId) : null
+                        hospital_id: hospitalId ? parseInt(hospitalId) : null,
+                        start_date: startDate || null,
+                        duration_days: durationDays
                     });
                 }
                 closeTaskModal();
@@ -3492,6 +3750,11 @@ app.get('/', (c) => {
                 if (!btn) return;
                 setProgressButton(parseInt(btn.dataset.p));
             });
+            // 시작일/작업일수 변경 시 종료일 미리보기 갱신
+            const sd = document.getElementById('task-start-date-input');
+            const du = document.getElementById('task-duration-input');
+            if (sd) sd.addEventListener('change', refreshTaskEndDatePreview);
+            if (du) du.addEventListener('input', refreshTaskEndDatePreview);
         }
         bindProgressInput();
 
