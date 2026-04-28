@@ -651,6 +651,50 @@ app.post('/api/tasks/reorder', async (c) => {
   return c.json({ success: true, updated: batch.length })
 })
 
+// 월 일정 자동 분배 — order_index 순서대로 해당 월 1일~말일에 균등 배치
+// 같은 월 안에서 작업 N개가 있으면 daysInMonth 일을 거의 균등하게 나눠 가짐
+// hospital_id 가 주어지면 그 병원 작업만 분배 (나머지는 그대로 유지)
+app.post('/api/tasks/distribute', async (c) => {
+  const db = c.env.DB
+  await ensureTasksTable(db)
+  const { year, month, hospital_id } = await c.req.json()
+
+  const y = parseInt(year)
+  const m = parseInt(month)
+  if (!y || !m || m < 1 || m > 12) return c.json({ error: 'year, month 필수' }, 400)
+
+  let where = 'year = ? AND month = ?'
+  const args: any[] = [y, m]
+  if (hospital_id !== undefined && hospital_id !== null && hospital_id !== '') {
+    const hid = parseInt(hospital_id)
+    if (!isNaN(hid)) {
+      where += ' AND hospital_id = ?'
+      args.push(hid)
+    }
+  }
+
+  const rows = await db.prepare(
+    `SELECT id FROM tasks WHERE ${where} ORDER BY order_index, id`
+  ).bind(...args).all()
+  const ids: number[] = (rows.results || []).map((r: any) => Number(r.id))
+  const N = ids.length
+  if (N === 0) return c.json({ success: true, updated: 0 })
+
+  const daysInMonth = new Date(y, m, 0).getDate()
+  const monthPrefix = `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}`
+  const stmt = db.prepare('UPDATE tasks SET start_date = ?, duration_days = ? WHERE id = ?')
+  const batch = ids.map((id, i) => {
+    const startDay = Math.min(daysInMonth, Math.floor(i * daysInMonth / N) + 1)
+    const endDayRaw = Math.floor((i + 1) * daysInMonth / N)
+    const endDay = Math.max(startDay, Math.min(daysInMonth, endDayRaw))
+    const dur = Math.max(1, endDay - startDay + 1)
+    const sd = `${monthPrefix}-${String(startDay).padStart(2, '0')}`
+    return stmt.bind(sd, dur, id)
+  })
+  await db.batch(batch)
+  return c.json({ success: true, updated: batch.length, days_in_month: daysInMonth })
+})
+
 // =========================
 // 하위 작업 (subtasks) API
 // 상위 작업 하나에 여러 하위 작업이 소속되며,
@@ -1722,6 +1766,9 @@ app.get('/', (c) => {
                         <select id="stats-hospital" onchange="renderTasks()" class="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none">
                             <option value="all">전체</option>
                         </select>
+                        <button onclick="distributeTasks()" title="현재 월의 작업들을 순서대로 균등 분배합니다 (시작일/작업일수 자동 계산)" class="bg-white border border-indigo-300 text-indigo-600 hover:bg-indigo-50 rounded-lg px-3 py-2 text-sm font-semibold shadow-sm">
+                            <i class="fas fa-magic-wand-sparkles mr-1"></i>일정 자동 분배
+                        </button>
                         <button onclick="openAddTaskModal()" class="bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm font-semibold shadow-sm">
                             <i class="fas fa-plus mr-1"></i>작업 추가
                         </button>
@@ -3738,6 +3785,27 @@ app.get('/', (c) => {
                 loadTasks();
             } catch (error) {
                 alert('저장 실패: ' + (error.response?.data?.error || error.message));
+            }
+        };
+
+        window.distributeTasks = async function() {
+            const year = parseInt(document.getElementById('calendar-year').value);
+            const month = parseInt(document.getElementById('calendar-month').value);
+            const hospitalId = document.getElementById('stats-hospital').value;
+            const filterLabel = (hospitalId && hospitalId !== 'all') ? '선택된 병원' : '전체';
+            if (!confirm(\`\${year}년 \${month}월 작업(\${filterLabel})을 순서대로 균등 분배할까요?\\n(시작일과 작업일수가 모두 덮어써집니다)\`)) return;
+            try {
+                const body = { year, month };
+                if (hospitalId && hospitalId !== 'all') body.hospital_id = parseInt(hospitalId);
+                const res = await axios.post('/api/tasks/distribute', body);
+                const n = res.data?.updated || 0;
+                if (n === 0) {
+                    alert('분배할 작업이 없습니다.');
+                    return;
+                }
+                await loadTasks();
+            } catch (error) {
+                alert('자동 분배 실패: ' + (error.response?.data?.error || error.message));
             }
         };
 
