@@ -3217,9 +3217,18 @@ app.get('/', (c) => {
                     const left = (startDay - 1) * dayWidth;
                     const width = span * dayWidth;
                     const color = progressBarColor(step);
-                    bar = \`<div class="absolute top-1.5 h-5 rounded bg-slate-200 overflow-hidden cursor-pointer hover:ring-2 hover:ring-indigo-300" data-task-card="\${t.id}" style="left: \${left}px; width: \${width}px;" title="\${escAttr(t.name)} · \${pct}%">
-                        <div class="h-full \${color}" style="width: \${pct}%"></div>
-                        <div class="absolute inset-0 px-2 text-[10px] leading-5 font-semibold text-slate-700 truncate">\${pct}%</div>
+                    // 작업이 이번 달에 전부 들어가는 경우에만 드래그/리사이즈 허용
+                    const fullyInMonth = taskStartMs >= monthStartMs && taskEndMs <= monthEndMs;
+                    const dragAttrs = fullyInMonth ? \`data-task-bar="\${t.id}" data-draggable="1"\` : '';
+                    const cursorClass = fullyInMonth ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer';
+                    const handles = fullyInMonth
+                        ? \`<div data-resize="start" class="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize bg-slate-400 bg-opacity-0 hover:bg-opacity-50 z-10"></div>
+                           <div data-resize="end" class="absolute right-0 top-0 bottom-0 w-1.5 cursor-ew-resize bg-slate-400 bg-opacity-0 hover:bg-opacity-50 z-10"></div>\`
+                        : '';
+                    bar = \`<div class="absolute top-1.5 h-5 rounded bg-slate-200 overflow-hidden \${cursorClass} hover:ring-2 hover:ring-indigo-300" data-task-card="\${t.id}" \${dragAttrs} style="left: \${left}px; width: \${width}px;" title="\${escAttr(t.name)} · \${pct}% · \${sd} · \${dur}일">
+                        <div class="h-full \${color} pointer-events-none" style="width: \${pct}%"></div>
+                        <div class="absolute inset-0 px-2 text-[10px] leading-5 font-semibold text-slate-700 truncate pointer-events-none">\${pct}%</div>
+                        \${handles}
                        </div>\`;
                 }
 
@@ -3269,17 +3278,111 @@ app.get('/', (c) => {
             \`;
             gantt.innerHTML = html;
 
-            // 클릭 → 상세 모달 (1회 바인딩)
+            // 클릭 → 상세 모달 / 드래그·리사이즈 (1회 바인딩)
             if (!gantt.__ganttBound) {
                 gantt.addEventListener('click', function(e) {
+                    if (__ganttJustDragged) return; // 드래그 직후 클릭은 무시
                     const card = e.target.closest('[data-task-card]');
                     if (!card) return;
                     const id = parseInt(card.dataset.taskCard);
                     if (id) openTaskDetailModal(id);
                 });
+                gantt.addEventListener('mousedown', onGanttMouseDown);
                 gantt.__ganttBound = true;
             }
         }
+
+        // =========================
+        // 간트 막대 드래그/리사이즈
+        //  - 막대 본체 드래그: 시작일 이동 (작업일수 유지)
+        //  - 우측 끝 드래그: 작업일수 변경 (시작일 유지)
+        //  - 좌측 끝 드래그: 시작일 변경 (종료일 유지 = 작업일수 같이 변함)
+        //  - 일 단위로 스냅, 이번 달 범위 안으로 클램프
+        // =========================
+        let __ganttDrag = null;
+        let __ganttJustDragged = false;
+
+        function onGanttMouseDown(e) {
+            if (e.button !== 0) return;
+            const bar = e.target.closest('[data-draggable="1"]');
+            if (!bar) return;
+            const handle = e.target.closest('[data-resize]');
+            const mode = handle ? \`resize-\${handle.dataset.resize}\` : 'move';
+
+            const dayWidth = 28;
+            const year = parseInt(document.getElementById('calendar-year').value);
+            const month = parseInt(document.getElementById('calendar-month').value);
+            const daysInMonth = new Date(year, month, 0).getDate();
+
+            __ganttDrag = {
+                taskId: parseInt(bar.dataset.taskBar),
+                mode,
+                barEl: bar,
+                startX: e.clientX,
+                origLeft: parseInt(bar.style.left) || 0,
+                origWidth: parseInt(bar.style.width) || dayWidth,
+                dayWidth,
+                daysInMonth,
+                year, month,
+                dragged: false,
+            };
+            e.preventDefault();
+        }
+
+        document.addEventListener('mousemove', function(e) {
+            const d = __ganttDrag;
+            if (!d) return;
+            const dx = e.clientX - d.startX;
+            if (Math.abs(dx) > 3) d.dragged = true;
+            if (!d.dragged) return;
+
+            const dayDelta = Math.round(dx / d.dayWidth);
+            const totalWidth = d.daysInMonth * d.dayWidth;
+
+            if (d.mode === 'move') {
+                let newLeft = d.origLeft + dayDelta * d.dayWidth;
+                newLeft = Math.max(0, Math.min(totalWidth - d.origWidth, newLeft));
+                d.barEl.style.left = newLeft + 'px';
+            } else if (d.mode === 'resize-end') {
+                const minWidth = d.dayWidth;
+                const maxWidth = totalWidth - d.origLeft;
+                let newWidth = Math.max(minWidth, Math.min(maxWidth, d.origWidth + dayDelta * d.dayWidth));
+                d.barEl.style.width = newWidth + 'px';
+            } else if (d.mode === 'resize-start') {
+                const minDelta = -Math.floor(d.origLeft / d.dayWidth);
+                const maxDelta = Math.floor((d.origWidth - d.dayWidth) / d.dayWidth);
+                const cappedDelta = Math.max(minDelta, Math.min(maxDelta, dayDelta));
+                d.barEl.style.left = (d.origLeft + cappedDelta * d.dayWidth) + 'px';
+                d.barEl.style.width = (d.origWidth - cappedDelta * d.dayWidth) + 'px';
+            }
+        });
+
+        document.addEventListener('mouseup', async function() {
+            const d = __ganttDrag;
+            if (!d) return;
+            __ganttDrag = null;
+            if (!d.dragged) return;
+
+            __ganttJustDragged = true;
+            setTimeout(() => { __ganttJustDragged = false; }, 100);
+
+            const newLeft = parseInt(d.barEl.style.left) || 0;
+            const newWidth = parseInt(d.barEl.style.width) || d.dayWidth;
+            const newStartDay = Math.max(1, Math.min(d.daysInMonth, Math.round(newLeft / d.dayWidth) + 1));
+            const newDuration = Math.max(1, Math.round(newWidth / d.dayWidth));
+            const sd = \`\${String(d.year).padStart(4, '0')}-\${String(d.month).padStart(2, '0')}-\${String(newStartDay).padStart(2, '0')}\`;
+
+            try {
+                await axios.put(\`/api/tasks/\${d.taskId}\`, {
+                    start_date: sd,
+                    duration_days: newDuration,
+                });
+                await loadTasks();
+            } catch (err) {
+                alert('일정 변경 저장 실패: ' + (err.response?.data?.error || err.message));
+                await loadTasks();
+            }
+        });
 
         // 뷰 토글 바인딩
         function bindTaskViewToggle() {
