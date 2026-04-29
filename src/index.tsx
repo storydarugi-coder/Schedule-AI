@@ -1233,6 +1233,10 @@ app.delete('/api/ai-usage/:id', async (c) => {
 
 // Anthropic Cost Report API — 일자별 비용 합계
 // debug=true 면 마지막 페이지 raw 응답을 함께 반환 (dry-run 진단용)
+//
+// NOTE: Anthropic cost_report API 는 amount 를 실제 USD 의 100배 로 돌려준다 (2026-04 시점 실측).
+// 응답에 currency:USD 라고 적혀 있어도 값이 console.anthropic.com 표시값의 100배 → /100 보정 필수.
+const ANTHROPIC_AMOUNT_SCALE = 100
 async function fetchAnthropicCostsByDay(
   apiKey: string,
   startISO: string,
@@ -1277,7 +1281,7 @@ async function fetchAnthropicCostsByDay(
         // amount 가 문자열("11.30") 또는 객체({value:"11.30"}) 둘 다 대응
         const raw = (typeof r?.amount === 'object' && r?.amount !== null) ? r.amount.value : r?.amount
         const amt = parseFloat(raw ?? '0')
-        if (isFinite(amt)) total += amt
+        if (isFinite(amt)) total += amt / ANTHROPIC_AMOUNT_SCALE
       }
       aggregated.set(dateStr, (aggregated.get(dateStr) || 0) + total)
     }
@@ -1544,7 +1548,7 @@ app.post('/api/admin/anthropic-breakdown', async (c) => {
     for (const r of (bucket.results || [])) {
       const key = groupBy.map(g => `${g}=${r?.[g] ?? 'null'}`).join(' | ')
       const raw = (typeof r?.amount === 'object' && r?.amount !== null) ? r.amount.value : r?.amount
-      const amt = parseFloat(raw ?? '0')
+      const amt = parseFloat(raw ?? '0') / ANTHROPIC_AMOUNT_SCALE
       if (isFinite(amt)) byDayByGroup[dateStr][key] = (byDayByGroup[dateStr][key] || 0) + amt
     }
   }
