@@ -1232,10 +1232,23 @@ app.delete('/api/ai-usage/:id', async (c) => {
 // =========================
 
 // Anthropic Cost Report API — 일자별 비용 합계
-async function fetchAnthropicCostsByDay(apiKey: string, startISO: string, endExclusiveISO: string) {
+// debug=true 면 마지막 페이지 raw 응답을 함께 반환 (dry-run 진단용)
+async function fetchAnthropicCostsByDay(
+  apiKey: string,
+  startISO: string,
+  endExclusiveISO: string,
+  debug = false
+): Promise<{ byDay: Map<string, number>; pages: number; samples: any[] }> {
   const aggregated = new Map<string, number>()
+  const samples: any[] = []
+  const seenTokens = new Set<string>()
   let nextPage: string | null = null
+  let pages = 0
+  const MAX_PAGES = 50
   do {
+    if (pages >= MAX_PAGES) {
+      throw new Error(`Anthropic: pagination exceeded ${MAX_PAGES} pages — possible loop`)
+    }
     const params = new URLSearchParams({
       starting_at: startISO,
       ending_at: endExclusiveISO,
@@ -1254,26 +1267,47 @@ async function fetchAnthropicCostsByDay(apiKey: string, startISO: string, endExc
       throw new Error(`Anthropic ${res.status}: ${txt.slice(0, 300)}`)
     }
     const data: any = await res.json()
+    pages++
+    if (debug && samples.length < 2) samples.push(data)
     for (const bucket of (data.data || [])) {
-      const dateStr = String(bucket.starting_at || '').slice(0, 10) // YYYY-MM-DD
+      const dateStr = String(bucket.starting_at || '').slice(0, 10)
       if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) continue
       let total = 0
       for (const r of (bucket.results || [])) {
-        const amt = parseFloat(r.amount ?? '0')
+        // amount 가 문자열("11.30") 또는 객체({value:"11.30"}) 둘 다 대응
+        const raw = (typeof r?.amount === 'object' && r?.amount !== null) ? r.amount.value : r?.amount
+        const amt = parseFloat(raw ?? '0')
         if (isFinite(amt)) total += amt
       }
       aggregated.set(dateStr, (aggregated.get(dateStr) || 0) + total)
     }
-    nextPage = data.has_more ? (data.next_page || null) : null
+    const candidate = data.has_more ? (data.next_page || null) : null
+    if (candidate && seenTokens.has(candidate)) {
+      throw new Error(`Anthropic: duplicate next_page token detected (${candidate.slice(0, 16)}…) — aborting`)
+    }
+    if (candidate) seenTokens.add(candidate)
+    nextPage = candidate
   } while (nextPage)
-  return aggregated
+  return { byDay: aggregated, pages, samples }
 }
 
 // OpenAI Costs API — 일자별 비용 합계
-async function fetchOpenAICostsByDay(apiKey: string, startUnix: number, endExclusiveUnix: number) {
+async function fetchOpenAICostsByDay(
+  apiKey: string,
+  startUnix: number,
+  endExclusiveUnix: number,
+  debug = false
+): Promise<{ byDay: Map<string, number>; pages: number; samples: any[] }> {
   const aggregated = new Map<string, number>()
+  const samples: any[] = []
+  const seenTokens = new Set<string>()
   let nextPage: string | null = null
+  let pages = 0
+  const MAX_PAGES = 50
   do {
+    if (pages >= MAX_PAGES) {
+      throw new Error(`OpenAI: pagination exceeded ${MAX_PAGES} pages — possible loop`)
+    }
     const params = new URLSearchParams({
       start_time: String(startUnix),
       end_time: String(endExclusiveUnix),
@@ -1292,6 +1326,8 @@ async function fetchOpenAICostsByDay(apiKey: string, startUnix: number, endExclu
       throw new Error(`OpenAI ${res.status}: ${txt.slice(0, 300)}`)
     }
     const data: any = await res.json()
+    pages++
+    if (debug && samples.length < 2) samples.push(data)
     for (const bucket of (data.data || [])) {
       const t = Number(bucket.start_time || 0)
       if (!t) continue
@@ -1304,9 +1340,14 @@ async function fetchOpenAICostsByDay(apiKey: string, startUnix: number, endExclu
       }
       aggregated.set(dateStr, (aggregated.get(dateStr) || 0) + total)
     }
-    nextPage = data.has_more ? (data.next_page || null) : null
+    const candidate = data.has_more ? (data.next_page || null) : null
+    if (candidate && seenTokens.has(candidate)) {
+      throw new Error(`OpenAI: duplicate next_page token detected (${candidate.slice(0, 16)}…) — aborting`)
+    }
+    if (candidate) seenTokens.add(candidate)
+    nextPage = candidate
   } while (nextPage)
-  return aggregated
+  return { byDay: aggregated, pages, samples }
 }
 
 // 같은 (provider, usage_date)의 auto 행 모두 삭제 후 새로 INSERT (manual 행은 건드리지 않음)
@@ -1356,8 +1397,8 @@ app.post('/api/admin/sync-ai-usage', async (c) => {
 
   if (c.env.ANTHROPIC_ADMIN_KEY) {
     try {
-      const map = await fetchAnthropicCostsByDay(c.env.ANTHROPIC_ADMIN_KEY, start.toISOString(), endExclusive.toISOString())
-      result.claude.synced_days = await upsertAutoUsage(db, 'claude', map)
+      const { byDay } = await fetchAnthropicCostsByDay(c.env.ANTHROPIC_ADMIN_KEY, start.toISOString(), endExclusive.toISOString())
+      result.claude.synced_days = await upsertAutoUsage(db, 'claude', byDay)
     } catch (e: any) {
       result.claude.error = String(e?.message || e)
     }
@@ -1368,12 +1409,12 @@ app.post('/api/admin/sync-ai-usage', async (c) => {
 
   if (c.env.OPENAI_ADMIN_KEY) {
     try {
-      const map = await fetchOpenAICostsByDay(
+      const { byDay } = await fetchOpenAICostsByDay(
         c.env.OPENAI_ADMIN_KEY,
         Math.floor(start.getTime() / 1000),
         Math.floor(endExclusive.getTime() / 1000)
       )
-      result.gpt.synced_days = await upsertAutoUsage(db, 'gpt', map)
+      result.gpt.synced_days = await upsertAutoUsage(db, 'gpt', byDay)
     } catch (e: any) {
       result.gpt.error = String(e?.message || e)
     }
@@ -1383,6 +1424,75 @@ app.post('/api/admin/sync-ai-usage', async (c) => {
   }
 
   return c.json({ success: true, ...result })
+})
+
+// Dry-run: API 호출만 하고 DB 에는 쓰지 않음. 콘솔값과 비교용.
+// body: { days?: number = 7, debug?: boolean = false }
+// debug=true 면 마지막 페이지 raw 응답 일부도 함께 반환
+app.post('/api/admin/sync-ai-usage-dry-run', async (c) => {
+  const expected = c.env.SYNC_TOKEN
+  if (expected) {
+    const auth = c.req.header('Authorization') || ''
+    const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : ''
+    if (token !== expected) return c.json({ error: 'Unauthorized' }, 401)
+  }
+
+  const body = await c.req.json().catch(() => ({} as any))
+  const days = Math.max(1, Math.min(90, parseInt(body?.days) || 7))
+  const debug = !!body?.debug
+
+  const now = new Date()
+  const endExclusive = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+  const start = new Date(endExclusive.getTime() - days * 86400000)
+
+  const mapToObj = (m: Map<string, number>) => {
+    const out: Record<string, number> = {}
+    for (const [k, v] of m) out[k] = Math.round(v * 100) / 100
+    return out
+  }
+
+  const result: any = {
+    range: { start: start.toISOString().slice(0, 10), end_exclusive: endExclusive.toISOString().slice(0, 10) },
+    claude: { by_day: {}, total: 0, pages: 0, error: null as string | null },
+    gpt:    { by_day: {}, total: 0, pages: 0, error: null as string | null },
+  }
+
+  if (c.env.ANTHROPIC_ADMIN_KEY) {
+    try {
+      const { byDay, pages, samples } = await fetchAnthropicCostsByDay(
+        c.env.ANTHROPIC_ADMIN_KEY, start.toISOString(), endExclusive.toISOString(), debug
+      )
+      result.claude.by_day = mapToObj(byDay)
+      result.claude.total = Math.round([...byDay.values()].reduce((a, b) => a + b, 0) * 100) / 100
+      result.claude.pages = pages
+      if (debug) result.claude.samples = samples
+    } catch (e: any) {
+      result.claude.error = String(e?.message || e)
+    }
+  } else {
+    result.claude.error = 'ANTHROPIC_ADMIN_KEY 가 설정되지 않았습니다'
+  }
+
+  if (c.env.OPENAI_ADMIN_KEY) {
+    try {
+      const { byDay, pages, samples } = await fetchOpenAICostsByDay(
+        c.env.OPENAI_ADMIN_KEY,
+        Math.floor(start.getTime() / 1000),
+        Math.floor(endExclusive.getTime() / 1000),
+        debug
+      )
+      result.gpt.by_day = mapToObj(byDay)
+      result.gpt.total = Math.round([...byDay.values()].reduce((a, b) => a + b, 0) * 100) / 100
+      result.gpt.pages = pages
+      if (debug) result.gpt.samples = samples
+    } catch (e: any) {
+      result.gpt.error = String(e?.message || e)
+    }
+  } else {
+    result.gpt.error = 'OPENAI_ADMIN_KEY 가 설정되지 않았습니다'
+  }
+
+  return c.json({ success: true, dry_run: true, ...result })
 })
 
 // Claude / GPT 전체 누적 잔액 — (충전 총합) - (사용 총합)
