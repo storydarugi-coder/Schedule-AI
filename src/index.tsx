@@ -1495,6 +1495,81 @@ app.post('/api/admin/sync-ai-usage-dry-run', async (c) => {
   return c.json({ success: true, dry_run: true, ...result })
 })
 
+// Anthropic cost_report 를 group_by 로 쪼개서 raw 응답 반환 (어떤 워크스페이스/모델/키가 비용을 쓰는지 진단)
+// body: { days?: number = 7, group_by?: string[] = ['workspace_id','model','api_key_id'] }
+app.post('/api/admin/anthropic-breakdown', async (c) => {
+  const expected = c.env.SYNC_TOKEN
+  if (expected) {
+    const auth = c.req.header('Authorization') || ''
+    const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : ''
+    if (token !== expected) return c.json({ error: 'Unauthorized' }, 401)
+  }
+  if (!c.env.ANTHROPIC_ADMIN_KEY) return c.json({ error: 'ANTHROPIC_ADMIN_KEY 미설정' }, 400)
+
+  const body = await c.req.json().catch(() => ({} as any))
+  const days = Math.max(1, Math.min(90, parseInt(body?.days) || 7))
+  const groupBy: string[] = Array.isArray(body?.group_by) && body.group_by.length > 0
+    ? body.group_by.map(String)
+    : ['workspace_id', 'model', 'api_key_id']
+
+  const now = new Date()
+  const endExclusive = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+  const start = new Date(endExclusive.getTime() - days * 86400000)
+
+  const params = new URLSearchParams({
+    starting_at: start.toISOString(),
+    ending_at: endExclusive.toISOString(),
+    bucket_width: '1d',
+  })
+  for (const g of groupBy) params.append('group_by[]', g)
+
+  const url = `https://api.anthropic.com/v1/organizations/cost_report?${params.toString()}`
+  const res = await fetch(url, {
+    headers: {
+      'x-api-key': c.env.ANTHROPIC_ADMIN_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+  })
+  const text = await res.text()
+  if (!res.ok) return c.json({ error: `Anthropic ${res.status}`, body: text.slice(0, 1000) }, 500)
+
+  const data: any = JSON.parse(text)
+
+  // 일자별 + 그룹별 합계 정리
+  const byDayByGroup: Record<string, Record<string, number>> = {}
+  for (const bucket of (data.data || [])) {
+    const dateStr = String(bucket.starting_at || '').slice(0, 10)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) continue
+    byDayByGroup[dateStr] = byDayByGroup[dateStr] || {}
+    for (const r of (bucket.results || [])) {
+      const key = groupBy.map(g => `${g}=${r?.[g] ?? 'null'}`).join(' | ')
+      const raw = (typeof r?.amount === 'object' && r?.amount !== null) ? r.amount.value : r?.amount
+      const amt = parseFloat(raw ?? '0')
+      if (isFinite(amt)) byDayByGroup[dateStr][key] = (byDayByGroup[dateStr][key] || 0) + amt
+    }
+  }
+
+  // 그룹별 누적 합계 (어떤 그룹이 가장 비용 많이 썼는지)
+  const totalByGroup: Record<string, number> = {}
+  for (const date of Object.keys(byDayByGroup)) {
+    for (const [k, v] of Object.entries(byDayByGroup[date])) {
+      totalByGroup[k] = (totalByGroup[k] || 0) + v
+    }
+  }
+  const sortedGroups = Object.entries(totalByGroup)
+    .sort(([, a], [, b]) => b - a)
+    .map(([k, v]) => ({ group: k, total: Math.round(v * 100) / 100 }))
+
+  return c.json({
+    success: true,
+    range: { start: start.toISOString().slice(0, 10), end_exclusive: endExclusive.toISOString().slice(0, 10) },
+    group_by: groupBy,
+    by_day_by_group: byDayByGroup,
+    top_groups: sortedGroups,
+    raw: data,
+  })
+})
+
 // auto-sync 로 들어간 행만 일괄 삭제 (manual 행은 보존)
 // body: { provider?: 'claude' | 'gpt' | 'all' = 'all', dry_run?: boolean = false }
 app.post('/api/admin/ai-usage-purge-auto', async (c) => {
