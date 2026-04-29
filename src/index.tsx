@@ -1495,6 +1495,49 @@ app.post('/api/admin/sync-ai-usage-dry-run', async (c) => {
   return c.json({ success: true, dry_run: true, ...result })
 })
 
+// auto-sync 로 들어간 행만 일괄 삭제 (manual 행은 보존)
+// body: { provider?: 'claude' | 'gpt' | 'all' = 'all', dry_run?: boolean = false }
+app.post('/api/admin/ai-usage-purge-auto', async (c) => {
+  const db = c.env.DB
+  await ensureAiUsageTable(db)
+
+  const expected = c.env.SYNC_TOKEN
+  if (expected) {
+    const auth = c.req.header('Authorization') || ''
+    const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : ''
+    if (token !== expected) return c.json({ error: 'Unauthorized' }, 401)
+  }
+
+  const body = await c.req.json().catch(() => ({} as any))
+  const provider = String(body?.provider || 'all').toLowerCase()
+  const dryRun = !!body?.dry_run
+
+  let where = `source = 'auto'`
+  const binds: any[] = []
+  if (provider === 'claude') { where += ` AND provider = ?`; binds.push('claude') }
+  else if (provider === 'gpt') { where += ` AND provider IN (?, ?)`; binds.push('gpt', 'gemini') }
+  else if (provider !== 'all') return c.json({ error: "provider 는 'claude' | 'gpt' | 'all' 중 하나" }, 400)
+
+  const preview: any = await db.prepare(
+    `SELECT id, usage_date, provider, amount, note FROM ai_usage WHERE ${where} ORDER BY usage_date DESC`
+  ).bind(...binds).all()
+  const rows = preview?.results || []
+
+  let deleted = 0
+  if (!dryRun && rows.length > 0) {
+    const res: any = await db.prepare(`DELETE FROM ai_usage WHERE ${where}`).bind(...binds).run()
+    deleted = res?.meta?.changes ?? rows.length
+  }
+
+  return c.json({
+    success: true,
+    dry_run: dryRun,
+    matched: rows.length,
+    deleted,
+    rows,
+  })
+})
+
 // Claude / GPT 전체 누적 잔액 — (충전 총합) - (사용 총합)
 // 충전: budgets.ai_provider = 'claude' | 'gpt' (수시결제, 이월 등 무관하게 원본 1회만 집계)
 // 사용: ai_usage.provider = 'claude' | 'gpt'
