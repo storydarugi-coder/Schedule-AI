@@ -1605,6 +1605,63 @@ app.delete('/api/vacations/:id', async (c) => {
 // 일일 점검 (체크리스트) API
 // =========================
 
+// 항목이 1개도 없으면 자동으로 시드되는 기본 점검 목록.
+// 사이트 운영자가 매일 출근해서 "어디 안 터졌나?" 한 화면에서 빠르게 훑는 용도.
+// 자동 항목은 API GET 응답으로 검증, 수동 항목은 화면 클릭/입력으로 5~10 초 안에 확인.
+const DEFAULT_CHECKLIST_ITEMS: Array<{ name: string; description: string; check_type: 'auto' | 'manual'; endpoint: string; sort_order: number }> = [
+  // ── 회원 / 인증 (사용자가 직접 시도해 확인) ──
+  { name: '회원가입 정상 작동 여부',         description: '회원가입 페이지에서 신규 계정 가입을 시도해보고 이메일 인증까지 정상 처리되는지 확인',  check_type: 'manual', endpoint: '', sort_order: 1 },
+  { name: '로그인 정상 작동 여부',           description: '관리자 계정으로 로그인 시도해보고 정상 진입 / 세션 유지가 되는지 확인',                check_type: 'manual', endpoint: '', sort_order: 2 },
+  { name: '로그아웃 정상 작동 여부',         description: '로그아웃 버튼을 눌러 세션이 정상적으로 종료되고 로그인 페이지로 이동하는지 확인',      check_type: 'manual', endpoint: '', sort_order: 3 },
+  { name: '비밀번호 찾기 / 재설정',           description: '비밀번호 찾기 플로우 (이메일 전송 → 링크 클릭 → 재설정) 가 정상 동작하는지 확인',     check_type: 'manual', endpoint: '', sort_order: 4 },
+  { name: '잘못된 비밀번호 에러 메시지',      description: '의도적으로 틀린 비밀번호로 로그인 시도 → 적절한 에러 메시지가 표시되는지 확인',       check_type: 'manual', endpoint: '', sort_order: 5 },
+  { name: '권한 없는 페이지 접근 차단',       description: '비로그인 상태에서 보호된 페이지에 직접 URL 접근 시 로그인 페이지로 리디렉션되는지 확인', check_type: 'manual', endpoint: '', sort_order: 6 },
+
+  // ── 사이트 살아있는지 (자동 점검) ──
+  { name: '메인 페이지 로딩',                description: 'winai.kr 루트 페이지 (/) 가 200 응답하는지 자동 확인',                                check_type: 'auto', endpoint: '/',                                  sort_order: 10 },
+  { name: '정적 자원 (CSS) 로딩',            description: '정적 파일 서빙 (/static/styles.css) 이 정상 동작하는지 자동 확인',                     check_type: 'auto', endpoint: '/static/styles.css',                 sort_order: 20 },
+  { name: '병원 목록 API',                   description: 'GET /api/hospitals — 병원 데이터 조회 정상 응답 확인',                                  check_type: 'auto', endpoint: '/api/hospitals',                     sort_order: 30 },
+  { name: '이번달 일정 API',                 description: 'GET /api/schedules/현재년/월 — 이번달 일정 데이터 조회 정상 응답 확인',                check_type: 'auto', endpoint: '/api/schedules/__YEAR__/__MONTH__',  sort_order: 40 },
+  { name: '이번달 업무 API',                 description: 'GET /api/tasks/현재년/월 — 이번달 업무 데이터 조회 정상 응답 확인',                    check_type: 'auto', endpoint: '/api/tasks/__YEAR__/__MONTH__',      sort_order: 50 },
+  { name: '이번달 예산 API',                 description: 'GET /api/budgets/현재년/월 — 이번달 예산 데이터 조회 정상 응답 확인',                   check_type: 'auto', endpoint: '/api/budgets/__YEAR__/__MONTH__',    sort_order: 60 },
+  { name: '이번달 AI 사용량 API',            description: 'GET /api/ai-usage/현재년/월 — AI 사용량 집계 조회 정상 응답 확인',                      check_type: 'auto', endpoint: '/api/ai-usage/__YEAR__/__MONTH__',   sort_order: 70 },
+  { name: 'AI 잔액 API',                     description: 'GET /api/ai-balance — Claude / GPT 누적 잔액 API 정상 응답 확인',                       check_type: 'auto', endpoint: '/api/ai-balance',                    sort_order: 80 },
+  { name: '연차/휴가 API',                   description: 'GET /api/vacations/현재년/월 — 휴가 데이터 조회 정상 응답 확인',                        check_type: 'auto', endpoint: '/api/vacations/__YEAR__/__MONTH__',  sort_order: 90 },
+
+  // ── 화면별 기능이 안 터졌나 (수동 점검 — 클릭 한두번으로 확인) ──
+  { name: '병원 관리 탭 정상 표시',          description: '병원 관리 탭에 진입해서 병원 목록이 정상적으로 보이고 빈 화면 / 에러가 없는지 확인',  check_type: 'manual', endpoint: '', sort_order: 100 },
+  { name: '병원 추가/수정/삭제 동작',        description: '병원을 하나 추가해보고 수정/삭제까지 동작하는지 확인 후 테스트 데이터 정리',           check_type: 'manual', endpoint: '', sort_order: 110 },
+  { name: '캘린더 렌더링 정상',              description: '캘린더 탭이 깨짐 없이 그려지고 일정 점이 정상 표시되는지 확인',                          check_type: 'manual', endpoint: '', sort_order: 120 },
+  { name: '캘린더에서 일정 클릭 동작',       description: '캘린더의 일정을 클릭했을 때 상세 모달이 정상적으로 열리는지 확인',                       check_type: 'manual', endpoint: '', sort_order: 130 },
+  { name: '일정 추가 동작',                  description: '아무 병원이나 골라 일정을 새로 추가했을 때 정상 저장 / 화면 반영되는지 확인',           check_type: 'manual', endpoint: '', sort_order: 140 },
+  { name: '일정 삭제 동작',                  description: '방금 추가한 테스트 일정을 삭제했을 때 정상 삭제 / 화면 반영되는지 확인',                check_type: 'manual', endpoint: '', sort_order: 150 },
+  { name: '일정 메모 입력/저장',             description: '일정 메모 칸에 메모를 입력 → 저장이 정상 동작하고 새로고침 후에도 유지되는지 확인',     check_type: 'manual', endpoint: '', sort_order: 160 },
+  { name: '작업 상세 모달 열기/닫기',         description: '작업을 더블클릭해 상세 모달이 정상 열리고 X 버튼으로 닫히는지 확인',                    check_type: 'manual', endpoint: '', sort_order: 170 },
+  { name: '하위작업 추가/완료 토글',         description: '작업 상세 모달에서 하위작업을 추가하고 체크박스로 완료 토글이 동작하는지 확인',          check_type: 'manual', endpoint: '', sort_order: 180 },
+  { name: '작업 진척률 변경 + 기록 저장',    description: '작업 진척률을 변경하고 기록(노트) 을 작성/저장했을 때 정상 반영되는지 확인',             check_type: 'manual', endpoint: '', sort_order: 190 },
+  { name: '간트차트 렌더링',                 description: '간트차트 뷰가 깨짐 없이 그려지고 막대가 정상 표시되는지 확인',                          check_type: 'manual', endpoint: '', sort_order: 200 },
+  { name: '간트차트 드래그/리사이즈',        description: '간트차트의 막대를 좌우 드래그 / 끝부분 리사이즈가 정상 동작하는지 확인',                check_type: 'manual', endpoint: '', sort_order: 210 },
+  { name: '연차/휴가 추가/삭제',             description: '연차/휴가 탭에서 휴가를 추가/삭제해보고 정상 동작하는지 확인',                          check_type: 'manual', endpoint: '', sort_order: 220 },
+  { name: '예산 항목 추가 (수시결제)',       description: '수시결제로 항목을 추가했을 때 결제일 입력이 숨겨지고 정상 저장되는지 확인',              check_type: 'manual', endpoint: '', sort_order: 230 },
+  { name: '예산 항목 추가 (정기결제)',       description: '정기결제로 항목을 추가했을 때 결제일 입력이 보이고 다음 달에도 자동 이월되는지 확인',     check_type: 'manual', endpoint: '', sort_order: 240 },
+  { name: '예산 결제 승인 토글',             description: '결제 승인 전 → 승인 완료 토글이 정상 동작하고 상단 카운터가 즉시 반영되는지 확인',     check_type: 'manual', endpoint: '', sort_order: 250 },
+  { name: '예산 결제 완료 토글',             description: '결제 완료 체크박스 토글이 정상 동작하고 합계 / 미결제 카운터가 즉시 반영되는지 확인',   check_type: 'manual', endpoint: '', sort_order: 260 },
+  { name: '예산 카드별 클릭 패널 이동',      description: '"결제 승인 전" 카드를 눌렀을 때 해당 패널로 정상 이동 / 필터링되는지 확인',              check_type: 'manual', endpoint: '', sort_order: 270 },
+  { name: 'AI 사용량 표시 정상',             description: 'AI 사용량 화면에서 Claude / GPT 일자별 데이터가 정상 표시되는지 확인',                  check_type: 'manual', endpoint: '', sort_order: 280 },
+  { name: 'AI 잔액 표시 정상',               description: '상단 / 패널의 AI 잔액이 정상 숫자로 표시되고 N/A 또는 0 으로 깨지지 않는지 확인',       check_type: 'manual', endpoint: '', sort_order: 290 },
+  { name: 'AI 사용량 자동 동기화 동작',      description: 'Anthropic / OpenAI 자동 동기화 버튼을 눌렀을 때 정상 응답하고 데이터가 갱신되는지 확인', check_type: 'manual', endpoint: '', sort_order: 300 },
+
+  // ── 데이터 누락 / 정합성 (수동) ──
+  { name: '어제 마감 작업 완료 처리',        description: '어제 마감이었던 작업이 모두 완료 체크되어 있는지, 미처리 항목이 남아있지 않은지 확인',  check_type: 'manual', endpoint: '', sort_order: 310 },
+  { name: '결제 승인 대기 누적 점검',        description: '"결제 승인 전" 카운터를 보고 오래 쌓여있는 미승인 결제가 없는지 확인 후 대표님께 보고',  check_type: 'manual', endpoint: '', sort_order: 320 },
+  { name: 'AI 잔액 부족 임박 여부',          description: 'Claude / GPT 잔액이 평소 사용량 대비 며칠 안에 바닥날 위험이 있는지 확인. 필요 시 충전', check_type: 'manual', endpoint: '', sort_order: 330 },
+
+  // ── 시각적 점검 ──
+  { name: '전체 레이아웃 / 오타 점검',       description: '메인부터 캘린더까지 한 번씩 훑어보면서 레이아웃 깨짐 / 오타 / 색상 이상이 있는지 육안 확인', check_type: 'manual', endpoint: '', sort_order: 340 },
+  { name: '모바일 화면 점검',                description: '핸드폰으로 winai.kr 에 접속해서 레이아웃 깨짐 / 버튼 터치 동작이 정상인지 확인',         check_type: 'manual', endpoint: '', sort_order: 350 },
+  { name: '브라우저 콘솔 에러 확인',          description: '개발자 도구 Console / Network 탭을 열어서 빨간 에러나 4xx/5xx 응답이 있는지 확인',      check_type: 'manual', endpoint: '', sort_order: 360 },
+]
+
 async function ensureChecklistTables(db: any) {
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS checklist_items (
@@ -1629,6 +1686,18 @@ async function ensureChecklistTables(db: any) {
       FOREIGN KEY (item_id) REFERENCES checklist_items(id) ON DELETE CASCADE
     )
   `).run()
+  // 기본 항목 자동 시드: 항목이 0개일 때만 채워넣는다.
+  // 마이그레이션을 별도로 적용하지 않은 환경에서도 첫 호출 시 자동으로 항목이 생성되며,
+  // 사용자가 항목을 수정/삭제한 이후에는 다시 채워넣지 않는다 (사용자 변경 보존).
+  const countRow: any = await db.prepare('SELECT COUNT(*) AS c FROM checklist_items').first()
+  const count = Number(countRow?.c ?? 0)
+  if (count === 0) {
+    for (const item of DEFAULT_CHECKLIST_ITEMS) {
+      await db.prepare(
+        'INSERT INTO checklist_items (name, description, check_type, endpoint, sort_order) VALUES (?, ?, ?, ?, ?)'
+      ).bind(item.name, item.description, item.check_type, item.endpoint, item.sort_order).run()
+    }
+  }
 }
 
 function todayStrUTC9() {
