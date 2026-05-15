@@ -2805,6 +2805,8 @@ app.get('/', (c) => {
             return d.toLocaleString('ko-KR', { hour: '2-digit', minute: '2-digit' });
         }
 
+        let __autoChecksRanToday = false;
+
         async function loadChecklistToday() {
             try {
                 const res = await axios.get('/api/checklist/today');
@@ -2812,6 +2814,23 @@ app.get('/', (c) => {
                 __checklistTodayStatus = {};
                 (res.data.logs || []).forEach(l => { __checklistTodayStatus[l.item_id] = l; });
                 renderChecklistToday();
+                // 오늘 자동 점검을 아직 안 돌렸으면 한 번 자동 실행한다.
+                // 이미 완료된 항목은 runAutoCheck 내부에서 다시 OK 로 기록되므로 안전.
+                if (!__autoChecksRanToday) {
+                    __autoChecksRanToday = true;
+                    const pending = __checklistItems.filter(i =>
+                        i.check_type === 'auto' && !(__checklistTodayStatus[i.id] && __checklistTodayStatus[i.id].status === 'ok')
+                    );
+                    if (pending.length > 0) {
+                        await Promise.all(pending.map(it => runAutoCheck(it.id, { silent: true })));
+                        // 일괄 결과 반영을 위해 한 번 다시 로드
+                        const r2 = await axios.get('/api/checklist/today');
+                        __checklistItems = r2.data.items || [];
+                        __checklistTodayStatus = {};
+                        (r2.data.logs || []).forEach(l => { __checklistTodayStatus[l.item_id] = l; });
+                        renderChecklistToday();
+                    }
+                }
             } catch (e) {
                 document.getElementById('checklist-list').innerHTML =
                     '<p class="text-rose-500 text-center py-6 text-sm">불러오기 실패: ' + (e.response?.data?.error || e.message) + '</p>';
@@ -2888,11 +2907,15 @@ app.get('/', (c) => {
             }
         };
 
-        window.runAutoCheck = async function(itemId) {
+        window.runAutoCheck = async function(itemId, opts) {
+            const silent = !!(opts && opts.silent);
             const item = __checklistItems.find(i => i.id === itemId);
             if (!item || item.check_type !== 'auto') return;
             const url = fillEndpoint(item.endpoint);
-            if (!url) { alert('자동 점검 엔드포인트가 비어있습니다.'); return; }
+            if (!url) {
+                if (!silent) alert('자동 점검 엔드포인트가 비어있습니다.');
+                return;
+            }
             let status = 'ok';
             let note = '';
             try {
@@ -2910,18 +2933,18 @@ app.get('/', (c) => {
             }
             try {
                 await axios.post(\`/api/checklist/check/\${itemId}\`, { status, note });
-                await loadChecklistToday();
+                if (!silent) await loadChecklistToday();
             } catch (e) {
-                alert('기록 실패: ' + (e.response?.data?.error || e.message));
+                if (!silent) alert('기록 실패: ' + (e.response?.data?.error || e.message));
             }
         };
 
         window.runAllAutoChecks = async function() {
             const autos = __checklistItems.filter(i => i.check_type === 'auto');
             if (autos.length === 0) { alert('자동 점검 항목이 없습니다.'); return; }
-            for (const item of autos) {
-                await runAutoCheck(item.id);
-            }
+            // 병렬 실행 후 한 번만 새로고침 — 항목별 reload 폭주 방지.
+            await Promise.all(autos.map(it => runAutoCheck(it.id, { silent: true })));
+            await loadChecklistToday();
         };
 
         async function loadChecklistHistory() {
