@@ -98,121 +98,6 @@ app.get('/api/monthly-tasks/:hospital_id/:year/:month', async (c) => {
 })
 
 // =========================
-// 유튜브 관리 API
-// =========================
-
-app.get('/api/youtube', async (c) => {
-  const db = c.env.DB
-  try {
-    const result = await db.prepare('SELECT * FROM youtube_entries ORDER BY created_at DESC').all()
-    return c.json(result.results)
-  } catch (e) {
-    return c.json([])
-  }
-})
-
-app.post('/api/youtube', async (c) => {
-  const db = c.env.DB
-  const { url, title, impressions, views, subscribers, upload_date } = await c.req.json()
-  if (!url) return c.json({ error: 'URL을 입력해주세요' }, 400)
-  try {
-    await db.prepare(`CREATE TABLE IF NOT EXISTS youtube_entries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      url TEXT NOT NULL,
-      title TEXT DEFAULT '',
-      impressions INTEGER DEFAULT 0,
-      views INTEGER DEFAULT 0,
-      subscribers INTEGER DEFAULT 0,
-      upload_date TEXT DEFAULT '',
-      memo TEXT DEFAULT '',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`).run()
-    // upload_date 컬럼이 없으면 추가
-    try { await db.prepare('ALTER TABLE youtube_entries ADD COLUMN upload_date TEXT DEFAULT ""').run() } catch(e) {}
-
-    const result = await db.prepare(
-      'INSERT INTO youtube_entries (url, title, impressions, views, subscribers, upload_date) VALUES (?, ?, ?, ?, ?, ?)'
-    ).bind(url, title || '', impressions || 0, views || 0, subscribers || 0, upload_date || '').run()
-    return c.json({ id: result.meta.last_row_id })
-  } catch (e) {
-    return c.json({ error: '추가 실패' }, 400)
-  }
-})
-
-app.put('/api/youtube/:id', async (c) => {
-  const db = c.env.DB
-  const id = c.req.param('id')
-  const { url, title, impressions, views, subscribers, upload_date } = await c.req.json()
-  try { await db.prepare('ALTER TABLE youtube_entries ADD COLUMN upload_date TEXT DEFAULT ""').run() } catch(e) {}
-  await db.prepare(
-    'UPDATE youtube_entries SET url = ?, title = ?, impressions = ?, views = ?, subscribers = ?, upload_date = ? WHERE id = ?'
-  ).bind(url || '', title || '', impressions || 0, views || 0, subscribers || 0, upload_date || '', id).run()
-  return c.json({ success: true })
-})
-
-app.delete('/api/youtube/:id', async (c) => {
-  const db = c.env.DB
-  await db.prepare('DELETE FROM youtube_entries WHERE id = ?').bind(c.req.param('id')).run()
-  return c.json({ success: true })
-})
-
-// =========================
-// 인스타그램 관리 API
-// =========================
-
-app.get('/api/instagram', async (c) => {
-  const db = c.env.DB
-  try {
-    const result = await db.prepare('SELECT * FROM instagram_entries ORDER BY created_at DESC').all()
-    return c.json(result.results)
-  } catch (e) {
-    return c.json([])
-  }
-})
-
-app.post('/api/instagram', async (c) => {
-  const db = c.env.DB
-  const { url, title, impressions, views, followers, upload_date } = await c.req.json()
-  if (!url) return c.json({ error: 'URL을 입력해주세요' }, 400)
-  try {
-    await db.prepare(`CREATE TABLE IF NOT EXISTS instagram_entries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      url TEXT NOT NULL,
-      title TEXT DEFAULT '',
-      impressions INTEGER DEFAULT 0,
-      views INTEGER DEFAULT 0,
-      followers INTEGER DEFAULT 0,
-      upload_date TEXT DEFAULT '',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`).run()
-    try { await db.prepare('ALTER TABLE instagram_entries ADD COLUMN upload_date TEXT DEFAULT ""').run() } catch(e) {}
-    const result = await db.prepare(
-      'INSERT INTO instagram_entries (url, title, impressions, views, followers, upload_date) VALUES (?, ?, ?, ?, ?, ?)'
-    ).bind(url, title || '', impressions || 0, views || 0, followers || 0, upload_date || '').run()
-    return c.json({ id: result.meta.last_row_id })
-  } catch (e) {
-    return c.json({ error: '추가 실패' }, 400)
-  }
-})
-
-app.put('/api/instagram/:id', async (c) => {
-  const db = c.env.DB
-  const id = c.req.param('id')
-  const { url, title, impressions, views, followers, upload_date } = await c.req.json()
-  try { await db.prepare('ALTER TABLE instagram_entries ADD COLUMN upload_date TEXT DEFAULT ""').run() } catch(e) {}
-  await db.prepare(
-    'UPDATE instagram_entries SET url = ?, title = ?, impressions = ?, views = ?, followers = ?, upload_date = ? WHERE id = ?'
-  ).bind(url || '', title || '', impressions || 0, views || 0, followers || 0, upload_date || '', id).run()
-  return c.json({ success: true })
-})
-
-app.delete('/api/instagram/:id', async (c) => {
-  const db = c.env.DB
-  await db.prepare('DELETE FROM instagram_entries WHERE id = ?').bind(c.req.param('id')).run()
-  return c.json({ success: true })
-})
-
-// =========================
 // 월별 작업량
 // =========================
 
@@ -992,7 +877,29 @@ app.get('/api/budgets/:year/:month', async (c) => {
     ORDER BY is_carryover, b.budget_date, b.id
   `).bind(year, month, year, month, key, key).all()
 
-  return c.json(result.results)
+  // 정기/이월 항목은 원본의 일(day) 만 유지하고 연/월은 보고있는 달로 치환해 display_date 를 만든다.
+  // - 원본 budget_date 가 'YYYY-MM-DD' 형식이 아니면 그대로 사용.
+  // - 원본 day 가 해당 달에 존재하지 않으면 (예: 31일 → 2월) 해당 달 마지막 날로 폴백.
+  // 원본 budget_date 는 그대로 보존 → 이월 항목 편집 시 원본 행이 안전하게 갱신된다.
+  const lastDayOfMonth = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate()
+  const rows: any[] = (result.results as any[]).map((b: any) => {
+    let display_date: string | null = b.budget_date ?? null
+    if (b.is_carryover && b.budget_date && /^\d{4}-\d{2}-\d{2}$/.test(b.budget_date)) {
+      const day = parseInt(b.budget_date.slice(8, 10))
+      const last = lastDayOfMonth(year, month)
+      const safeDay = Math.min(day, last)
+      display_date = `${year}-${String(month).padStart(2, '0')}-${String(safeDay).padStart(2, '0')}`
+    }
+    return { ...b, display_date }
+  })
+  rows.sort((a, b) => {
+    if (a.is_carryover !== b.is_carryover) return a.is_carryover - b.is_carryover
+    const da = a.display_date || '9999-12-31'
+    const db_ = b.display_date || '9999-12-31'
+    return da.localeCompare(db_)
+  })
+
+  return c.json(rows)
 })
 
 // 예산 항목 추가
@@ -1695,6 +1602,149 @@ app.delete('/api/vacations/:id', async (c) => {
 })
 
 // =========================
+// 일일 점검 (체크리스트) API
+// =========================
+
+async function ensureChecklistTables(db: any) {
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS checklist_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      check_type TEXT NOT NULL DEFAULT 'manual',
+      endpoint TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run()
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS checklist_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_id INTEGER NOT NULL,
+      check_date TEXT NOT NULL,
+      checked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      status TEXT NOT NULL DEFAULT 'ok',
+      note TEXT NOT NULL DEFAULT '',
+      FOREIGN KEY (item_id) REFERENCES checklist_items(id) ON DELETE CASCADE
+    )
+  `).run()
+}
+
+function todayStrUTC9() {
+  // 한국 시간(UTC+9) 기준 YYYY-MM-DD
+  const now = new Date(Date.now() + 9 * 60 * 60 * 1000)
+  const y = now.getUTCFullYear()
+  const m = String(now.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(now.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+// 점검 항목 목록
+app.get('/api/checklist/items', async (c) => {
+  const db = c.env.DB
+  await ensureChecklistTables(db)
+  const r = await db.prepare(
+    'SELECT * FROM checklist_items WHERE is_active = 1 ORDER BY sort_order, id'
+  ).all()
+  return c.json(r.results)
+})
+
+// 점검 항목 추가
+app.post('/api/checklist/items', async (c) => {
+  const db = c.env.DB
+  await ensureChecklistTables(db)
+  const { name, description, check_type, endpoint } = await c.req.json()
+  if (!name || !String(name).trim()) return c.json({ error: '항목 이름을 입력해주세요' }, 400)
+  const ct = check_type === 'auto' ? 'auto' : 'manual'
+  const ep = ct === 'auto' ? String(endpoint || '').trim() : ''
+  if (ct === 'auto' && !ep) return c.json({ error: '자동 점검은 엔드포인트가 필요합니다' }, 400)
+  const last: any = await db.prepare('SELECT MAX(sort_order) AS max_order FROM checklist_items').first()
+  const sort = ((last?.max_order as number | null) ?? 0) + 10
+  const result = await db.prepare(
+    'INSERT INTO checklist_items (name, description, check_type, endpoint, sort_order) VALUES (?, ?, ?, ?, ?)'
+  ).bind(String(name).trim(), String(description || ''), ct, ep, sort).run()
+  return c.json({ success: true, id: result.meta.last_row_id })
+})
+
+// 점검 항목 수정
+app.put('/api/checklist/items/:id', async (c) => {
+  const db = c.env.DB
+  await ensureChecklistTables(db)
+  const id = parseInt(c.req.param('id'))
+  const data = await c.req.json()
+  const fields: string[] = []
+  const values: any[] = []
+  if (data.name !== undefined) { fields.push('name = ?'); values.push(String(data.name)) }
+  if (data.description !== undefined) { fields.push('description = ?'); values.push(String(data.description)) }
+  if (data.check_type !== undefined) { fields.push('check_type = ?'); values.push(data.check_type === 'auto' ? 'auto' : 'manual') }
+  if (data.endpoint !== undefined) { fields.push('endpoint = ?'); values.push(String(data.endpoint || '')) }
+  if (data.sort_order !== undefined) { fields.push('sort_order = ?'); values.push(parseInt(data.sort_order) || 0) }
+  if (data.is_active !== undefined) { fields.push('is_active = ?'); values.push(data.is_active ? 1 : 0) }
+  if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400)
+  values.push(id)
+  await db.prepare(`UPDATE checklist_items SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run()
+  return c.json({ success: true })
+})
+
+// 점검 항목 삭제
+app.delete('/api/checklist/items/:id', async (c) => {
+  const db = c.env.DB
+  await ensureChecklistTables(db)
+  const id = parseInt(c.req.param('id'))
+  await db.prepare('DELETE FROM checklist_logs WHERE item_id = ?').bind(id).run()
+  await db.prepare('DELETE FROM checklist_items WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
+// 오늘의 점검 상태 (항목 + 오늘 로그 중 가장 최신 row 만)
+app.get('/api/checklist/today', async (c) => {
+  const db = c.env.DB
+  await ensureChecklistTables(db)
+  const today = todayStrUTC9()
+  const itemsR = await db.prepare(
+    'SELECT * FROM checklist_items WHERE is_active = 1 ORDER BY sort_order, id'
+  ).all()
+  // 오늘 각 item 의 최신 로그 1개
+  const logsR = await db.prepare(`
+    SELECT l.* FROM checklist_logs l
+    INNER JOIN (
+      SELECT item_id, MAX(id) AS max_id FROM checklist_logs WHERE check_date = ? GROUP BY item_id
+    ) m ON l.id = m.max_id
+  `).bind(today).all()
+  return c.json({ date: today, items: itemsR.results, logs: logsR.results })
+})
+
+// 항목 체크 (수동 / 자동 결과 둘 다 동일 엔드포인트로 기록)
+app.post('/api/checklist/check/:item_id', async (c) => {
+  const db = c.env.DB
+  await ensureChecklistTables(db)
+  const itemId = parseInt(c.req.param('item_id'))
+  const { status, note } = await c.req.json().catch(() => ({}))
+  const s = status === 'fail' ? 'fail' : 'ok'
+  const today = todayStrUTC9()
+  const result = await db.prepare(
+    'INSERT INTO checklist_logs (item_id, check_date, status, note) VALUES (?, ?, ?, ?)'
+  ).bind(itemId, today, s, String(note || '')).run()
+  return c.json({ success: true, id: result.meta.last_row_id, date: today, status: s })
+})
+
+// 특정 날짜 점검 기록
+app.get('/api/checklist/history', async (c) => {
+  const db = c.env.DB
+  await ensureChecklistTables(db)
+  const date = c.req.query('date') || todayStrUTC9()
+  const r = await db.prepare(`
+    SELECT l.*, i.name AS item_name, i.check_type
+    FROM checklist_logs l
+    LEFT JOIN checklist_items i ON i.id = l.item_id
+    WHERE l.check_date = ?
+    ORDER BY l.checked_at DESC, l.id DESC
+  `).bind(date).all()
+  return c.json({ date, logs: r.results })
+})
+
+// =========================
 // 루트 페이지
 // =========================
 
@@ -1769,14 +1819,11 @@ app.get('/', (c) => {
                 <button onclick="showTab('hospitals')" id="tab-hospitals" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
                     <i class="fas fa-hospital mr-2"></i>병원 관리
                 </button>
+                <button onclick="showTab('checklist')" id="tab-checklist" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
+                    <i class="fas fa-clipboard-check mr-2"></i>일일 점검
+                </button>
                 <button onclick="showTab('vacations')" id="tab-vacations" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
                     <i class="fas fa-umbrella-beach mr-2"></i>연차/휴가
-                </button>
-                <button onclick="showTab('youtube')" id="tab-youtube" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
-                    <i class="fab fa-youtube mr-2"></i>유튜브
-                </button>
-                <button onclick="showTab('instagram')" id="tab-instagram" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
-                    <i class="fab fa-instagram mr-2"></i>인스타그램
                 </button>
                 <button onclick="showTab('budget')" id="tab-budget" class="tab-button flex-1 py-3 px-4 rounded-lg font-medium text-sm transition-all">
                     <i class="fas fa-won-sign mr-2"></i>예산 관리
@@ -2239,76 +2286,83 @@ app.get('/', (c) => {
             </div>
         </div>
 
-        <!-- 유튜브 탭 -->
-        <div id="content-youtube" class="tab-content hidden">
-            <div class="bg-white rounded-xl shadow-lg p-6 border-2 border-red-100">
-                <div class="flex justify-between items-center mb-6">
-                    <h2 class="text-2xl font-bold text-red-500">
-                        <i class="fab fa-youtube mr-2"></i>유튜브
-                    </h2>
-                    <button onclick="openYoutubeModal()" class="bg-red-500 hover:bg-red-600 text-white rounded-lg px-5 py-2.5 font-semibold shadow-md hover:shadow-lg transition-all">
-                        <i class="fas fa-plus mr-2"></i>추가
-                    </button>
+        <!-- 일일 점검 (체크리스트) 탭 -->
+        <div id="content-checklist" class="tab-content hidden">
+            <div class="bg-white rounded-xl shadow-lg p-6 mb-6 border-2 border-indigo-100">
+                <div class="flex flex-wrap justify-between items-center gap-3 mb-5">
+                    <div>
+                        <h2 class="text-2xl font-bold text-indigo-700">
+                            <i class="fas fa-clipboard-check mr-2"></i>일일 점검 체크리스트
+                        </h2>
+                        <p class="text-sm text-slate-500 mt-1">
+                            <i class="fas fa-calendar-day mr-1"></i>
+                            <span id="checklist-today-label">오늘</span>
+                            <span class="mx-2 text-slate-300">·</span>
+                            <span id="checklist-summary">진행률 0 / 0</span>
+                        </p>
+                    </div>
+                    <div class="flex gap-2 items-center">
+                        <button onclick="runAllAutoChecks()" class="bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm font-semibold shadow-sm">
+                            <i class="fas fa-bolt mr-1"></i>자동 점검 전체 실행
+                        </button>
+                        <button onclick="openChecklistItemModal()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg px-4 py-2 text-sm font-semibold">
+                            <i class="fas fa-cog mr-1"></i>항목 관리
+                        </button>
+                    </div>
                 </div>
-                <div id="youtube-list"></div>
+                <div id="checklist-list" class="space-y-2">
+                    <p class="text-slate-400 text-center py-8">불러오는 중...</p>
+                </div>
             </div>
-        </div>
 
-        <!-- 인스타그램 탭 -->
-        <div id="content-instagram" class="tab-content hidden">
-            <div class="bg-white rounded-xl shadow-lg p-6 border-2 border-pink-100">
-                <div class="flex justify-between items-center mb-6">
-                    <h2 class="text-2xl font-bold text-pink-500">
-                        <i class="fab fa-instagram mr-2"></i>인스타그램
-                    </h2>
-                    <button onclick="openInstagramModal()" class="bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white rounded-lg px-5 py-2.5 font-semibold shadow-md hover:shadow-lg transition-all">
-                        <i class="fas fa-plus mr-2"></i>추가
-                    </button>
+            <div class="bg-white rounded-xl shadow-lg p-6 border border-slate-200">
+                <div class="flex flex-wrap justify-between items-center gap-3 mb-4">
+                    <h3 class="text-lg font-bold text-slate-700">
+                        <i class="fas fa-history mr-2 text-slate-500"></i>점검 기록
+                    </h3>
+                    <div class="flex gap-2 items-center">
+                        <input type="date" id="checklist-history-date" onchange="loadChecklistHistory()" class="border-2 border-slate-200 rounded-lg px-3 py-2 text-sm">
+                    </div>
                 </div>
-                <div id="instagram-list"></div>
+                <div id="checklist-history" class="space-y-1.5">
+                    <p class="text-slate-400 text-center py-6 text-sm">날짜를 선택하면 해당일 기록이 표시됩니다.</p>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- 유튜브 추가 모달 -->
-    <div id="youtube-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div class="bg-white rounded-xl shadow-2xl p-6 w-[28rem] max-w-full mx-4">
-            <h3 class="text-xl font-bold text-red-500 mb-4">
-                <i class="fab fa-youtube mr-2"></i>유튜브 추가
-            </h3>
-            <div class="space-y-3">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">URL</label>
-                    <input type="text" id="yt-url" placeholder="https://youtube.com/watch?v=..." class="w-full border-2 border-red-200 rounded-lg px-4 py-2 focus:border-red-400 focus:outline-none">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">제목</label>
-                    <input type="text" id="yt-title" placeholder="영상 제목" class="w-full border-2 border-red-200 rounded-lg px-4 py-2 focus:border-red-400 focus:outline-none">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">업로드 날짜</label>
-                    <input type="date" id="yt-upload-date" class="w-full border-2 border-red-200 rounded-lg px-4 py-2 focus:border-red-400 focus:outline-none">
-                </div>
-                <div class="grid grid-cols-3 gap-3">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">노출수</label>
-                        <input type="number" id="yt-impressions" min="0" value="0" class="w-full border-2 border-red-200 rounded-lg px-4 py-2 focus:border-red-400 focus:outline-none">
+    <!-- 점검 항목 관리 모달 -->
+    <div id="checklist-item-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-2xl p-6 w-[36rem] max-w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-bold text-indigo-700">
+                    <i class="fas fa-cog mr-2"></i>점검 항목 관리
+                </h3>
+                <button onclick="closeChecklistItemModal()" class="text-slate-400 hover:text-slate-700"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="border border-indigo-100 rounded-lg p-4 mb-4 bg-indigo-50/50">
+                <h4 class="text-sm font-bold text-indigo-700 mb-2">새 항목 추가</h4>
+                <div class="grid grid-cols-1 gap-2">
+                    <input type="text" id="ci-name" placeholder="항목 이름 (예: 로그인 정상 작동 여부)" class="border-2 border-indigo-200 rounded-lg px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none">
+                    <input type="text" id="ci-description" placeholder="설명 (선택)" class="border-2 border-indigo-200 rounded-lg px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none">
+                    <div class="grid grid-cols-2 gap-2">
+                        <select id="ci-type" onchange="onChecklistTypeChange()" class="border-2 border-indigo-200 rounded-lg px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none">
+                            <option value="manual">수동 점검</option>
+                            <option value="auto">자동 점검 (API 호출)</option>
+                        </select>
+                        <input type="text" id="ci-endpoint" placeholder="GET 엔드포인트 (자동만 사용)" disabled class="border-2 border-indigo-200 rounded-lg px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none disabled:bg-slate-100 disabled:text-slate-400">
                     </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">조회수</label>
-                        <input type="number" id="yt-views" min="0" value="0" class="w-full border-2 border-red-200 rounded-lg px-4 py-2 focus:border-red-400 focus:outline-none">
+                    <div class="text-[11px] text-slate-500">
+                        자동 점검 엔드포인트에는 <code class="bg-slate-100 px-1 rounded">__YEAR__</code>, <code class="bg-slate-100 px-1 rounded">__MONTH__</code> 토큰을 사용할 수 있습니다 — 호출 시 현재 연/월로 치환됩니다.
                     </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">구독자수</label>
-                        <input type="number" id="yt-subscribers" min="0" value="0" class="w-full border-2 border-red-200 rounded-lg px-4 py-2 focus:border-red-400 focus:outline-none">
-                    </div>
+                    <button onclick="addChecklistItem()" class="bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm font-semibold">
+                        <i class="fas fa-plus mr-1"></i>추가
+                    </button>
                 </div>
             </div>
-            <div class="flex justify-end gap-2 mt-5">
-                <button onclick="closeYoutubeModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">취소</button>
-                <button onclick="addYoutubeEntry()" class="bg-red-500 hover:bg-red-600 text-white rounded-lg px-6 py-2 font-semibold shadow-md">
-                    <i class="fas fa-plus mr-2"></i>추가
-                </button>
+            <div>
+                <h4 class="text-sm font-bold text-slate-700 mb-2">등록된 항목</h4>
+                <div id="checklist-item-manage-list" class="space-y-1.5"></div>
             </div>
         </div>
     </div>
@@ -2359,49 +2413,6 @@ app.get('/', (c) => {
                     </button>
                 </div>
                 <div id="task-detail-subtask-list" class="space-y-1.5"></div>
-            </div>
-        </div>
-    </div>
-
-    <!-- 인스타그램 추가 모달 -->
-    <div id="instagram-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div class="bg-white rounded-xl shadow-2xl p-6 w-[28rem] max-w-full mx-4">
-            <h3 class="text-xl font-bold text-pink-500 mb-4">
-                <i class="fab fa-instagram mr-2"></i>인스타그램 추가
-            </h3>
-            <div class="space-y-3">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">URL</label>
-                    <input type="text" id="ig-url" placeholder="https://instagram.com/p/..." class="w-full border-2 border-pink-200 rounded-lg px-4 py-2 focus:border-pink-400 focus:outline-none">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">제목</label>
-                    <input type="text" id="ig-title" placeholder="게시물 제목" class="w-full border-2 border-pink-200 rounded-lg px-4 py-2 focus:border-pink-400 focus:outline-none">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">업로드 날짜</label>
-                    <input type="date" id="ig-upload-date" class="w-full border-2 border-pink-200 rounded-lg px-4 py-2 focus:border-pink-400 focus:outline-none">
-                </div>
-                <div class="grid grid-cols-3 gap-3">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">조회수</label>
-                        <input type="number" id="ig-impressions" min="0" value="0" class="w-full border-2 border-pink-200 rounded-lg px-4 py-2 focus:border-pink-400 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">좋아요수</label>
-                        <input type="number" id="ig-views" min="0" value="0" class="w-full border-2 border-pink-200 rounded-lg px-4 py-2 focus:border-pink-400 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">팔로워수</label>
-                        <input type="number" id="ig-followers" min="0" value="0" class="w-full border-2 border-pink-200 rounded-lg px-4 py-2 focus:border-pink-400 focus:outline-none">
-                    </div>
-                </div>
-            </div>
-            <div class="flex justify-end gap-2 mt-5">
-                <button onclick="closeInstagramModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">취소</button>
-                <button onclick="addInstagramEntry()" class="bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-lg px-6 py-2 font-semibold shadow-md">
-                    <i class="fas fa-plus mr-2"></i>추가
-                </button>
             </div>
         </div>
     </div>
@@ -2581,14 +2592,12 @@ app.get('/', (c) => {
             if (tab === 'vacations') {
                 loadVacations();
             }
-            if (tab === 'youtube') {
-                loadYoutubeEntries();
-            }
-            if (tab === 'instagram') {
-                loadInstagramEntries();
-            }
             if (tab === 'budget') {
                 loadBudgets();
+            }
+            if (tab === 'checklist') {
+                loadChecklistToday();
+                loadChecklistHistory();
             }
         };
 
@@ -2695,199 +2704,269 @@ app.get('/', (c) => {
             }
         };
 
-        // ========== 유튜브 ==========
-        window.openYoutubeModal = function() {
-            document.getElementById('yt-url').value = '';
-            document.getElementById('yt-title').value = '';
-            document.getElementById('yt-upload-date').value = '';
-            document.getElementById('yt-impressions').value = '0';
-            document.getElementById('yt-views').value = '0';
-            document.getElementById('yt-subscribers').value = '0';
-            document.getElementById('youtube-modal').classList.remove('hidden');
-        };
-        window.closeYoutubeModal = function() { document.getElementById('youtube-modal').classList.add('hidden'); };
-
-        window.addYoutubeEntry = async function() {
-            const url = document.getElementById('yt-url').value.trim();
-            if (!url) { alert('URL을 입력해주세요'); return; }
-            try {
-                await axios.post('/api/youtube', {
-                    url,
-                    title: document.getElementById('yt-title').value.trim(),
-                    upload_date: document.getElementById('yt-upload-date').value,
-                    impressions: parseInt(document.getElementById('yt-impressions').value) || 0,
-                    views: parseInt(document.getElementById('yt-views').value) || 0,
-                    subscribers: parseInt(document.getElementById('yt-subscribers').value) || 0,
-                });
-                closeYoutubeModal();
-                loadYoutubeEntries();
-            } catch (error) {
-                alert('추가 실패: ' + (error.response?.data?.error || error.message));
-            }
-        };
-
-        window.deleteYoutubeEntry = async function(id) {
-            if (!confirm('삭제하시겠습니까?')) return;
-            try { await axios.delete(\`/api/youtube/\${id}\`); loadYoutubeEntries(); } catch(e) { alert('삭제 실패'); }
-        };
-
-        window.saveYoutubeEdit = async function(id) {
-            const row = document.querySelector(\`[data-yt-id="\${id}"]\`);
-            if (!row) return;
-            try {
-                await axios.put(\`/api/youtube/\${id}\`, {
-                    url: row.querySelector('.yt-edit-url').value,
-                    title: row.querySelector('.yt-edit-title').value,
-                    upload_date: row.querySelector('.yt-edit-upload-date').value,
-                    impressions: parseInt(row.querySelector('.yt-edit-impressions').value) || 0,
-                    views: parseInt(row.querySelector('.yt-edit-views').value) || 0,
-                    subscribers: parseInt(row.querySelector('.yt-edit-subscribers').value) || 0,
-                });
-                loadYoutubeEntries();
-            } catch(e) { alert('수정 실패'); }
-        };
-
         function formatNumber(n) { return (n || 0).toLocaleString(); }
 
-        async function loadYoutubeEntries() {
-            try {
-                const res = await axios.get('/api/youtube');
-                const list = document.getElementById('youtube-list');
-                if (!res.data || res.data.length === 0) {
-                    list.innerHTML = '<p class="text-gray-400 text-center py-8">등록된 항목이 없습니다.</p>';
-                    return;
-                }
-                list.innerHTML = res.data.map(e => \`
-                    <div class="bg-gradient-to-r from-red-50 to-white border-2 border-red-100 rounded-xl p-4 mb-3 hover:shadow-md transition-all" data-yt-id="\${e.id}">
-                        <div class="flex justify-between items-center mb-3">
-                            <a href="\${e.url}" target="_blank" class="text-red-600 hover:text-red-800 font-semibold truncate flex-1 mr-3">
-                                <i class="fab fa-youtube mr-2"></i>\${e.title || '제목 없음'}
-                            </a>
-                            <div class="flex gap-1 shrink-0">
-                                <button onclick="saveYoutubeEdit(\${e.id})" class="text-blue-500 hover:text-blue-700 p-1.5 rounded hover:bg-blue-50" title="저장"><i class="fas fa-save"></i></button>
-                                <button onclick="deleteYoutubeEntry(\${e.id})" class="text-red-400 hover:text-red-600 p-1.5 rounded hover:bg-red-50" title="삭제"><i class="fas fa-trash"></i></button>
-                            </div>
-                        </div>
-                        <input type="hidden" class="yt-edit-url" value="\${e.url}">
-                        <input type="hidden" class="yt-edit-title" value="\${e.title || ''}">
-                        <div class="flex items-center gap-2 mb-2 text-sm text-gray-500">
-                            <i class="fas fa-calendar-alt"></i>
-                            <input type="date" class="yt-edit-upload-date border border-gray-200 rounded px-2 py-1 text-sm" value="\${e.upload_date || ''}">
-                        </div>
-                        <div class="grid grid-cols-3 gap-3">
-                            <div class="bg-white rounded-lg p-3 border border-red-100 text-center">
-                                <div class="text-xs text-gray-500 mb-1">노출수</div>
-                                <input type="number" class="yt-edit-impressions w-full text-center text-lg font-bold text-red-600 border-0 bg-transparent focus:outline-none" value="\${e.impressions || 0}">
-                            </div>
-                            <div class="bg-white rounded-lg p-3 border border-red-100 text-center">
-                                <div class="text-xs text-gray-500 mb-1">조회수</div>
-                                <input type="number" class="yt-edit-views w-full text-center text-lg font-bold text-red-600 border-0 bg-transparent focus:outline-none" value="\${e.views || 0}">
-                            </div>
-                            <div class="bg-white rounded-lg p-3 border border-red-100 text-center">
-                                <div class="text-xs text-gray-500 mb-1">구독자수</div>
-                                <input type="number" class="yt-edit-subscribers w-full text-center text-lg font-bold text-red-600 border-0 bg-transparent focus:outline-none" value="\${e.subscribers || 0}">
-                            </div>
-                        </div>
-                    </div>
-                \`).join('');
-            } catch(e) { console.error('유튜브 로드 실패', e); }
+        // ========== 일일 점검 (체크리스트) ==========
+        let __checklistItems = [];
+        let __checklistTodayStatus = {};
+
+        function todayDateStr() {
+            const d = new Date();
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return \`\${y}-\${m}-\${day}\`;
         }
 
-        // ========== 인스타그램 ==========
-        window.openInstagramModal = function() {
-            document.getElementById('ig-url').value = '';
-            document.getElementById('ig-title').value = '';
-            document.getElementById('ig-upload-date').value = '';
-            document.getElementById('ig-impressions').value = '0';
-            document.getElementById('ig-views').value = '0';
-            document.getElementById('ig-followers').value = '0';
-            document.getElementById('instagram-modal').classList.remove('hidden');
-        };
-        window.closeInstagramModal = function() { document.getElementById('instagram-modal').classList.add('hidden'); };
+        function fillEndpoint(endpoint) {
+            const d = new Date();
+            return (endpoint || '')
+                .replaceAll('__YEAR__', String(d.getFullYear()))
+                .replaceAll('__MONTH__', String(d.getMonth() + 1));
+        }
 
-        window.addInstagramEntry = async function() {
-            const url = document.getElementById('ig-url').value.trim();
-            if (!url) { alert('URL을 입력해주세요'); return; }
+        function formatTimeShort(iso) {
+            if (!iso) return '';
+            const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
+            if (isNaN(d.getTime())) return iso;
+            return d.toLocaleString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        async function loadChecklistToday() {
             try {
-                await axios.post('/api/instagram', {
-                    url,
-                    title: document.getElementById('ig-title').value.trim(),
-                    upload_date: document.getElementById('ig-upload-date').value,
-                    impressions: parseInt(document.getElementById('ig-impressions').value) || 0,
-                    views: parseInt(document.getElementById('ig-views').value) || 0,
-                    followers: parseInt(document.getElementById('ig-followers').value) || 0,
-                });
-                closeInstagramModal();
-                loadInstagramEntries();
-            } catch (error) {
-                alert('추가 실패: ' + (error.response?.data?.error || error.message));
+                const res = await axios.get('/api/checklist/today');
+                __checklistItems = res.data.items || [];
+                __checklistTodayStatus = {};
+                (res.data.logs || []).forEach(l => { __checklistTodayStatus[l.item_id] = l; });
+                renderChecklistToday();
+            } catch (e) {
+                document.getElementById('checklist-list').innerHTML =
+                    '<p class="text-rose-500 text-center py-6 text-sm">불러오기 실패: ' + (e.response?.data?.error || e.message) + '</p>';
+            }
+        }
+
+        function renderChecklistToday() {
+            const today = todayDateStr();
+            document.getElementById('checklist-today-label').textContent = today;
+
+            const list = document.getElementById('checklist-list');
+            const checkedCount = __checklistItems.filter(i =>
+                __checklistTodayStatus[i.id] && __checklistTodayStatus[i.id].status === 'ok'
+            ).length;
+            const total = __checklistItems.length;
+            document.getElementById('checklist-summary').textContent = \`진행률 \${checkedCount} / \${total}\`;
+
+            if (total === 0) {
+                list.innerHTML = '<p class="text-slate-400 text-center py-8 text-sm">등록된 점검 항목이 없습니다. "항목 관리"에서 추가해주세요.</p>';
+                return;
+            }
+
+            list.innerHTML = __checklistItems.map(item => {
+                const log = __checklistTodayStatus[item.id];
+                const isChecked = log && log.status === 'ok';
+                const isFail = log && log.status === 'fail';
+                const stateBadge = isChecked
+                    ? '<span class="text-emerald-700 bg-emerald-100 text-xs font-bold px-2 py-0.5 rounded">완료</span>'
+                    : isFail
+                        ? '<span class="text-rose-700 bg-rose-100 text-xs font-bold px-2 py-0.5 rounded">실패</span>'
+                        : '<span class="text-slate-500 bg-slate-100 text-xs font-bold px-2 py-0.5 rounded">대기</span>';
+                const checkedAt = log ? \`<span class="text-xs text-slate-400 ml-2">\${formatTimeShort(log.checked_at)}</span>\` : '';
+                const noteRow = log && log.note
+                    ? \`<div class="text-xs text-slate-500 mt-1 pl-7"><i class="fas fa-comment-dots mr-1"></i>\${log.note}</div>\`
+                    : '';
+                const typeBadge = item.check_type === 'auto'
+                    ? '<span class="text-xs text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">자동</span>'
+                    : '<span class="text-xs text-slate-600 bg-slate-50 px-2 py-0.5 rounded">수동</span>';
+                const autoBtn = item.check_type === 'auto'
+                    ? \`<button onclick="runAutoCheck(\${item.id})" class="text-indigo-600 hover:bg-indigo-50 rounded px-2 py-1 text-xs font-semibold" title="자동 점검 실행"><i class="fas fa-bolt"></i></button>\`
+                    : '';
+                const checkBtn = isChecked
+                    ? \`<button onclick="manualCheckItem(\${item.id}, 'fail')" class="bg-rose-100 hover:bg-rose-200 text-rose-700 rounded px-3 py-1 text-xs font-semibold" title="실패로 표시"><i class="fas fa-times mr-1"></i>실패</button>\`
+                    : \`<button onclick="manualCheckItem(\${item.id}, 'ok')" class="bg-emerald-500 hover:bg-emerald-600 text-white rounded px-3 py-1 text-xs font-semibold" title="완료로 표시"><i class="fas fa-check mr-1"></i>완료</button>\`;
+                return \`
+                    <div class="flex items-start justify-between gap-3 px-4 py-3 rounded-lg border \${isChecked ? 'bg-emerald-50/40 border-emerald-100' : isFail ? 'bg-rose-50/40 border-rose-100' : 'bg-white border-slate-200'} hover:shadow-sm transition-all">
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <i class="fas \${isChecked ? 'fa-check-circle text-emerald-500' : isFail ? 'fa-exclamation-circle text-rose-500' : 'fa-circle text-slate-300'}"></i>
+                                <span class="font-semibold text-slate-800 \${isChecked ? 'line-through text-slate-500' : ''}">\${item.name}</span>
+                                \${typeBadge}
+                                \${stateBadge}
+                                \${checkedAt}
+                            </div>
+                            \${item.description ? \`<div class="text-xs text-slate-500 mt-1 pl-7">\${item.description}</div>\` : ''}
+                            \${noteRow}
+                        </div>
+                        <div class="flex gap-1 items-center shrink-0">
+                            \${autoBtn}
+                            \${checkBtn}
+                        </div>
+                    </div>
+                \`;
+            }).join('');
+        }
+
+        window.manualCheckItem = async function(itemId, status) {
+            const note = status === 'fail' ? (prompt('실패 사유 (선택)') || '') : '';
+            try {
+                await axios.post(\`/api/checklist/check/\${itemId}\`, { status, note });
+                await loadChecklistToday();
+            } catch (e) {
+                alert('기록 실패: ' + (e.response?.data?.error || e.message));
             }
         };
 
-        window.deleteInstagramEntry = async function(id) {
-            if (!confirm('삭제하시겠습니까?')) return;
-            try { await axios.delete(\`/api/instagram/\${id}\`); loadInstagramEntries(); } catch(e) { alert('삭제 실패'); }
+        window.runAutoCheck = async function(itemId) {
+            const item = __checklistItems.find(i => i.id === itemId);
+            if (!item || item.check_type !== 'auto') return;
+            const url = fillEndpoint(item.endpoint);
+            if (!url) { alert('자동 점검 엔드포인트가 비어있습니다.'); return; }
+            let status = 'ok';
+            let note = '';
+            try {
+                const r = await axios.get(url, { validateStatus: () => true });
+                if (r.status >= 200 && r.status < 300) {
+                    status = 'ok';
+                    note = \`\${url} → HTTP \${r.status}\`;
+                } else {
+                    status = 'fail';
+                    note = \`\${url} → HTTP \${r.status}\`;
+                }
+            } catch (e) {
+                status = 'fail';
+                note = \`\${url} → \${e.message}\`;
+            }
+            try {
+                await axios.post(\`/api/checklist/check/\${itemId}\`, { status, note });
+                await loadChecklistToday();
+            } catch (e) {
+                alert('기록 실패: ' + (e.response?.data?.error || e.message));
+            }
         };
 
-        window.saveInstagramEdit = async function(id) {
-            const row = document.querySelector(\`[data-ig-id="\${id}"]\`);
-            if (!row) return;
-            try {
-                await axios.put(\`/api/instagram/\${id}\`, {
-                    url: row.querySelector('.ig-edit-url').value,
-                    title: row.querySelector('.ig-edit-title').value,
-                    upload_date: row.querySelector('.ig-edit-upload-date').value,
-                    impressions: parseInt(row.querySelector('.ig-edit-impressions').value) || 0,
-                    views: parseInt(row.querySelector('.ig-edit-views').value) || 0,
-                    followers: parseInt(row.querySelector('.ig-edit-followers').value) || 0,
-                });
-                loadInstagramEntries();
-            } catch(e) { alert('수정 실패'); }
+        window.runAllAutoChecks = async function() {
+            const autos = __checklistItems.filter(i => i.check_type === 'auto');
+            if (autos.length === 0) { alert('자동 점검 항목이 없습니다.'); return; }
+            for (const item of autos) {
+                await runAutoCheck(item.id);
+            }
         };
 
-        async function loadInstagramEntries() {
+        async function loadChecklistHistory() {
+            const dateInput = document.getElementById('checklist-history-date');
+            if (!dateInput.value) dateInput.value = todayDateStr();
+            const date = dateInput.value;
+            const container = document.getElementById('checklist-history');
             try {
-                const res = await axios.get('/api/instagram');
-                const list = document.getElementById('instagram-list');
-                if (!res.data || res.data.length === 0) {
-                    list.innerHTML = '<p class="text-gray-400 text-center py-8">등록된 항목이 없습니다.</p>';
+                const res = await axios.get(\`/api/checklist/history?date=\${date}\`);
+                const logs = res.data.logs || [];
+                if (logs.length === 0) {
+                    container.innerHTML = '<p class="text-slate-400 text-center py-6 text-sm">해당일 점검 기록이 없습니다.</p>';
                     return;
                 }
-                list.innerHTML = res.data.map(e => \`
-                    <div class="bg-gradient-to-r from-pink-50 to-white border-2 border-pink-100 rounded-xl p-4 mb-3 hover:shadow-md transition-all" data-ig-id="\${e.id}">
-                        <div class="flex justify-between items-center mb-3">
-                            <a href="\${e.url}" target="_blank" class="text-pink-600 hover:text-pink-800 font-semibold truncate flex-1 mr-3">
-                                <i class="fab fa-instagram mr-2"></i>\${e.title || '제목 없음'}
-                            </a>
-                            <div class="flex gap-1 shrink-0">
-                                <button onclick="saveInstagramEdit(\${e.id})" class="text-blue-500 hover:text-blue-700 p-1.5 rounded hover:bg-blue-50" title="저장"><i class="fas fa-save"></i></button>
-                                <button onclick="deleteInstagramEntry(\${e.id})" class="text-pink-400 hover:text-pink-600 p-1.5 rounded hover:bg-pink-50" title="삭제"><i class="fas fa-trash"></i></button>
+                container.innerHTML = logs.map(l => {
+                    const statusBadge = l.status === 'ok'
+                        ? '<span class="text-emerald-700 bg-emerald-100 text-xs font-bold px-2 py-0.5 rounded">OK</span>'
+                        : '<span class="text-rose-700 bg-rose-100 text-xs font-bold px-2 py-0.5 rounded">FAIL</span>';
+                    return \`
+                        <div class="flex items-center justify-between gap-3 px-3 py-2 rounded border border-slate-100 bg-white text-sm">
+                            <div class="flex items-center gap-2 min-w-0 flex-1">
+                                \${statusBadge}
+                                <span class="font-medium text-slate-700 truncate">\${l.item_name || '(삭제된 항목)'}</span>
+                                \${l.note ? \`<span class="text-xs text-slate-400 truncate">— \${l.note}</span>\` : ''}
                             </div>
+                            <span class="text-xs text-slate-400 shrink-0">\${formatTimeShort(l.checked_at)}</span>
                         </div>
-                        <input type="hidden" class="ig-edit-url" value="\${e.url}">
-                        <input type="hidden" class="ig-edit-title" value="\${e.title || ''}">
-                        <div class="flex items-center gap-2 mb-2 text-sm text-gray-500">
-                            <i class="fas fa-calendar-alt"></i>
-                            <input type="date" class="ig-edit-upload-date border border-gray-200 rounded px-2 py-1 text-sm" value="\${e.upload_date || ''}">
-                        </div>
-                        <div class="grid grid-cols-3 gap-3">
-                            <div class="bg-white rounded-lg p-3 border border-pink-100 text-center">
-                                <div class="text-xs text-gray-500 mb-1">조회수</div>
-                                <input type="number" class="ig-edit-impressions w-full text-center text-lg font-bold text-pink-600 border-0 bg-transparent focus:outline-none" value="\${e.impressions || 0}">
-                            </div>
-                            <div class="bg-white rounded-lg p-3 border border-pink-100 text-center">
-                                <div class="text-xs text-gray-500 mb-1">좋아요수</div>
-                                <input type="number" class="ig-edit-views w-full text-center text-lg font-bold text-pink-600 border-0 bg-transparent focus:outline-none" value="\${e.views || 0}">
-                            </div>
-                            <div class="bg-white rounded-lg p-3 border border-pink-100 text-center">
-                                <div class="text-xs text-gray-500 mb-1">팔로워수</div>
-                                <input type="number" class="ig-edit-followers w-full text-center text-lg font-bold text-pink-600 border-0 bg-transparent focus:outline-none" value="\${e.followers || 0}">
-                            </div>
-                        </div>
-                    </div>
-                \`).join('');
-            } catch(e) { console.error('인스타그램 로드 실패', e); }
+                    \`;
+                }).join('');
+            } catch (e) {
+                container.innerHTML = '<p class="text-rose-500 text-center py-6 text-sm">기록 불러오기 실패</p>';
+            }
         }
+        window.loadChecklistHistory = loadChecklistHistory;
+
+        window.onChecklistTypeChange = function() {
+            const type = document.getElementById('ci-type').value;
+            const ep = document.getElementById('ci-endpoint');
+            ep.disabled = type !== 'auto';
+            if (type !== 'auto') ep.value = '';
+        };
+
+        window.openChecklistItemModal = async function() {
+            document.getElementById('ci-name').value = '';
+            document.getElementById('ci-description').value = '';
+            document.getElementById('ci-type').value = 'manual';
+            document.getElementById('ci-endpoint').value = '';
+            onChecklistTypeChange();
+            await renderChecklistManageList();
+            document.getElementById('checklist-item-modal').classList.remove('hidden');
+        };
+        window.closeChecklistItemModal = function() {
+            document.getElementById('checklist-item-modal').classList.add('hidden');
+        };
+
+        async function renderChecklistManageList() {
+            try {
+                const res = await axios.get('/api/checklist/items');
+                const items = res.data || [];
+                const container = document.getElementById('checklist-item-manage-list');
+                if (items.length === 0) {
+                    container.innerHTML = '<p class="text-slate-400 text-sm">등록된 항목이 없습니다.</p>';
+                    return;
+                }
+                container.innerHTML = items.map(it => {
+                    const typeBadge = it.check_type === 'auto'
+                        ? '<span class="text-xs text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded shrink-0">자동</span>'
+                        : '<span class="text-xs text-slate-600 bg-slate-50 px-2 py-0.5 rounded shrink-0">수동</span>';
+                    return \`
+                        <div class="flex items-center justify-between gap-2 px-3 py-2 rounded border border-slate-100 bg-white">
+                            <div class="min-w-0 flex-1">
+                                <div class="flex items-center gap-2">
+                                    \${typeBadge}
+                                    <span class="font-semibold text-slate-700 text-sm truncate">\${it.name}</span>
+                                </div>
+                                \${it.description ? \`<div class="text-xs text-slate-500 mt-0.5">\${it.description}</div>\` : ''}
+                                \${it.endpoint ? \`<div class="text-[11px] text-slate-400 font-mono mt-0.5">\${it.endpoint}</div>\` : ''}
+                            </div>
+                            <button onclick="deleteChecklistItem(\${it.id})" class="text-rose-500 hover:bg-rose-50 rounded p-1.5" title="삭제">
+                                <i class="fas fa-trash text-xs"></i>
+                            </button>
+                        </div>
+                    \`;
+                }).join('');
+            } catch (e) {
+                console.error('점검 항목 목록 로드 실패', e);
+            }
+        }
+
+        window.addChecklistItem = async function() {
+            const name = document.getElementById('ci-name').value.trim();
+            if (!name) { alert('항목 이름을 입력해주세요'); return; }
+            const description = document.getElementById('ci-description').value.trim();
+            const check_type = document.getElementById('ci-type').value;
+            const endpoint = document.getElementById('ci-endpoint').value.trim();
+            if (check_type === 'auto' && !endpoint) { alert('자동 점검은 엔드포인트가 필수입니다'); return; }
+            try {
+                await axios.post('/api/checklist/items', { name, description, check_type, endpoint });
+                document.getElementById('ci-name').value = '';
+                document.getElementById('ci-description').value = '';
+                document.getElementById('ci-endpoint').value = '';
+                await renderChecklistManageList();
+                await loadChecklistToday();
+            } catch (e) {
+                alert('추가 실패: ' + (e.response?.data?.error || e.message));
+            }
+        };
+
+        window.deleteChecklistItem = async function(id) {
+            if (!confirm('항목을 삭제하시겠습니까? (관련 기록도 모두 삭제됩니다)')) return;
+            try {
+                await axios.delete(\`/api/checklist/items/\${id}\`);
+                await renderChecklistManageList();
+                await loadChecklistToday();
+            } catch (e) {
+                alert('삭제 실패: ' + (e.response?.data?.error || e.message));
+            }
+        };
 
         // 연차/휴가 목록 로드
         async function loadVacations() {
@@ -5031,8 +5110,8 @@ app.get('/', (c) => {
                 const pa = isBudgetApproved(a) ? 1 : 0;
                 const pb = isBudgetApproved(b) ? 1 : 0;
                 if (pa !== pb) return pa - pb; // 승인 대기 먼저
-                const da = a.budget_date || '9999-12-31';
-                const db = b.budget_date || '9999-12-31';
+                const da = a.display_date || a.budget_date || '9999-12-31';
+                const db = b.display_date || b.budget_date || '9999-12-31';
                 return da.localeCompare(db);
             });
             const total = unpaid.reduce((acc, b) => acc + (b.amount || 0), 0);
@@ -5068,7 +5147,8 @@ app.get('/', (c) => {
 
             let html = '';
             for (const b of sorted) {
-                const dateStr = b.budget_date ? b.budget_date.slice(5).replace('-', '/') : '—';
+                const shownDate = b.display_date || b.budget_date;
+                const dateStr = shownDate ? shownDate.slice(5).replace('-', '/') : '—';
                 const pt = budgetPaymentType(b);
                 const typeBadge = pt === 'recurring'
                     ? '<span class="inline-flex items-center gap-1 text-[10px] font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded px-1 py-0.5 ml-1" title="정기결제"><i class="fas fa-sync-alt"></i></span>'
@@ -5551,10 +5631,10 @@ app.get('/', (c) => {
             }
             empty.classList.add('hidden');
 
-            // 결제일 오름차순
+            // 결제일 오름차순 (이월 항목은 보고있는 달로 치환된 display_date 기준)
             const sorted = [...filtered].sort((a, b) => {
-                const da = a.budget_date || '9999-12-31';
-                const db = b.budget_date || '9999-12-31';
+                const da = a.display_date || a.budget_date || '9999-12-31';
+                const db = b.display_date || b.budget_date || '9999-12-31';
                 return da.localeCompare(db);
             });
 
@@ -5564,7 +5644,8 @@ app.get('/', (c) => {
 
             let html = '';
             for (const b of sorted) {
-                const dateStr = b.budget_date ? b.budget_date.slice(5).replace('-', '/') : '—';
+                const shownDate = b.display_date || b.budget_date;
+                const dateStr = shownDate ? shownDate.slice(5).replace('-', '/') : '—';
                 const pt = budgetPaymentType(b);
                 const badge = pt === 'recurring'
                     ? '<span class="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded px-2 py-0.5"><i class="fas fa-sync-alt"></i>정기</span>'
@@ -5843,7 +5924,6 @@ app.get('/', (c) => {
         document.addEventListener('DOMContentLoaded', () => {
             showTab('hospitals');
             loadHospitals();
-            loadYoutubeEntries();
             initDateSelectors();
         });
     </script>
