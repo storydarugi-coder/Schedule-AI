@@ -2134,9 +2134,10 @@ app.get('/', (c) => {
                         </div>
                         <div class="text-[11px] text-slate-500 mt-1">정기결제: 매월 자동 결제 / 수시결제: 크레딧·일회성 결제 · 두 유형 모두 기본으로 다음 달에도 자동 표시됩니다.</div>
                     </div>
-                    <div class="mb-3">
+                    <div class="mb-3" id="budget-date-row">
                         <label class="block text-sm font-medium text-gray-700 mb-1">결제일</label>
                         <input type="date" id="budget-date-input" class="w-full border-2 border-slate-200 rounded-lg px-4 py-2 focus:border-emerald-400 focus:outline-none">
+                        <div class="text-[11px] text-slate-500 mt-1">정기결제만 결제일을 사용합니다. (수시결제는 사용되지 않음)</div>
                     </div>
                     <div class="grid grid-cols-2 gap-3 mb-3">
                         <div>
@@ -5147,9 +5148,10 @@ app.get('/', (c) => {
 
             let html = '';
             for (const b of sorted) {
-                const shownDate = b.display_date || b.budget_date;
-                const dateStr = shownDate ? shownDate.slice(5).replace('-', '/') : '—';
                 const pt = budgetPaymentType(b);
+                // 수시결제는 결제일을 표시하지 않는다
+                const shownDate = pt === 'recurring' ? (b.display_date || b.budget_date) : null;
+                const dateStr = shownDate ? shownDate.slice(5).replace('-', '/') : '—';
                 const typeBadge = pt === 'recurring'
                     ? '<span class="inline-flex items-center gap-1 text-[10px] font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded px-1 py-0.5 ml-1" title="정기결제"><i class="fas fa-sync-alt"></i></span>'
                     : '';
@@ -5644,9 +5646,10 @@ app.get('/', (c) => {
 
             let html = '';
             for (const b of sorted) {
-                const shownDate = b.display_date || b.budget_date;
-                const dateStr = shownDate ? shownDate.slice(5).replace('-', '/') : '—';
                 const pt = budgetPaymentType(b);
+                // 수시결제는 결제일을 표시하지 않는다
+                const shownDate = pt === 'recurring' ? (b.display_date || b.budget_date) : null;
+                const dateStr = shownDate ? shownDate.slice(5).replace('-', '/') : '—';
                 const badge = pt === 'recurring'
                     ? '<span class="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded px-2 py-0.5"><i class="fas fa-sync-alt"></i>정기</span>'
                     : '<span class="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5"><i class="fas fa-credit-card"></i>수시</span>';
@@ -5744,6 +5747,9 @@ app.get('/', (c) => {
                     btn.className = 'flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-colors bg-white border-slate-200 text-slate-600 hover:border-slate-300';
                 }
             });
+            // 수시결제는 결제일을 쓰지 않으므로 입력 row 자체를 숨긴다
+            const dateRow = document.getElementById('budget-date-row');
+            if (dateRow) dateRow.classList.toggle('hidden', val !== 'recurring');
         }
 
         function bindBudgetPaymentTypeInput() {
@@ -5857,8 +5863,9 @@ app.get('/', (c) => {
             const category = document.getElementById('budget-category-input').value.trim();
             const description = document.getElementById('budget-description-input').value.trim();
             const amount = parseMoneyInput(document.getElementById('budget-amount-input').value);
-            const budgetDate = document.getElementById('budget-date-input').value;
             const paymentType = document.getElementById('budget-payment-type-input').dataset.value || 'onetime';
+            // 수시결제는 결제일을 사용하지 않으므로 항상 null 로 저장
+            const budgetDate = paymentType === 'recurring' ? document.getElementById('budget-date-input').value : '';
             const carryOver = document.getElementById('budget-carry-over-input').checked ? 1 : 0;
             const isPaid = document.getElementById('budget-is-paid-input').checked ? 1 : 0;
             const aiProviderRaw = document.getElementById('budget-ai-provider-input').dataset.value || '';
