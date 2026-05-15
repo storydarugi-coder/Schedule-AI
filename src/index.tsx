@@ -510,6 +510,60 @@ app.delete('/api/tasks/:id', async (c) => {
   return c.json({ success: true })
 })
 
+// 해당 월의 미완료 작업 (progress < 4) 을 다음 달로 이월
+// - year/month 를 다음 달로 갱신
+// - start_date 는 day-of-month 를 유지하면서 다음 달로 이동 (존재하지 않는 날은 그 달의 마지막 날로 폴백)
+// - 완료된 작업 (progress == 4) 은 그대로 둔다
+// - hospital_id 필터 지원 (특정 병원만 이월)
+app.post('/api/tasks/carry-forward', async (c) => {
+  const db = c.env.DB
+  await ensureTasksTable(db)
+  const { year, month, hospital_id } = await c.req.json()
+
+  const y = parseInt(year)
+  const m = parseInt(month)
+  if (!y || !m || m < 1 || m > 12) return c.json({ error: 'year, month 필수' }, 400)
+
+  const ny = m === 12 ? y + 1 : y
+  const nm = m === 12 ? 1 : m + 1
+
+  let where = 'year = ? AND month = ? AND progress < 4'
+  const args: any[] = [y, m]
+  if (hospital_id !== undefined && hospital_id !== null && hospital_id !== '' && hospital_id !== 'all') {
+    const hid = parseInt(hospital_id)
+    if (!isNaN(hid)) {
+      where += ' AND hospital_id = ?'
+      args.push(hid)
+    }
+  }
+
+  const rows: any = await db.prepare(`SELECT id, start_date, duration_days FROM tasks WHERE ${where}`).bind(...args).all()
+  const list = (rows.results || []) as Array<{ id: number; start_date: string | null; duration_days: number | null }>
+  if (list.length === 0) return c.json({ success: true, moved: 0 })
+
+  // 다음 달 마지막 날 계산 — Date(year, month, 0) 는 해당 달의 마지막 날을 반환
+  const lastDayNextMonth = new Date(ny, nm, 0).getDate()
+  const nextOrderRow: any = await db.prepare(
+    'SELECT MAX(order_index) AS max_order FROM tasks WHERE year = ? AND month = ?'
+  ).bind(ny, nm).first()
+  let nextOrder = ((nextOrderRow?.max_order as number | null) ?? -1) + 1
+
+  const stmt = db.prepare('UPDATE tasks SET year = ?, month = ?, start_date = ?, order_index = ? WHERE id = ?')
+  const batch: any[] = []
+  for (const t of list) {
+    let day = 1
+    if (t.start_date && /^\d{4}-\d{2}-\d{2}$/.test(t.start_date)) {
+      day = parseInt(t.start_date.slice(8, 10))
+    }
+    const safeDay = Math.min(day, lastDayNextMonth)
+    const newStart = `${String(ny).padStart(4, '0')}-${String(nm).padStart(2, '0')}-${String(safeDay).padStart(2, '0')}`
+    batch.push(stmt.bind(ny, nm, newStart, nextOrder++, t.id))
+  }
+  await db.batch(batch)
+
+  return c.json({ success: true, moved: list.length, target_year: ny, target_month: nm })
+})
+
 // 작업 순서 재정렬 — 전달받은 id 배열 순서대로 order_index 를 0,1,2... 로 기록한다.
 // 작업 현황에서 진행 예정인 작업을 위/아래로 옮길 때 사용된다.
 app.post('/api/tasks/reorder', async (c) => {
@@ -2284,6 +2338,9 @@ app.get('/', (c) => {
                         </select>
                         <button onclick="distributeTasks()" title="현재 월의 작업들을 순서대로 균등 분배합니다 (시작일/작업일수 자동 계산)" class="bg-white border border-indigo-300 text-indigo-600 hover:bg-indigo-50 rounded-lg px-3 py-2 text-sm font-semibold shadow-sm">
                             <i class="fas fa-magic-wand-sparkles mr-1"></i>일정 자동 분배
+                        </button>
+                        <button onclick="carryForwardIncompleteTasks()" title="현재 월에서 아직 완료되지 않은 작업을 다음 달로 옮깁니다" class="bg-white border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-lg px-3 py-2 text-sm font-semibold shadow-sm">
+                            <i class="fas fa-angles-right mr-1"></i>미완료 다음달 이월
                         </button>
                         <button onclick="openAddTaskModal()" class="bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm font-semibold shadow-sm">
                             <i class="fas fa-plus mr-1"></i>작업 추가
@@ -4459,6 +4516,30 @@ app.get('/', (c) => {
                 loadTasks();
             } catch (error) {
                 alert('저장 실패: ' + (error.response?.data?.error || error.message));
+            }
+        };
+
+        window.carryForwardIncompleteTasks = async function() {
+            const year = parseInt(document.getElementById('calendar-year').value);
+            const month = parseInt(document.getElementById('calendar-month').value);
+            const hospitalId = document.getElementById('stats-hospital').value;
+            const filterLabel = (hospitalId && hospitalId !== 'all') ? '선택된 병원' : '전체';
+            const ny = month === 12 ? year + 1 : year;
+            const nm = month === 12 ? 1 : month + 1;
+            if (!confirm(\`\${year}년 \${month}월의 미완료 작업(\${filterLabel})을 \${ny}년 \${nm}월로 이월할까요?\\n(완료된 작업은 그대로 둡니다)\`)) return;
+            try {
+                const body = { year, month };
+                if (hospitalId && hospitalId !== 'all') body.hospital_id = parseInt(hospitalId);
+                const res = await axios.post('/api/tasks/carry-forward', body);
+                const n = res.data?.moved || 0;
+                if (n === 0) {
+                    alert('이월할 미완료 작업이 없습니다.');
+                    return;
+                }
+                alert(\`\${n}개 작업을 \${ny}년 \${nm}월로 이월했습니다.\`);
+                await loadTasks();
+            } catch (error) {
+                alert('이월 실패: ' + (error.response?.data?.error || error.message));
             }
         };
 
